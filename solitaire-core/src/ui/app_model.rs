@@ -3,6 +3,8 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use rand::rngs::StdRng;
+use rand::SeedableRng;
 use web_time::Instant;
 
 use crate::games::freecell::FreeCell;
@@ -48,6 +50,10 @@ pub struct AppModel {
     /// the next click to land on a King — that King will be swapped
     /// into the gap. `None` means no king-pickup is in progress.
     pub moms_waiting_king_at: Option<crate::piles::PileId>,
+    /// Mom's Solitaire shuffle counter for the active deal. Matches
+    /// `m_NumShuffles` in the C# original; surfaced on screen so the
+    /// player can see how many shuffles the solve cost.
+    pub moms_shuffles: u32,
 }
 
 impl AppModel {
@@ -60,6 +66,7 @@ impl AppModel {
             klondike_draw_count: 1,
             help: None,
             moms_waiting_king_at: None,
+            moms_shuffles: 0,
         }
     }
 
@@ -81,8 +88,10 @@ impl AppModel {
         self.kind = Some(kind);
         self.screen = Screen::Game;
         // Any Mom's-specific UI state is per-game; reset so a new
-        // Klondike doesn't inherit a stale "waiting for king."
+        // Klondike doesn't inherit a stale "waiting for king" or
+        // shuffle count.
         self.moms_waiting_king_at = None;
+        self.moms_shuffles = 0;
     }
 
     /// Restart the current deal — same kind, same seed, fresh shuffle.
@@ -112,6 +121,31 @@ impl AppModel {
         self.kind = None;
         self.screen = Screen::Title;
         self.moms_waiting_king_at = None;
+        self.moms_shuffles = 0;
+    }
+
+    /// Mom's Solitaire: shuffle the out-of-order cells in place,
+    /// increment the on-screen shuffle counter, and clear any pending
+    /// king-pickup. No-op on any other variant. Returns `true` if at
+    /// least one swap was performed.
+    pub fn try_moms_shuffle(&mut self) -> bool {
+        if !matches!(self.kind, Some(GameKind::MomsSolitaire)) {
+            return false;
+        }
+        let Some(session) = self.session.as_mut() else {
+            return false;
+        };
+        let mut rng = StdRng::seed_from_u64(wallclock_seed());
+        let swaps = crate::games::moms::compute_shuffle_swaps(session.piles(), &mut rng);
+        if swaps.is_empty() {
+            return false;
+        }
+        for (a, b) in swaps {
+            session.try_apply(crate::session::Move::swap(a, b));
+        }
+        self.moms_shuffles += 1;
+        self.moms_waiting_king_at = None;
+        true
     }
 
     pub fn show_toast(&mut self, msg: impl Into<String>) {

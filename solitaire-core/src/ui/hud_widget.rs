@@ -25,15 +25,15 @@ const TXT: Color = Color::from_rgb8(0xff, 0xff, 0xff);
 enum Btn {
     Undo,
     NewDeal,
+    Shuffle,
     Home,
 }
-
-const BTNS: [Btn; 3] = [Btn::Undo, Btn::NewDeal, Btn::Home];
 
 fn btn_label(b: Btn) -> &'static str {
     match b {
         Btn::Undo => "Undo",
         Btn::NewDeal => "New Deal",
+        Btn::Shuffle => "Shuffle",
         Btn::Home => "Title",
     }
 }
@@ -61,9 +61,24 @@ impl HudWidget {
         }
     }
 
-    fn btn_rect(&self, idx: usize) -> (f64, f64, f64, f64) {
+    /// Buttons to render for the active variant. Mom's Solitaire gets
+    /// an extra "Shuffle" button between New Deal and Title; every
+    /// other variant gets the standard three.
+    fn btns(&self) -> Vec<Btn> {
+        let is_moms = matches!(
+            self.model.borrow().kind,
+            Some(crate::games::GameKind::MomsSolitaire)
+        );
+        if is_moms {
+            vec![Btn::Undo, Btn::NewDeal, Btn::Shuffle, Btn::Home]
+        } else {
+            vec![Btn::Undo, Btn::NewDeal, Btn::Home]
+        }
+    }
+
+    fn btn_rect_for(&self, idx: usize, n: usize) -> (f64, f64, f64, f64) {
         let strip_y = 0.0; // Y-up: strip sits at the bottom.
-        let total_w = BTNS.len() as f64 * BTN_W + (BTNS.len() as f64 - 1.0) * BTN_GAP;
+        let total_w = n as f64 * BTN_W + (n as f64 - 1.0) * BTN_GAP;
         let start_x = (VIRTUAL_W - total_w) / 2.0;
         let x = start_x + idx as f64 * (BTN_W + BTN_GAP);
         let y = strip_y + (HUD_HEIGHT - BTN_H) / 2.0;
@@ -71,8 +86,9 @@ impl HudWidget {
     }
 
     fn click_at(&mut self, vx: f64, vy: f64) -> bool {
-        for (i, b) in BTNS.iter().enumerate() {
-            let (x, y, w, h) = self.btn_rect(i);
+        let btns = self.btns();
+        for (i, b) in btns.iter().enumerate() {
+            let (x, y, w, h) = self.btn_rect_for(i, btns.len());
             if vx >= x && vx <= x + w && vy >= y && vy <= y + h {
                 let mut model = self.model.borrow_mut();
                 match b {
@@ -86,6 +102,9 @@ impl HudWidget {
                         if let Some(kind) = model.kind {
                             model.start_game(kind);
                         }
+                    }
+                    Btn::Shuffle => {
+                        model.try_moms_shuffle();
                     }
                     Btn::Home => {
                         model.back_to_title();
@@ -105,8 +124,8 @@ impl HudWidget {
         ctx.fill();
     }
 
-    fn paint_btn(&self, ctx: &mut dyn DrawCtx, idx: usize, b: Btn) {
-        let (x, y, w, h) = self.btn_rect(idx);
+    fn paint_btn(&self, ctx: &mut dyn DrawCtx, idx: usize, b: Btn, n: usize) {
+        let (x, y, w, h) = self.btn_rect_for(idx, n);
         let bg = if self.hover == Some(b) {
             BTN_BG_HOVER
         } else {
@@ -176,8 +195,24 @@ impl Widget for HudWidget {
         ctx.scale(scale, scale);
 
         self.paint_strip(ctx);
-        for (i, b) in BTNS.iter().enumerate() {
-            self.paint_btn(ctx, i, *b);
+        let btns = self.btns();
+        let n = btns.len();
+        for (i, b) in btns.iter().enumerate() {
+            self.paint_btn(ctx, i, *b, n);
+        }
+        // Mom's Solitaire shuffle counter — left-aligned in the strip.
+        let model = self.model.borrow();
+        if matches!(model.kind, Some(crate::games::GameKind::MomsSolitaire)) {
+            let count = model.moms_shuffles;
+            drop(model);
+            let label = format!("Shuffles: {count}");
+            ctx.set_fill_color(TXT);
+            ctx.set_font(self.font.clone());
+            ctx.set_font_size(16.0);
+            if let Some(m) = ctx.measure_text(&label) {
+                let baseline = m.centered_baseline_y(HUD_HEIGHT);
+                ctx.fill_text(&label, 18.0, baseline);
+            }
         }
         ctx.restore();
     }
@@ -203,8 +238,10 @@ impl Widget for HudWidget {
                 let (vx, vy) = screen_to_virtual(bounds, pos.x, pos.y);
                 let mut new_hover = None;
                 if vy < HUD_HEIGHT {
-                    for (i, b) in BTNS.iter().enumerate() {
-                        let (x, y, w, h) = self.btn_rect(i);
+                    let btns = self.btns();
+                    let n = btns.len();
+                    for (i, b) in btns.iter().enumerate() {
+                        let (x, y, w, h) = self.btn_rect_for(i, n);
                         if vx >= x && vx <= x + w && vy >= y && vy <= y + h {
                             new_hover = Some(*b);
                             break;

@@ -235,6 +235,77 @@ impl GameRules for MomsSolitaire {
     }
 }
 
+/// Is the card at `(x, y)` currently in its final position? A cell is
+/// "in order" iff cards `(0..=x, y)` form a same-suit K → (13-x) run.
+/// Direct port of `MomsGame.CardIsInOrder` in the C# original.
+fn card_is_in_order(board: &[Option<Card>], x: u8, y: u8) -> bool {
+    let Some(card) = board[cell_id(x, y) as usize] else {
+        return false;
+    };
+    if (card.rank as u8) != 13 - x {
+        return false;
+    }
+    let suit = card.suit;
+    for i in 0..x {
+        let Some(o) = board[cell_id(i, y) as usize] else {
+            return false;
+        };
+        if o.suit != suit || (o.rank as u8) != 13 - i {
+            return false;
+        }
+    }
+    true
+}
+
+/// Generate the list of swaps a shuffle should perform on the current
+/// board. Direct port of `MomsGame.Shuffle()` minus the
+/// recurse-if-no-move-available retry — the caller is responsible for
+/// requesting another shuffle if this one leaves a dead board.
+///
+/// The returned swaps are intended to be applied in order through the
+/// session (`Move::swap(a, b)`) so each lands on the engine's undo
+/// stack and `is_won()` runs correctly at the end.
+pub fn compute_shuffle_swaps(
+    piles: &crate::piles::PileSet,
+    rng: &mut StdRng,
+) -> Vec<(PileId, PileId)> {
+    use rand::Rng;
+    // Snapshot the board as a flat array so we can mutate it locally
+    // without disturbing the live piles. Each cell holds exactly one
+    // card (Mom's invariant) so `Option` is just future-proofing.
+    let mut board: Vec<Option<Card>> = (0..(COLS * ROWS))
+        .map(|id| piles.get(id).top().copied())
+        .collect();
+    let mut swaps = Vec::new();
+    for y in 0..ROWS {
+        for x in 0..COLS {
+            let id = cell_id(x, y);
+            if card_is_in_order(&board, x, y) {
+                continue;
+            }
+            // Find a random partner that's also out of order. Caps at
+            // 100k tries (matching the C# guard); in practice the loop
+            // terminates almost immediately because most cells are
+            // out of order after the first move.
+            let mut other_id = id;
+            for _ in 0..100_000 {
+                let ox = rng.gen_range(0..COLS);
+                let oy = rng.gen_range(0..ROWS);
+                if !card_is_in_order(&board, ox, oy) {
+                    other_id = cell_id(ox, oy);
+                    break;
+                }
+            }
+            if other_id == id {
+                continue;
+            }
+            board.swap(id as usize, other_id as usize);
+            swaps.push((id, other_id));
+        }
+    }
+    swaps
+}
+
 // ────────────────────────────────────────────────────────────────────
 // Click-based UI flow
 //
