@@ -121,8 +121,19 @@ impl GameWidget {
             .filter(|p| p.kind == PileKind::Foundation && p.id != src)
             .map(|p| p.id)
             .collect();
+        // Match the drag-drop branch: if removing the topmost card would
+        // expose a face-down tableau card underneath, flip it. Without
+        // this, double-clicking a card off auto-foundation leaves the
+        // newly-revealed card face-down.
+        let from_pile_kind = p.kind;
+        let beneath_face_down = from_pile_kind == PileKind::Tableau
+            && card_idx > 0
+            && !p.cards[card_idx - 1].face_up;
         for dst in foundation_ids {
-            let m = Move::simple(src, 1, dst);
+            let mut m = Move::simple(src, 1, dst);
+            if beneath_face_down {
+                m = m.with_flip_source();
+            }
             if session.legal_move(&m) && session.try_apply(m) {
                 agg_gui::animation::request_draw();
                 return true;
