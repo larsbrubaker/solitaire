@@ -440,6 +440,12 @@ impl Widget for GameWidget {
             paint_win_banner(ctx, &self.font);
         }
 
+        // Mom's Solitaire: while a col-0 gap is armed, prompt the
+        // user to pick a King.
+        if self.model.borrow().moms_waiting_king_at.is_some() {
+            paint_moms_prompt(ctx, &self.font, "Select a King for the empty slot");
+        }
+
         ctx.restore();
 
         let ms = t0.elapsed().as_secs_f64() * 1000.0;
@@ -538,4 +544,44 @@ fn paint_win_banner(ctx: &mut dyn DrawCtx, font: &Arc<Font>) {
     ctx.fill();
     ctx.set_fill_color(fg);
     ctx.fill_text(label, bx + pad, by + (bh - 56.0) / 2.0);
+}
+
+/// Status banner for Mom's Solitaire's "select a King for the empty
+/// slot" prompt. Painted near the top of the playfield, similar in
+/// style to the C# original's instruction banner.
+fn paint_moms_prompt(ctx: &mut dyn DrawCtx, font: &Arc<Font>, label: &str) {
+    use crate::consts::{VIRTUAL_H, VIRTUAL_W};
+    use agg_gui::color::Color;
+    // Soft warm-pink fill matching the C# original's "needs a King"
+    // banner (`new Color(0xf8, 0x89, 0x78)`), with a dark outline so it
+    // stays readable on top of the green felt and the gap cells.
+    let bg = Color::from_rgba8(0xf8, 0x89, 0x78, 0xf0);
+    let border = Color::from_rgb8(0x20, 0x20, 0x20);
+    let fg = Color::from_rgb8(0x10, 0x10, 0x10);
+    let pad_x = 18.0;
+    let bh = 32.0;
+    let font_size = 16.0;
+    ctx.set_font(font.clone());
+    ctx.set_font_size(font_size);
+    let m = ctx.measure_text(label);
+    let lw = m.map(|t| t.width).unwrap_or(240.0);
+    let bw = lw + pad_x * 2.0;
+    let bx = (VIRTUAL_W - bw) / 2.0;
+    // Y-up: place the banner near the TOP of the playfield, just
+    // below where the menu bar lands in window space.
+    let by = VIRTUAL_H - bh - 8.0;
+    ctx.begin_path();
+    ctx.rounded_rect(bx, by, bw, bh, 6.0);
+    ctx.set_fill_color(bg);
+    ctx.fill();
+    ctx.begin_path();
+    ctx.rounded_rect(bx, by, bw, bh, 6.0);
+    ctx.set_stroke_color(border);
+    ctx.set_line_width(1.5);
+    ctx.stroke();
+    ctx.set_fill_color(fg);
+    if let Some(m) = ctx.measure_text(label) {
+        let baseline = by + m.centered_baseline_y(bh);
+        ctx.fill_text(label, bx + pad_x, baseline);
+    }
 }
