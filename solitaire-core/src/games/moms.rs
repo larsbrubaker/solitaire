@@ -1,116 +1,112 @@
-//! Mom's Solitaire — a Yukon-style variant with no stock and no waste.
-//! All 52 cards land in the seven tableau columns at deal time, and
-//! you build the four foundations Ace → King by suit. The big
-//! difference from Klondike is movement: any face-up card (along with
-//! every card stacked on top of it, regardless of order or colour)
-//! can be moved as a unit, as long as the moved card itself drops
-//! onto a legal alt-colour-descending target.
+//! Mom's Solitaire — a port of the Forth solitaire game my cousin
+//! Marlin Eller wrote for his mom Margaret on Mother's Day in 1989.
+//! The C# / agg-sharp re-implementation lives at
+//! `MatterCAD/Submodules/agg-sharp/examples/MomsSolitaire/MomsGame.cs`;
+//! this file ports its rules verbatim.
 //!
-//! Named in memory of a Mother's Day 1989 gift — see the Help menu's
-//! "Rules" entry for the full story.
+//! It's a Montana-family / Gaps variant:
+//!
+//! - **Layout:** every card is laid out face-up on a 13×4 grid, one
+//!   card per cell, with the four Aces functioning as moveable
+//!   "gaps." There is no stock, no waste, no foundation pile —
+//!   every cell is part of the game from move one.
+//! - **Goal:** arrange each row so columns 0..11 hold K, Q, J, 10,
+//!   9, 8, 7, 6, 5, 4, 3, 2 of a single suit (cards play *to the
+//!   right*, descending in rank). Column 12 ends up holding the
+//!   Ace of that suit.
+//! - **Moves are swaps**: clicking on a gap swaps it with the card
+//!   to its left's same-suit one-rank-lower partner. We model that
+//!   here with `Move::swap_with_top`. The drag-drop UI accepts a
+//!   non-Ace card dropped onto an Ace cell, which has the same
+//!   effect.
+//! - **Column 0 is special:** the gap at column 0 only accepts a
+//!   King (any suit). Once filled, that King's suit fixes the row's
+//!   target colour.
+//! - **Win condition:** every row's columns 0..11 are a same-suit
+//!   K-down-to-2 run.
 
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 
-use crate::cards::{Card, Rank};
-use crate::consts::{COL_PITCH, PLAYFIELD_LEFT, TABLEAU_BASE_Y, TOP_ROW_BOTTOM_Y};
+use crate::cards::{Card, Rank, Suit};
+use crate::consts::{CARD_H, TOP_ROW_BOTTOM_Y, VIRTUAL_W};
 use crate::piles::{PileId, PileKind, PileLayout, PileSet, PileSlot};
 use crate::session::Move;
 
 use super::GameRules;
 
-const FOUND_FIRST: PileId = 0;
-const FOUND_LAST: PileId = 3;
-const TABLEAU_FIRST: PileId = 4;
-const TABLEAU_LAST: PileId = 10;
+const COLS: u8 = 13;
+const ROWS: u8 = 4;
 
-const fn slots() -> [PileSlot; 11] {
-    [
-        // Foundations occupy the top-left four columns (no stock/waste
-        // in this variant, so the slots that Klondike uses for those
-        // are vacant — we move the foundations leftward).
-        PileSlot {
-            id: 0,
-            kind: PileKind::Foundation,
-            layout: PileLayout::Stacked,
-            origin_x: PLAYFIELD_LEFT,
-            origin_y: TOP_ROW_BOTTOM_Y,
-        },
-        PileSlot {
-            id: 1,
-            kind: PileKind::Foundation,
-            layout: PileLayout::Stacked,
-            origin_x: PLAYFIELD_LEFT + COL_PITCH,
-            origin_y: TOP_ROW_BOTTOM_Y,
-        },
-        PileSlot {
-            id: 2,
-            kind: PileKind::Foundation,
-            layout: PileLayout::Stacked,
-            origin_x: PLAYFIELD_LEFT + 2.0 * COL_PITCH,
-            origin_y: TOP_ROW_BOTTOM_Y,
-        },
-        PileSlot {
-            id: 3,
-            kind: PileKind::Foundation,
-            layout: PileLayout::Stacked,
-            origin_x: PLAYFIELD_LEFT + 3.0 * COL_PITCH,
-            origin_y: TOP_ROW_BOTTOM_Y,
-        },
-        // Tableau columns 0..6.
-        PileSlot {
-            id: 4,
-            kind: PileKind::Tableau,
-            layout: PileLayout::FannedDown,
-            origin_x: PLAYFIELD_LEFT,
-            origin_y: TABLEAU_BASE_Y,
-        },
-        PileSlot {
-            id: 5,
-            kind: PileKind::Tableau,
-            layout: PileLayout::FannedDown,
-            origin_x: PLAYFIELD_LEFT + COL_PITCH,
-            origin_y: TABLEAU_BASE_Y,
-        },
-        PileSlot {
-            id: 6,
-            kind: PileKind::Tableau,
-            layout: PileLayout::FannedDown,
-            origin_x: PLAYFIELD_LEFT + 2.0 * COL_PITCH,
-            origin_y: TABLEAU_BASE_Y,
-        },
-        PileSlot {
-            id: 7,
-            kind: PileKind::Tableau,
-            layout: PileLayout::FannedDown,
-            origin_x: PLAYFIELD_LEFT + 3.0 * COL_PITCH,
-            origin_y: TABLEAU_BASE_Y,
-        },
-        PileSlot {
-            id: 8,
-            kind: PileKind::Tableau,
-            layout: PileLayout::FannedDown,
-            origin_x: PLAYFIELD_LEFT + 4.0 * COL_PITCH,
-            origin_y: TABLEAU_BASE_Y,
-        },
-        PileSlot {
-            id: 9,
-            kind: PileKind::Tableau,
-            layout: PileLayout::FannedDown,
-            origin_x: PLAYFIELD_LEFT + 5.0 * COL_PITCH,
-            origin_y: TABLEAU_BASE_Y,
-        },
-        PileSlot {
-            id: 10,
-            kind: PileKind::Tableau,
-            layout: PileLayout::FannedDown,
-            origin_x: PLAYFIELD_LEFT + 6.0 * COL_PITCH,
-            origin_y: TABLEAU_BASE_Y,
-        },
-    ]
+/// Logical card width for a Mom's cell. The standard 90 px wide card
+/// would put 13 columns at 1170 px — wider than `VIRTUAL_W=1024` —
+/// so we shrink it to fit. Other variants are unaffected (per-pile
+/// `card_w` / `card_h` fields on `Pile`).
+pub const MOMS_CARD_W: f64 = 70.0;
+pub const MOMS_CARD_H: f64 = 98.0;
+
+const COL_GAP: f64 = 6.0;
+const ROW_GAP: f64 = 8.0;
+const PITCH_X: f64 = MOMS_CARD_W + COL_GAP;
+const PITCH_Y: f64 = MOMS_CARD_H + ROW_GAP;
+
+/// `(X, Y)` → linear `PileId`. Y=0 is the TOP row in Y-up screen
+/// coordinates (the row with the highest pile origin Y), so the
+/// first row of cards reads K, Q, J… visually from the top down.
+const fn cell_id(x: u8, y: u8) -> PileId {
+    y * COLS + x
 }
 
-static SLOTS: [PileSlot; 11] = slots();
+const fn cell_x(id: PileId) -> u8 {
+    id % COLS
+}
+const fn cell_y(id: PileId) -> u8 {
+    id / COLS
+}
+
+/// Y-up origin (bottom-left of the cell) for `(x, y)`. Row 0 is the
+/// TOP row visually; subsequent rows step DOWN by `PITCH_Y`.
+const fn origin(x: u8, y: u8) -> (f64, f64) {
+    let total_w = COLS as f64 * MOMS_CARD_W + (COLS as f64 - 1.0) * COL_GAP;
+    let left = (VIRTUAL_W - total_w) / 2.0;
+    let ox = left + x as f64 * PITCH_X;
+    // CARD_H ≠ MOMS_CARD_H, but we anchor the top row at
+    // `TOP_ROW_BOTTOM_Y` so the grid starts where Klondike's stock
+    // would. Subsequent rows step downward (smaller Y in Y-up).
+    let oy = TOP_ROW_BOTTOM_Y - (CARD_H - MOMS_CARD_H) - y as f64 * PITCH_Y;
+    (ox, oy)
+}
+
+/// Generate the 52-cell slot table at compile time.
+const fn slots() -> [PileSlot; 52] {
+    let mut out = [PileSlot {
+        id: 0,
+        kind: PileKind::Tableau,
+        layout: PileLayout::Stacked,
+        origin_x: 0.0,
+        origin_y: 0.0,
+    }; 52];
+    let mut y = 0u8;
+    while y < ROWS {
+        let mut x = 0u8;
+        while x < COLS {
+            let (ox, oy) = origin(x, y);
+            let id = cell_id(x, y);
+            out[id as usize] = PileSlot {
+                id,
+                kind: PileKind::Tableau,
+                layout: PileLayout::Stacked,
+                origin_x: ox,
+                origin_y: oy,
+            };
+            x += 1;
+        }
+        y += 1;
+    }
+    out
+}
+
+static SLOTS: [PileSlot; 52] = slots();
 
 #[derive(Default)]
 pub struct MomsSolitaire;
@@ -121,22 +117,18 @@ impl MomsSolitaire {
     }
 }
 
-fn is_tableau(id: PileId) -> bool {
-    (TABLEAU_FIRST..=TABLEAU_LAST).contains(&id)
-}
-fn is_foundation(id: PileId) -> bool {
-    (FOUND_FIRST..=FOUND_LAST).contains(&id)
-}
-
-fn alt_color_descending(top: &Card, cand: &Card) -> bool {
-    if top.suit.color() == cand.suit.color() {
-        return false;
-    }
-    Some(cand.rank) == top.rank.next_down()
+/// Standard 52-card deck, returned in Suit-major order (Spades A..K,
+/// Hearts A..K, Diamonds A..K, Clubs A..K) — the dealer shuffles it.
+fn fresh_deck() -> Vec<Card> {
+    crate::cards::standard_deck()
+        .into_iter()
+        .map(|c| c.face_up())
+        .collect()
 }
 
-fn same_suit_ascending(top: &Card, cand: &Card) -> bool {
-    top.suit == cand.suit && Some(cand.rank) == top.rank.next_up()
+/// Same-suit one-rank-lower partner of `c`, or `None` if `c` is an Ace.
+fn one_rank_lower_same_suit(c: &Card) -> Option<(Suit, Rank)> {
+    c.rank.next_down().map(|r| (c.suit, r))
 }
 
 impl GameRules for MomsSolitaire {
@@ -145,106 +137,92 @@ impl GameRules for MomsSolitaire {
     }
 
     fn deal(&self, piles: &mut PileSet, rng: &mut StdRng) {
-        let mut deck = crate::cards::standard_deck();
+        // Resize every cell to Mom's smaller card geometry first; the
+        // generic `PileSet::from_slots` initialised them with
+        // `consts::CARD_W / CARD_H`, which would draw 90-px cards into
+        // 70-px-wide cells.
+        for p in piles.iter_mut() {
+            p.card_w = MOMS_CARD_W;
+            p.card_h = MOMS_CARD_H;
+        }
+        let mut deck = fresh_deck();
         deck.shuffle(rng);
         let mut iter = deck.into_iter();
-
-        // Yukon-style deal: column 0 gets exactly one face-up card;
-        // columns 1..6 each get `col` face-down cards followed by 5
-        // face-up cards. Totals: 1 + 6 + 7 + 8 + 9 + 10 + 11 = 52,
-        // so the entire deck lands in the tableau.
-        for col in 0u8..7 {
-            let n_down = col as usize;
-            let n_up = if col == 0 { 1 } else { 5 };
-            for _ in 0..n_down {
+        for y in 0..ROWS {
+            for x in 0..COLS {
                 let card = iter.next().expect("52-card deck");
-                piles.get_mut(TABLEAU_FIRST + col).cards.push(card);
-            }
-            for _ in 0..n_up {
-                let mut card = iter.next().expect("52-card deck");
-                card.face_up = true;
-                piles.get_mut(TABLEAU_FIRST + col).cards.push(card);
+                piles.get_mut(cell_id(x, y)).cards.push(card);
             }
         }
         debug_assert!(iter.next().is_none(), "all 52 cards dealt");
     }
 
     fn legal_move(&self, piles: &PileSet, m: &Move) -> bool {
-        if m.take == 0 {
+        // Mom's only operation is the gap-swap.
+        if !m.swap_with_top || m.take != 1 {
             return false;
         }
-        let from = piles.get(m.from);
-        let to = piles.get(m.to);
-        if from.cards.len() < m.take as usize {
+        if m.from == m.to {
             return false;
         }
-        let take = m.take as usize;
-        let moved = &from.cards[from.cards.len() - take..];
-        // All moved cards must be face-up. The Yukon-style permissive
-        // rule applies only to face-up cards; you still can't grab a
-        // face-down card.
-        if moved.iter().any(|c| !c.face_up) {
+        let from_card = match piles.get(m.from).top() {
+            Some(c) => *c,
+            None => return false,
+        };
+        let to_card = match piles.get(m.to).top() {
+            Some(c) => *c,
+            None => return false,
+        };
+        // The destination must be the gap (an Ace); the source is the
+        // card the player wants to slot into that gap. (Equivalently:
+        // you don't move Aces — you fill them.)
+        if to_card.rank != Rank::Ace || from_card.rank == Rank::Ace {
             return false;
         }
-
-        // Foundation destination — take exactly one and either start
-        // with an Ace or extend the existing same-suit run.
-        if is_foundation(m.to) {
-            if take != 1 {
-                return false;
-            }
-            let cand = &moved[0];
-            return match to.top() {
-                None => cand.rank == Rank::Ace,
-                Some(top) => same_suit_ascending(top, cand),
-            };
+        let dst_x = cell_x(m.to);
+        let dst_y = cell_y(m.to);
+        if dst_x == 0 {
+            // Leftmost column: fixes the row's suit to whatever King
+            // gets dropped here. Only Kings allowed.
+            return from_card.rank == Rank::King;
         }
-
-        // Tableau destination — Yukon-rule: only the BOTTOM moved
-        // card has to match the destination's top in alt-colour
-        // descending. The cards stacked above it can be in any
-        // order; that's what makes Mom's Solitaire feel different
-        // from Klondike.
-        if is_tableau(m.to) {
-            let head = &moved[0];
-            return match to.top() {
-                None => head.rank == Rank::King,
-                Some(top) => alt_color_descending(top, head),
-            };
+        // Otherwise: the card just to the LEFT of the gap dictates
+        // the partner. We need its same-suit one-rank-lower mate.
+        let left = piles.get(cell_id(dst_x - 1, dst_y));
+        let Some(left_card) = left.top() else {
+            return false;
+        };
+        if left_card.rank == Rank::Ace {
+            // Two adjacent gaps — nothing fits.
+            return false;
         }
-
-        false
+        let Some((want_suit, want_rank)) = one_rank_lower_same_suit(left_card) else {
+            return false;
+        };
+        from_card.suit == want_suit && from_card.rank == want_rank
     }
 
-    fn auto_complete_step(&self, piles: &PileSet) -> Option<Move> {
-        // Auto-complete only kicks in once every tableau card is
-        // face-up — at that point the rest of the game is mechanical.
-        for id in TABLEAU_FIRST..=TABLEAU_LAST {
-            if piles.get(id).cards.iter().any(|c| !c.face_up) {
-                return None;
-            }
-        }
-        for src in TABLEAU_FIRST..=TABLEAU_LAST {
-            let pile = piles.get(src);
-            let Some(top) = pile.top() else { continue };
-            for fid in FOUND_FIRST..=FOUND_LAST {
-                let f = piles.get(fid);
-                let ok = match f.top() {
-                    None => top.rank == Rank::Ace,
-                    Some(ftop) => same_suit_ascending(ftop, top),
-                };
-                if ok {
-                    return Some(Move::simple(src, 1, fid));
-                }
-            }
-        }
+    fn auto_complete_step(&self, _piles: &PileSet) -> Option<Move> {
         None
     }
 
     fn is_won(&self, piles: &PileSet) -> bool {
-        for fid in FOUND_FIRST..=FOUND_LAST {
-            if piles.get(fid).cards.len() != 13 {
-                return false;
+        // Each row's columns 0..11 must form a K → 2 same-suit run.
+        // Column 12 is allowed to be anything (in practice it's the
+        // row's Ace — there's nowhere else for it to go).
+        for y in 0..ROWS {
+            let suit = match piles.get(cell_id(0, y)).top() {
+                Some(c) if c.rank == Rank::King => c.suit,
+                _ => return false,
+            };
+            for x in 1u8..12 {
+                let want_value = 13u8 - x;
+                let Some(card) = piles.get(cell_id(x, y)).top() else {
+                    return false;
+                };
+                if card.suit != suit || card.rank as u8 != want_value {
+                    return false;
+                }
             }
         }
         true
@@ -258,76 +236,114 @@ impl GameRules for MomsSolitaire {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cards::Suit;
     use crate::session::GameSession;
 
-    #[test]
-    fn deal_distributes_all_52_cards_to_tableau() {
-        let s = GameSession::new(MomsSolitaire::new(), 7);
-        let total: usize = (TABLEAU_FIRST..=TABLEAU_LAST)
-            .map(|id| s.piles.get(id).len())
-            .sum();
-        assert_eq!(total, 52);
-        // Foundations empty.
-        for fid in FOUND_FIRST..=FOUND_LAST {
-            assert_eq!(s.piles.get(fid).len(), 0);
-        }
-        // Each column's topmost card is face-up.
-        for id in TABLEAU_FIRST..=TABLEAU_LAST {
-            assert!(s.piles.get(id).top().unwrap().face_up);
-        }
-        // First tableau column has exactly 1 card; subsequent columns
-        // have 6, 7, 8, 9, 10, 11.
-        let expected = [1, 6, 7, 8, 9, 10, 11];
-        for (i, &n) in expected.iter().enumerate() {
-            assert_eq!(s.piles.get(TABLEAU_FIRST + i as u8).len(), n);
-        }
+    fn cell(piles: &PileSet, x: u8, y: u8) -> Card {
+        *piles.get(cell_id(x, y)).top().expect("cell occupied")
     }
 
     #[test]
-    fn unsorted_pile_above_target_card_is_movable() {
-        // Build a column where the head (bottom of move) is a 5♥, and
-        // above it sits an unrelated jumble: 9♠, 2♦. In Klondike that
-        // pile couldn't be moved as a unit. In Mom's Solitaire it can,
-        // as long as the destination's top is a 6♣ or 6♠.
+    fn deal_distributes_one_card_per_cell() {
+        let s = GameSession::new(MomsSolitaire::new(), 7);
+        for y in 0..ROWS {
+            for x in 0..COLS {
+                assert_eq!(s.piles.get(cell_id(x, y)).len(), 1);
+                assert!(cell(&s.piles, x, y).face_up);
+            }
+        }
+        // 52 unique cards.
+        let mut seen = std::collections::HashSet::new();
+        for y in 0..ROWS {
+            for x in 0..COLS {
+                let c = cell(&s.piles, x, y);
+                assert!(seen.insert((c.suit, c.rank)));
+            }
+        }
+        assert_eq!(seen.len(), 52);
+    }
+
+    #[test]
+    fn swap_into_gap_must_match_left_neighbour() {
         let rules = MomsSolitaire::new();
         let mut piles = PileSet::from_slots(rules.pile_layout());
+        for p in piles.iter_mut() {
+            p.card_w = MOMS_CARD_W;
+            p.card_h = MOMS_CARD_H;
+        }
+        // Place 5♥ at (3, 0) and an Ace gap at (4, 0).
         piles
-            .get_mut(TABLEAU_FIRST)
+            .get_mut(cell_id(3, 0))
             .cards
             .push(Card::new(Suit::Hearts, Rank::Five).face_up());
         piles
-            .get_mut(TABLEAU_FIRST)
+            .get_mut(cell_id(4, 0))
             .cards
-            .push(Card::new(Suit::Spades, Rank::Nine).face_up());
+            .push(Card::new(Suit::Spades, Rank::Ace).face_up());
+        // Stash 4♥ at (10, 0) — that's the partner.
         piles
-            .get_mut(TABLEAU_FIRST)
+            .get_mut(cell_id(10, 0))
             .cards
-            .push(Card::new(Suit::Diamonds, Rank::Two).face_up());
+            .push(Card::new(Suit::Hearts, Rank::Four).face_up());
+        // Stash 4♣ at (11, 0) — same rank, wrong suit.
         piles
-            .get_mut(TABLEAU_FIRST + 1)
+            .get_mut(cell_id(11, 0))
             .cards
-            .push(Card::new(Suit::Clubs, Rank::Six).face_up());
-        let m = Move::simple(TABLEAU_FIRST, 3, TABLEAU_FIRST + 1);
-        assert!(rules.legal_move(&piles, &m));
+            .push(Card::new(Suit::Clubs, Rank::Four).face_up());
+
+        let from_4h = cell_id(10, 0);
+        let from_4c = cell_id(11, 0);
+        let to_gap = cell_id(4, 0);
+
+        assert!(rules.legal_move(&piles, &Move::swap(from_4h, to_gap)));
+        // Wrong-suit partner is rejected.
+        assert!(!rules.legal_move(&piles, &Move::swap(from_4c, to_gap)));
     }
 
     #[test]
-    fn foundation_only_accepts_topmost_card() {
+    fn col_zero_only_accepts_kings() {
         let rules = MomsSolitaire::new();
         let mut piles = PileSet::from_slots(rules.pile_layout());
+        for p in piles.iter_mut() {
+            p.card_w = MOMS_CARD_W;
+            p.card_h = MOMS_CARD_H;
+        }
         piles
-            .get_mut(TABLEAU_FIRST)
+            .get_mut(cell_id(0, 0))
             .cards
-            .push(Card::new(Suit::Hearts, Rank::Ace).face_up());
-        let m = Move::simple(TABLEAU_FIRST, 1, FOUND_FIRST);
-        assert!(rules.legal_move(&piles, &m));
-        // Multi-card to foundation rejected.
+            .push(Card::new(Suit::Diamonds, Rank::Ace).face_up());
         piles
-            .get_mut(TABLEAU_FIRST)
+            .get_mut(cell_id(5, 0))
             .cards
-            .push(Card::new(Suit::Spades, Rank::Two).face_up());
-        let m = Move::simple(TABLEAU_FIRST, 2, FOUND_FIRST);
-        assert!(!rules.legal_move(&piles, &m));
+            .push(Card::new(Suit::Hearts, Rank::King).face_up());
+        piles
+            .get_mut(cell_id(6, 0))
+            .cards
+            .push(Card::new(Suit::Hearts, Rank::Queen).face_up());
+
+        let to_col_zero_gap = cell_id(0, 0);
+        // King → col-0 gap is fine, regardless of suit.
+        assert!(rules.legal_move(&piles, &Move::swap(cell_id(5, 0), to_col_zero_gap)));
+        // Queen → col-0 gap is rejected.
+        assert!(!rules.legal_move(&piles, &Move::swap(cell_id(6, 0), to_col_zero_gap)));
+    }
+
+    #[test]
+    fn ace_is_never_legal_as_a_source() {
+        let rules = MomsSolitaire::new();
+        let mut piles = PileSet::from_slots(rules.pile_layout());
+        for p in piles.iter_mut() {
+            p.card_w = MOMS_CARD_W;
+            p.card_h = MOMS_CARD_H;
+        }
+        piles
+            .get_mut(cell_id(0, 0))
+            .cards
+            .push(Card::new(Suit::Diamonds, Rank::Ace).face_up());
+        piles
+            .get_mut(cell_id(1, 0))
+            .cards
+            .push(Card::new(Suit::Spades, Rank::Ace).face_up());
+        // An Ace can't be moved into another Ace's slot.
+        assert!(!rules.legal_move(&piles, &Move::swap(cell_id(0, 0), cell_id(1, 0))));
     }
 }

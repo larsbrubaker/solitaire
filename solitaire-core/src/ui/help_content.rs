@@ -143,40 +143,49 @@ All 8 foundations filled with K → A runs (104 cards total, 8 sets).
 const MOMS_RULES: &str = r#"
 # Mom's Solitaire
 
-A Yukon-style variant: all 52 cards land in the seven tableau columns
-at the deal, there's no stock to worry about, and you have a lot more
-freedom than Klondike about which groups of cards you can pick up.
+Mom's Solitaire is a Montana / Gaps variant. There's no stock, no
+waste, no foundations — just every card laid out face-up on a
+**13 × 4 grid**, with the four Aces serving as moveable gaps. Cards
+play to the **right**, building same-suit runs from King down to 2.
 
 ## Layout
 
-- **7 tableau columns**, dealt:
-  - Column 1: 1 face-up card.
-  - Columns 2–7: face-down cards underneath plus 5 face-up cards on
-    top. Column 2 has 1 face-down + 5 face-up = 6 cards; column 7
-    has 6 face-down + 5 face-up = 11 cards. Total: 52 cards.
-- **4 foundations** (top-left), empty at start.
-- **No stock, no waste.**
+- **13 columns × 4 rows = 52 cells**, one card per cell, all face-up.
+- The four Aces are the **gaps**. They aren't movable — they're the
+  empty space you slide cards into.
 
 ## How to play
 
-- **Tableau → tableau (the Yukon rule):** pick up any face-up card
-  along with **every card stacked on top of it**, regardless of
-  whether those upper cards form an alternating-colour run. Drop the
-  group on a column where the receiving top is one rank higher and
-  opposite colour to the bottom card you're moving. The cards above
-  the bottom one don't need to match anything — they come along for
-  the ride.
-- **Tableau → foundation:** drop a single card onto a foundation if
-  it's an Ace, or one rank higher in the same suit.
-- **Empty tableau column:** only a King (or a King-led group) may
-  be placed on an empty column.
-- **Auto-flip:** once removing the topmost cards exposes a face-down
-  card, it flips automatically.
+Each move fills a gap by swapping a card into it.
+
+- **A gap in column 1..12:** look at the card immediately to the
+  **left** of the gap. The gap can only be filled by that left
+  neighbour's **same-suit, one-rank-lower partner**. (Left neighbour
+  6♥ → the gap takes 5♥. Left neighbour 5♣ → 4♣. And so on.)
+- **A gap in column 0** (the leftmost): only a **King** can fill it,
+  any suit. The King's suit then becomes that row's target colour
+  for the K-Q-J-…-2 run that builds to its right.
+- **An Ace can't be the source of a move.** It's not a card you
+  pick up; it's the gap you fill.
+- **Stuck gaps:** if the card to the left of a gap is a 2 or
+  another Ace, no card fits — that gap is dead until adjacent moves
+  free it.
+
+In our drag-drop UI you achieve a swap by dragging the card you
+want **onto the gap**. The Ace that was sitting in the gap returns
+to the source cell, ready to be filled in turn.
 
 ## Win condition
 
-All 52 cards on the four foundations, ordered Ace → King in their
-own suit.
+Each row's columns 0..11 form a **same-suit K → 2 run** (column 12
+ends up holding that row's Ace). All four rows in this state means
+the deck is sorted — you've won.
+
+## A note on the name
+
+This game is named for a Mother's Day 1989 gift my cousin Marlin
+Eller wrote in Forth on a Mac+ for his mom Margaret. See **Help →
+About** for the story.
 "#;
 
 // ────────────────────────────────────────────────────────────────────
@@ -266,10 +275,13 @@ some point he turned to me and said, *"no one who doesn't love
 programming can sit here and watch someone write code."* I'm a
 programmer because of that gift. Margaret got hers; I got mine.
 
-I never learned the exact rules of Marlin's variant. This one is
-named in honour of that afternoon — the rules are a Yukon
-treatment, which feels true to a 1989 Mac+ Forth project: a solid
-ruleset, no stock to manage, every card on the table from move one.
+The game is a **Montana / Gaps** variant — all 52 cards face-up in
+a 13×4 grid, the four Aces as gaps, runs built same-suit K → 2 from
+left to right. The rules in this Rust app are ported from a later
+C# / agg-sharp re-implementation of the original Forth program
+(under `MatterCAD/Submodules/agg-sharp/examples/MomsSolitaire/`).
+
+See **Help → Rules** for how to play.
 "#,
     SHARED_CREDITS
 );

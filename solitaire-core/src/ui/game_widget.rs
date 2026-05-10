@@ -261,16 +261,22 @@ impl GameWidget {
             if to != drag.source_pile {
                 let take = drag.cards.len() as u8;
                 let from_pile = session.piles().get(drag.source_pile);
-                // If the source pile is a tableau and removing the dragged
-                // tail would expose a face-down card on top, set
-                // flip_source_after.
-                let mut m = Move::simple(drag.source_pile, take, to);
-                if from_pile.kind == PileKind::Tableau && drag.start_idx > 0 {
-                    let beneath = &from_pile.cards[drag.start_idx - 1];
-                    if !beneath.face_up {
-                        m = m.with_flip_source();
+                // Mom's Solitaire's drag operation is a swap (the gap
+                // and the card you drag onto it exchange places); every
+                // other variant is a normal stack move with optional
+                // auto-flip of the newly-exposed source card.
+                let m = if session.game_slug() == "moms" {
+                    Move::swap(drag.source_pile, to)
+                } else {
+                    let mut m = Move::simple(drag.source_pile, take, to);
+                    if from_pile.kind == PileKind::Tableau && drag.start_idx > 0 {
+                        let beneath = &from_pile.cards[drag.start_idx - 1];
+                        if !beneath.face_up {
+                            m = m.with_flip_source();
+                        }
                     }
-                }
+                    m
+                };
                 session.try_apply(m);
             }
         }
@@ -284,9 +290,21 @@ impl GameWidget {
     fn paint_dragged(&self, ctx: &mut dyn DrawCtx, drag: &DragState) {
         let bx = drag.cur_x - drag.grab_dx;
         let by = drag.cur_y - drag.grab_dy;
+        // Use the source pile's card dimensions so a Mom's Solitaire
+        // card stays sized correctly while floating at the cursor.
+        let model = self.model.borrow();
+        let (card_w, card_h) = model
+            .session
+            .as_ref()
+            .map(|s| {
+                let p = s.piles().get(drag.source_pile);
+                (p.card_w, p.card_h)
+            })
+            .unwrap_or((CARD_W, CARD_H));
+        drop(model);
         for (i, card) in drag.cards.iter().enumerate() {
             let y = by - i as f64 * crate::consts::TABLEAU_FAN_DOWN;
-            paint_card_at(ctx, card, bx, y, &self.atlas);
+            paint_card_at(ctx, card, bx, y, card_w, card_h, &self.atlas);
         }
     }
 }

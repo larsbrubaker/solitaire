@@ -24,46 +24,48 @@
 
 use agg_gui::draw_ctx::DrawCtx;
 
-use crate::consts::{CARD_CORNER_R, CARD_H, CARD_W};
+use crate::consts::CARD_CORNER_R;
 use crate::piles::Pile;
 
 use super::atlas::CardSpriteAtlas;
 use super::SLOT_BORDER;
 
 /// Paint an empty-slot placeholder. Cheap (one rounded-rect stroke) so
-/// no atlas entry is needed.
-pub fn paint_empty_slot(ctx: &mut dyn DrawCtx, x: f64, y: f64) {
+/// no atlas entry is needed. Caller passes the slot's per-pile
+/// dimensions so Mom's Solitaire's smaller cells render correctly.
+pub fn paint_empty_slot(ctx: &mut dyn DrawCtx, x: f64, y: f64, w: f64, h: f64) {
     ctx.begin_path();
-    ctx.rounded_rect(x, y, CARD_W, CARD_H, CARD_CORNER_R);
+    ctx.rounded_rect(x, y, w, h, CARD_CORNER_R);
     ctx.set_stroke_color(SLOT_BORDER);
     ctx.set_line_width(2.0);
     ctx.stroke();
 }
 
-/// Logical destination rect that maps `(atlas.px_w, atlas.px_h)`
-/// physical pixels onto integer device-pixel boundaries at logical
-/// origin `(lx, ly)`. Returns `(snapped_lx, snapped_ly, dst_w_log,
+/// Logical destination rect for a single card blit, with the origin
+/// snapped to integer device pixels so adjacent cards don't smear at
+/// sub-pixel boundaries. Returns `(snapped_lx, snapped_ly, dst_w_log,
 /// dst_h_log)`.
+///
+/// Standard variants (Klondike / FreeCell / Spider) pass the atlas's
+/// per-card pixel size in `(card_w_log, card_h_log)` translated through
+/// the current scale — the destination then matches `atlas.px_w / px_h`
+/// exactly and NEAREST sampling stays 1:1. Mom's Solitaire passes a
+/// smaller card_w/card_h to render its 13×4 grid; the GPU
+/// downsamples (slight quality loss vs. the standard variants, but
+/// the cells need to fit in the playfield).
 fn snap_blit_rect(
     ctx: &dyn DrawCtx,
-    atlas: &CardSpriteAtlas,
     lx: f64,
     ly: f64,
+    card_w_log: f64,
+    card_h_log: f64,
 ) -> (f64, f64, f64, f64) {
     let t = ctx.transform();
-    let sx = t.sx.abs().max(1e-9);
-    let sy = t.sy.abs().max(1e-9);
-    // Sign of sy can be negative (Y-up flip baked into the framework's
-    // outer transform); preserve it so we don't accidentally Y-flip the
-    // sprite when computing the snap.
-    let sy_signed = if t.sy >= 0.0 { sy } else { -sy };
     let phys_x = (lx * t.sx + t.tx).round();
     let phys_y = (ly * t.sy + t.ty).round();
     let snapped_lx = (phys_x - t.tx) / t.sx;
     let snapped_ly = (phys_y - t.ty) / t.sy;
-    let dst_w_log = atlas.px_w as f64 / sx;
-    let dst_h_log = atlas.px_h as f64 / sy_signed.abs();
-    (snapped_lx, snapped_ly, dst_w_log, dst_h_log)
+    (snapped_lx, snapped_ly, card_w_log, card_h_log)
 }
 
 /// Paint every visible card in `pile` by blitting cached sprites.
@@ -75,21 +77,21 @@ pub fn paint_pile(
     atlas: &CardSpriteAtlas,
 ) {
     if pile.is_empty() {
-        let (x, y, _, _) = pile.empty_slot_rect();
-        paint_empty_slot(ctx, x, y);
+        let (x, y, w, h) = pile.empty_slot_rect();
+        paint_empty_slot(ctx, x, y, w, h);
         return;
     }
 
     let stop = hide_from.unwrap_or(pile.cards.len()).min(pile.cards.len());
     if stop == 0 {
-        let (x, y, _, _) = pile.empty_slot_rect();
-        paint_empty_slot(ctx, x, y);
+        let (x, y, w, h) = pile.empty_slot_rect();
+        paint_empty_slot(ctx, x, y, w, h);
         return;
     }
 
     for idx in 0..stop {
         let (lx, ly) = pile.position_for(idx);
-        let (sx, sy, w, h) = snap_blit_rect(ctx, atlas, lx, ly);
+        let (sx, sy, w, h) = snap_blit_rect(ctx, lx, ly, pile.card_w, pile.card_h);
         let card = &pile.cards[idx];
         let sprite = if card.face_up {
             atlas.face(card.suit, card.rank)
@@ -101,15 +103,19 @@ pub fn paint_pile(
 }
 
 /// Paint a single card at an arbitrary (x, y) — used by the GameWidget
-/// drag overlay where cards float at the cursor.
+/// drag overlay where cards float at the cursor. Caller passes the
+/// destination card size so dragged cards from a Mom's-Solitaire-sized
+/// pile keep their smaller dimensions while floating.
 pub fn paint_card_at(
     ctx: &mut dyn DrawCtx,
     card: &crate::cards::Card,
     x: f64,
     y: f64,
+    card_w: f64,
+    card_h: f64,
     atlas: &CardSpriteAtlas,
 ) {
-    let (sx, sy, w, h) = snap_blit_rect(ctx, atlas, x, y);
+    let (sx, sy, w, h) = snap_blit_rect(ctx, x, y, card_w, card_h);
     let sprite = if card.face_up {
         atlas.face(card.suit, card.rank)
     } else {

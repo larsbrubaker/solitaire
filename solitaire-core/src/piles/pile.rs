@@ -25,6 +25,13 @@ pub struct Pile {
     pub origin_x: f64,
     pub origin_y: f64,
     pub cards: Vec<Card>,
+    /// Logical card width to render at this pile (defaults to
+    /// `consts::CARD_W`). Mom's Solitaire shrinks every cell to fit a
+    /// 13-column board inside the virtual playfield; other variants
+    /// use the standard size.
+    pub card_w: f64,
+    /// Logical card height — companion to `card_w`.
+    pub card_h: f64,
     /// Up to this many of the topmost cards are fanned right by `fan_dx`;
     /// the rest stack at the origin. Used for the Klondike waste pile in
     /// 3-card-draw mode. `0` (default) disables the fan.
@@ -48,6 +55,8 @@ impl Pile {
             origin_x,
             origin_y,
             cards: Vec::new(),
+            card_w: CARD_W,
+            card_h: CARD_H,
             fan_top_n: 0,
             fan_dx: 0.0,
         }
@@ -98,15 +107,15 @@ impl Pile {
     }
 
     /// Bounding rect of the empty slot (card-shaped placeholder painted
-    /// when the pile is empty). Same x and CARD_W/CARD_H as a card would
-    /// occupy at index 0.
+    /// when the pile is empty). Uses the pile's per-instance
+    /// `card_w` / `card_h`.
     pub fn empty_slot_rect(&self) -> (f64, f64, f64, f64) {
-        (self.origin_x, self.origin_y, CARD_W, CARD_H)
+        (self.origin_x, self.origin_y, self.card_w, self.card_h)
     }
 
     /// Y-up bounding rect of the card at `idx`: (x, y, w, h).
     pub fn card_rect(&self, idx: usize) -> (f64, f64, f64, f64) {
         let (x, y) = self.position_for(idx);
-        (x, y, CARD_W, CARD_H)
+        (x, y, self.card_w, self.card_h)
     }
 }

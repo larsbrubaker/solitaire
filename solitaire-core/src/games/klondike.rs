@@ -329,6 +329,7 @@ impl GameRules for Klondike {
                     flip_moved: true,
                     flip_source_after: false,
                     reverse_order: true,
+                    swap_with_top: false,
                 }];
             }
         }
