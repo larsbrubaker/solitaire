@@ -1,0 +1,31 @@
+[package]
+name = "solitaire-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Core game logic, widgets, and Supabase client for the Solitaire game (target-agnostic; works on native and wasm32)."
+
+[dependencies]
+agg-gui = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+web-time = { workspace = true }
+# `ehttp` is the cross-platform fetch we use for Supabase REST. It uses ureq
+# on native (off the calling thread, so no tokio runtime required) and the
+# browser's fetch API on wasm32. Callbacks get `Send` futures, so widgets
+# bridge results back to the synchronous frame loop via a `flume` channel.
+ehttp = "0.3"
+flume = { version = "0.11", default-features = false, features = ["async"] }
+futures-util = { version = "0.3", default-features = false }
+thiserror = "1"
+rand = "0.8"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
+wasm-bindgen-futures = "0.4"
+
+[lib]
+crate-type = ["rlib"]

@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # Sibling agg-gui checkout — solitaire/Cargo.toml has a [patch.crates-io]
+      # entry pointing at `../agg-gui/agg-gui` so we develop against the latest
+      # agg-gui sources without waiting for a crates.io publish. See CLAUDE.md.
+      - name: Clone agg-gui sibling
+        run: git clone --depth 1 https://github.com/larsbrubaker/agg-gui.git ../agg-gui
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt --check
+        # Keep rustfmt scoped to Solitaire packages. The CI checkout also places
+        # agg-gui beside this repo for path dependencies; `cargo fmt --all`
+        # would fail this repo's CI on unrelated formatting in that sibling.
+        run: cargo fmt --package solitaire-core --package solitaire-native --package solitaire-wasm -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: cargo test
+        run: cargo test --workspace
+
+      - name: cargo check (wasm32)
+        run: cargo check -p solitaire-wasm --target wasm32-unknown-unknown

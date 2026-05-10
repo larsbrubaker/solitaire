@@ -1,0 +1,28 @@
+[package]
+name = "solitaire-native"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Native (winit + wgpu-presented agg-gui) shell for the Solitaire game."
+
+[[bin]]
+name = "solitaire-native"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+solitaire-core = { path = "../solitaire-core" }
+agg-gui = { workspace = true, features = ["winit-adapter", "clipboard"] }
+demo-wgpu = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { version = "1", features = ["rt", "macros", "time", "sync"] }
+flume = "0.11"
+dotenvy = "0.15"
+dirs = "5"
+pollster = "0.4"
+wgpu = { version = "29", default-features = false, features = ["wgsl", "vulkan", "dx12", "metal"] }
+winit = "0.30"
