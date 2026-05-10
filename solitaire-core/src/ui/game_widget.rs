@@ -45,12 +45,12 @@ pub struct GameWidget {
     children: Vec<Box<dyn Widget>>,
     model: SharedModel,
     font: Arc<Font>,
-    atlas: Arc<CardSpriteAtlas>,
+    atlas: CardSpriteAtlas,
     drag: Option<DragState>,
 }
 
 impl GameWidget {
-    pub fn new(model: SharedModel, font: Arc<Font>, atlas: Arc<CardSpriteAtlas>) -> Self {
+    pub fn new(model: SharedModel, font: Arc<Font>, atlas: CardSpriteAtlas) -> Self {
         Self {
             bounds: Rect::default(),
             children: Vec::new(),
@@ -59,6 +59,27 @@ impl GameWidget {
             atlas,
             drag: None,
         }
+    }
+
+    /// Rebuild the sprite atlas at the current effective render scale
+    /// (playfield scale × device DPR) so each sprite's pixel count
+    /// matches its on-screen physical size 1:1.
+    fn ensure_atlas_for(&mut self, playfield_scale: f64) {
+        let target = (playfield_scale * agg_gui::device_scale()).max(0.5);
+        // Rebuild only on a meaningful change to avoid thrashing during
+        // imperceptible window-frame jitter.
+        if (target - self.atlas.render_scale).abs() < 0.02 {
+            return;
+        }
+        let t0 = web_time::Instant::now();
+        self.atlas = CardSpriteAtlas::build(&self.font, target);
+        eprintln!(
+            "solitaire: rebuilt atlas at scale {:.3} ({}x{} px) in {:.1} ms",
+            target,
+            self.atlas.px_w,
+            self.atlas.px_h,
+            t0.elapsed().as_secs_f64() * 1000.0
+        );
     }
 
     fn try_start_drag(&mut self, vx: f64, vy: f64) -> bool {
@@ -210,6 +231,7 @@ impl Widget for GameWidget {
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
         let t0 = web_time::Instant::now();
         let (tx, ty, scale) = playfield_transform(self.bounds);
+        self.ensure_atlas_for(scale);
         ctx.save();
         ctx.translate(tx, ty);
         ctx.scale(scale, scale);

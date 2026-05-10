@@ -6,7 +6,7 @@ use std::sync::Arc;
 use agg_gui::color::Color;
 use agg_gui::draw_ctx::DrawCtx;
 use agg_gui::event::{Event, EventResult, MouseButton};
-use agg_gui::geometry::{Rect, Size};
+use agg_gui::geometry::{Point, Rect, Size};
 use agg_gui::text::Font;
 use agg_gui::widget::Widget;
 
@@ -157,6 +157,15 @@ impl Widget for HudWidget {
     fn is_visible(&self) -> bool {
         let s = self.model.borrow().screen;
         matches!(s, Screen::Game | Screen::Won)
+    }
+
+    /// Only claim pointer events that fall inside the bottom HUD strip.
+    /// Without this override the widget's full-bounds default would
+    /// swallow every click on the playfield and `GameWidget` (added
+    /// earlier in the OverlayStack) would never receive a drag start.
+    fn hit_test(&self, local_pos: Point) -> bool {
+        let (_, vy) = screen_to_virtual(self.bounds, local_pos.x, local_pos.y);
+        (0.0..=HUD_HEIGHT).contains(&vy)
     }
 
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
