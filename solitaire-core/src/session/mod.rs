@@ -50,6 +50,18 @@ impl<R: GameRules> GameSession<R> {
         true
     }
 
+    /// Apply a move WITHOUT consulting `rules.legal_move`. Used for
+    /// engine-initiated state changes that intentionally don't fit
+    /// the user-facing move grammar — e.g. Mom's Solitaire's
+    /// `Shuffle` action, which swaps out-of-place cells around the
+    /// board without satisfying the "click a gap" legality check.
+    /// The move still lands on the undo stack so the user can roll
+    /// it back like any other.
+    pub fn apply_forced(&mut self, m: Move) {
+        apply_move(&mut self.piles, &m);
+        self.undo.push_user(m);
+    }
+
     /// Pop the most recent USER move (and any auto follow-ups stacked
     /// after it) and revert in reverse order. Returns `false` if the
     /// undo stack is empty.

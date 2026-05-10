@@ -140,8 +140,12 @@ impl AppModel {
         if swaps.is_empty() {
             return false;
         }
+        // Shuffle swaps never satisfy Mom's user-facing `legal_move`
+        // (which requires the destination to be an Ace gap matching
+        // its left neighbour). Use the unchecked path; the swaps
+        // still land on the undo stack.
         for (a, b) in swaps {
-            session.try_apply(crate::session::Move::swap(a, b));
+            session.apply_forced(crate::session::Move::swap(a, b));
         }
         self.moms_shuffles += 1;
         self.moms_waiting_king_at = None;

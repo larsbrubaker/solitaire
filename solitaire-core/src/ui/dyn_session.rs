@@ -8,6 +8,10 @@ use crate::session::{GameSession, Move};
 
 pub trait DynGameSession {
     fn try_apply(&mut self, m: Move) -> bool;
+    /// Apply a move bypassing `legal_move`. Used by engine-initiated
+    /// actions like Mom's Solitaire's Shuffle that intentionally fall
+    /// outside the user-facing move grammar.
+    fn apply_forced(&mut self, m: Move);
     fn try_undo(&mut self) -> bool;
     fn legal_move(&self, m: &Move) -> bool;
     fn on_pile_click(&self, pile: PileId) -> Vec<Move>;
@@ -21,6 +25,9 @@ pub trait DynGameSession {
 impl<R: GameRules> DynGameSession for GameSession<R> {
     fn try_apply(&mut self, m: Move) -> bool {
         GameSession::try_apply(self, m)
+    }
+    fn apply_forced(&mut self, m: Move) {
+        GameSession::apply_forced(self, m);
     }
     fn try_undo(&mut self) -> bool {
         GameSession::try_undo(self)
