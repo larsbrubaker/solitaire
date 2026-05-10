@@ -38,11 +38,7 @@ pub struct TitleWidget {
     hover_idx: Option<usize>,
 }
 
-const KINDS: [GameKind; 3] = [
-    GameKind::Klondike,
-    GameKind::FreeCell,
-    GameKind::Spider,
-];
+const KINDS: [GameKind; 3] = [GameKind::Klondike, GameKind::FreeCell, GameKind::Spider];
 
 impl TitleWidget {
     pub fn new(model: SharedModel, font: Arc<Font>) -> Self {

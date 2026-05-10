@@ -24,8 +24,7 @@ const CASCADE_FIRST: PileId = 8;
 const CASCADE_LAST: PileId = 15;
 
 const N_CASCADES: usize = 8;
-const PLAYFIELD_LEFT_FREECELL: f64 =
-    (VIRTUAL_W - (7.0 * COL_PITCH + crate::consts::CARD_W)) / 2.0;
+const PLAYFIELD_LEFT_FREECELL: f64 = (VIRTUAL_W - (7.0 * COL_PITCH + crate::consts::CARD_W)) / 2.0;
 
 const fn slot_top(idx: usize) -> PileSlot {
     let kind = if idx < 4 {
@@ -161,10 +160,7 @@ impl GameRules for FreeCell {
             for _ in 0..n {
                 let mut card = iter.next().expect("52 card deck");
                 card.face_up = true;
-                piles
-                    .get_mut(CASCADE_FIRST + col as u8)
-                    .cards
-                    .push(card);
+                piles.get_mut(CASCADE_FIRST + col as u8).cards.push(card);
             }
         }
         debug_assert!(iter.next().is_none(), "all 52 cards dealt");

@@ -155,10 +155,7 @@ impl GameRules for Spider {
                 if j == n - 1 {
                     card.face_up = true;
                 }
-                piles
-                    .get_mut(CASCADE_FIRST + col as u8)
-                    .cards
-                    .push(card);
+                piles.get_mut(CASCADE_FIRST + col as u8).cards.push(card);
             }
         }
         for card in iter {
@@ -187,7 +184,10 @@ impl GameRules for Spider {
         // The complete-run auto-collapse: cascade → foundation, take=13,
         // generated only by `after_move`.
         if is_cascade(m.from) && is_foundation(m.to) {
-            return take == 13 && to.is_empty() && is_suited_run(moved) && moved[0].rank == Rank::King;
+            return take == 13
+                && to.is_empty()
+                && is_suited_run(moved)
+                && moved[0].rank == Rank::King;
         }
 
         if moved.iter().any(|c| !c.face_up) {
@@ -261,9 +261,7 @@ impl GameRules for Spider {
         }
         let mut out = Vec::with_capacity(N_CASCADES);
         for col in 0..N_CASCADES {
-            out.push(
-                Move::simple(STOCK, 1, CASCADE_FIRST + col as u8).with_flip_moved(),
-            );
+            out.push(Move::simple(STOCK, 1, CASCADE_FIRST + col as u8).with_flip_moved());
         }
         out
     }

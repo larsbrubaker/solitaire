@@ -94,7 +94,11 @@ impl GameWidget {
         let Some(hit) = piles.hit_test(vx, vy) else {
             return false;
         };
-        let HitResult::Card { pile: src, card_idx } = hit else {
+        let HitResult::Card {
+            pile: src,
+            card_idx,
+        } = hit
+        else {
             return false;
         };
         // Only the topmost card is auto-moveable.

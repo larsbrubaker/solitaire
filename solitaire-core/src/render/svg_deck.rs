@@ -56,10 +56,7 @@ fn strip_background(svg: &[u8]) -> Vec<u8> {
     const REPLACE: &[u8] = b"fill:#55aa55;fill-opacity:0";
     debug_assert_eq!(NEEDLE.len(), REPLACE.len());
     let mut out = svg.to_vec();
-    if let Some(pos) = out
-        .windows(NEEDLE.len())
-        .position(|w| w == NEEDLE)
-    {
+    if let Some(pos) = out.windows(NEEDLE.len()).position(|w| w == NEEDLE) {
         out[pos..pos + NEEDLE.len()].copy_from_slice(REPLACE);
     }
     out
@@ -88,8 +85,8 @@ impl DeckBitmap {
         let master_w = (card_px_w as f64 * SRC_MASTER_W / SRC_CARD_W).round() as u32;
         let master_h = (card_px_h as f64 * SRC_MASTER_H / SRC_CARD_H).round() as u32;
         let svg = strip_background(MASTER_SVG);
-        let tree = parse_svg(&svg, &SvgParseOptions::default())
-            .expect("bundled CC0 deck SVG parses");
+        let tree =
+            parse_svg(&svg, &SvgParseOptions::default()).expect("bundled CC0 deck SVG parses");
         let fb = render_svg_tree_to_framebuffer_at_size(&tree, master_w, master_h)
             .expect("bundled CC0 deck SVG rasterizes");
         let mut pixels = fb.pixels_flipped();
@@ -221,10 +218,18 @@ mod tests {
                     for x in cell_x0..cell_x0 + card_px_w {
                         let alpha = bmp.pixels[(y * stride + x * 4 + 3) as usize];
                         if alpha > 200 {
-                            if x < min_x { min_x = x; }
-                            if x > max_x { max_x = x; }
-                            if y < min_y { min_y = y; }
-                            if y > max_y { max_y = y; }
+                            if x < min_x {
+                                min_x = x;
+                            }
+                            if x > max_x {
+                                max_x = x;
+                            }
+                            if y < min_y {
+                                min_y = y;
+                            }
+                            if y > max_y {
+                                max_y = y;
+                            }
                         }
                     }
                 }

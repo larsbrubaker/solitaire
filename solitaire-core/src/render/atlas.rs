@@ -61,7 +61,10 @@ impl CardSpriteAtlas {
         let mut faces = HashMap::with_capacity(52);
         for suit in Suit::ALL {
             for rank in Rank::ALL {
-                faces.insert(FaceKey { suit, rank }, Arc::new(deck.extract_face(suit, rank)));
+                faces.insert(
+                    FaceKey { suit, rank },
+                    Arc::new(deck.extract_face(suit, rank)),
+                );
             }
         }
 
