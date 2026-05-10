@@ -17,6 +17,14 @@
 
 **Every `.rs` file in this workspace stays under 800 lines.** This applies to production code AND tests. When approaching the cap, split into a sibling module under the same parent (e.g. `games/klondike.rs` → `games/klondike/{rules,deal,scoring}.rs`). Do not concatenate unrelated logic into a single oversized file just because it "fits."
 
+## Icons: Font Awesome via Unicode code points
+
+All UI icons render through **Font Awesome** font glyphs, not raster images. Bundle the FA TTF/OTF files as assets (`include_bytes!`) and load them as additional `agg_gui::text::Font` instances — one per FA family in use (typically Free Solid + Free Brands). Render an icon by drawing its Unicode code point through that font with `ctx.fill_text` (or via a `Label` constructed with the FA font).
+
+Do **not** ship PNG/SVG icon assets. Do **not** pre-rasterize FA glyphs into a sprite atlas. The agg-gui glyph cache already handles per-glyph caching.
+
+When referring to a specific icon in code, use the constant name from FA's cheatsheet (e.g. `FA_GEAR = '\u{f013}'`), grouped in a small `ui/icons.rs` module. Don't sprinkle raw `'\u{...}'` literals through widget code.
+
 ## Procedural card rendering — no PNGs
 
 Card faces are drawn via `DrawCtx` primitives in `solitaire-core/src/render/card_face.rs`. **No PNGs, no SVG.** Suit glyphs are custom-traced paths defined alongside the renderer. The four suits and the card back are the only sprite-like things in the entire game and they must all live in the renderer module.
