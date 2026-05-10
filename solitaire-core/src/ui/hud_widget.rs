@@ -99,8 +99,9 @@ impl HudWidget {
     }
 
     fn paint_strip(&self, ctx: &mut dyn DrawCtx) {
-        ctx.set_fill_color(HUD_BG);
+        ctx.begin_path();
         ctx.rect(0.0, 0.0, VIRTUAL_W, HUD_HEIGHT);
+        ctx.set_fill_color(HUD_BG);
         ctx.fill();
     }
 
@@ -111,12 +112,14 @@ impl HudWidget {
         } else {
             BTN_BG
         };
-        ctx.set_fill_color(bg);
+        ctx.begin_path();
         ctx.rounded_rect(x, y, w, h, 8.0);
+        ctx.set_fill_color(bg);
         ctx.fill();
+        ctx.begin_path();
+        ctx.rounded_rect(x, y, w, h, 8.0);
         ctx.set_stroke_color(BTN_BORDER);
         ctx.set_line_width(1.5);
-        ctx.rounded_rect(x, y, w, h, 8.0);
         ctx.stroke();
 
         ctx.set_fill_color(TXT);

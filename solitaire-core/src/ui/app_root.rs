@@ -49,8 +49,9 @@ impl Widget for AppRootWidget {
 
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
         let b = self.bounds;
-        ctx.set_fill_color(FELT_GREEN);
+        ctx.begin_path();
         ctx.rect(0.0, 0.0, b.width, b.height);
+        ctx.set_fill_color(FELT_GREEN);
         ctx.fill();
     }
 

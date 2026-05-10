@@ -11,11 +11,12 @@ use crate::piles::Pile;
 
 use super::{paint_card_back, paint_card_face, SLOT_BORDER};
 
-/// Paint an empty-slot placeholder (a dashed rounded rect outline).
+/// Paint an empty-slot placeholder.
 pub fn paint_empty_slot(ctx: &mut dyn DrawCtx, x: f64, y: f64) {
+    ctx.begin_path();
+    ctx.rounded_rect(x, y, CARD_W, CARD_H, CARD_CORNER_R);
     ctx.set_stroke_color(SLOT_BORDER);
     ctx.set_line_width(2.0);
-    ctx.rounded_rect(x, y, CARD_W, CARD_H, CARD_CORNER_R);
     ctx.stroke();
 }
 

@@ -317,8 +317,9 @@ fn paint_win_banner(ctx: &mut dyn DrawCtx, font: &Arc<Font>) {
     let bh = 100.0;
     let bx = (VIRTUAL_W - bw) / 2.0;
     let by = (VIRTUAL_H - bh) / 2.0;
-    ctx.set_fill_color(bg);
+    ctx.begin_path();
     ctx.rounded_rect(bx, by, bw, bh, 14.0);
+    ctx.set_fill_color(bg);
     ctx.fill();
     ctx.set_fill_color(fg);
     ctx.fill_text(label, bx + pad, by + (bh - 56.0) / 2.0);

@@ -1,8 +1,9 @@
 //! Procedural face renderer for a single playing card.
 //!
-//! Kept deliberately cheap: one rect, one outline, three text draws.
-//! With 28 face-up cards on a Klondike deal this is ~5 ms in software
-//! AGG — orders of magnitude under a 16 ms frame budget.
+//! `begin_path()` is required before every shape — `rounded_rect` /
+//! `rect` / `circle` ADD to the active path, and `fill` / `stroke`
+//! rasterise everything accumulated so far. Skipping `begin_path` makes
+//! frame time grow O(n²) with the number of cards on the board.
 
 use std::sync::Arc;
 
@@ -14,7 +15,6 @@ use crate::consts::CARD_CORNER_R;
 
 use super::{CARD_BLACK, CARD_BORDER, CARD_FACE_BG, CARD_RED};
 
-/// Paint a face-up card at the given Y-up rect.
 pub fn paint_card_face(
     ctx: &mut dyn DrawCtx,
     card: &Card,
@@ -25,13 +25,16 @@ pub fn paint_card_face(
     font: &Arc<Font>,
 ) {
     // Background.
-    ctx.set_fill_color(CARD_FACE_BG);
+    ctx.begin_path();
     ctx.rounded_rect(x, y, w, h, CARD_CORNER_R);
+    ctx.set_fill_color(CARD_FACE_BG);
     ctx.fill();
+
     // Outline.
+    ctx.begin_path();
+    ctx.rounded_rect(x, y, w, h, CARD_CORNER_R);
     ctx.set_stroke_color(CARD_BORDER);
     ctx.set_line_width(1.5);
-    ctx.rounded_rect(x, y, w, h, CARD_CORNER_R);
     ctx.stroke();
 
     let color = match card.suit.color() {
@@ -45,15 +48,14 @@ pub fn paint_card_face(
     ctx.set_fill_color(color);
     ctx.set_font(font.clone());
 
-    // Top-left corner pair (rank above, small suit beneath).
+    // Top-left corner pair.
     let pad = 8.0;
     ctx.set_font_size(20.0);
     ctx.fill_text(label, x + pad, y + h - 24.0);
     ctx.set_font_size(16.0);
     ctx.fill_text(&suit_glyph, x + pad, y + h - 44.0);
 
-    // Center suit glyph (large) — replaces the per-rank pip layout to
-    // keep primitive counts low.
+    // Center suit glyph (large).
     ctx.set_font_size(48.0);
     let metric_c = ctx.measure_text(&suit_glyph);
     let cw = metric_c.map(|m| m.width).unwrap_or(0.0);

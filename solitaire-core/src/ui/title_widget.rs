@@ -113,12 +113,14 @@ impl TitleWidget {
         } else {
             BTN_BG
         };
-        ctx.set_fill_color(bg);
+        ctx.begin_path();
         ctx.rounded_rect(x, y, w, h, 12.0);
+        ctx.set_fill_color(bg);
         ctx.fill();
+        ctx.begin_path();
+        ctx.rounded_rect(x, y, w, h, 12.0);
         ctx.set_stroke_color(BTN_BORDER);
         ctx.set_line_width(2.0);
-        ctx.rounded_rect(x, y, w, h, 12.0);
         ctx.stroke();
 
         ctx.set_fill_color(BTN_TEXT);
@@ -135,7 +137,6 @@ impl TitleWidget {
     fn paint_toast(&self, ctx: &mut dyn DrawCtx) {
         let toast = self.model.borrow().toast.clone();
         let Some((msg, _)) = toast else { return };
-        ctx.set_fill_color(TOAST_BG);
         let pad = 16.0;
         ctx.set_font(self.font.clone());
         ctx.set_font_size(20.0);
@@ -144,7 +145,9 @@ impl TitleWidget {
         let th = 40.0;
         let x = (VIRTUAL_W - tw) / 2.0;
         let y = 80.0;
+        ctx.begin_path();
         ctx.rounded_rect(x, y, tw, th, 8.0);
+        ctx.set_fill_color(TOAST_BG);
         ctx.fill();
         ctx.set_fill_color(TOAST_TEXT);
         ctx.fill_text(&msg, x + pad, y + (th - 20.0) / 2.0);
