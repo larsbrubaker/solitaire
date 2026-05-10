@@ -156,24 +156,23 @@ play to the **right**, building same-suit runs from King down to 2.
 
 ## How to play
 
-Each move fills a gap by swapping a card into it.
+Mom's is **click-only** — there's no dragging. Click on a gap and
+the game finds the card that fits and swaps it in.
 
-- **A gap in column 1..12:** look at the card immediately to the
-  **left** of the gap. The gap can only be filled by that left
-  neighbour's **same-suit, one-rank-lower partner**. (Left neighbour
-  6♥ → the gap takes 5♥. Left neighbour 5♣ → 4♣. And so on.)
+- **A gap in column 1..12:** click it; the game looks at the card
+  immediately to the **left** of the gap and pulls in that left
+  neighbour's **same-suit, one-rank-lower partner** from wherever
+  it currently sits. (Left neighbour 6♥ → 5♥ jumps in. Left
+  neighbour 5♣ → 4♣. And so on.)
 - **A gap in column 0** (the leftmost): only a **King** can fill it,
-  any suit. The King's suit then becomes that row's target colour
-  for the K-Q-J-…-2 run that builds to its right.
+  and you pick which suit. Click the col-0 gap to **arm** it (the
+  game waits), then click any **King** anywhere on the board — that
+  King swaps in and its suit fixes the row's target colour.
 - **An Ace can't be the source of a move.** It's not a card you
   pick up; it's the gap you fill.
 - **Stuck gaps:** if the card to the left of a gap is a 2 or
   another Ace, no card fits — that gap is dead until adjacent moves
   free it.
-
-In our drag-drop UI you achieve a swap by dragging the card you
-want **onto the gap**. The Ace that was sitting in the gap returns
-to the source cell, ready to be filled in turn.
 
 ## Win condition
 

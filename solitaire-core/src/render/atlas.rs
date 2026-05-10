@@ -20,7 +20,6 @@ use std::sync::Arc;
 use agg_gui::text::Font;
 
 use crate::cards::{Rank, Suit};
-use crate::consts::{CARD_H, CARD_W};
 
 use super::svg_deck::DeckBitmap;
 
@@ -35,6 +34,12 @@ pub struct CardSpriteAtlas {
     /// area the card will occupy on screen.
     pub px_w: u32,
     pub px_h: u32,
+    /// Logical card dimensions this atlas was built for. Stored so
+    /// `GameWidget` can detect when the active variant's per-pile
+    /// `card_w / card_h` no longer matches and a rebuild is required
+    /// (e.g. switching from Klondike's 90×126 to Mom's 70×98).
+    pub card_w_logical: f64,
+    pub card_h_logical: f64,
     /// Effective render scale this atlas was built at
     /// (`playfield_scale × device_scale`). Used by `GameWidget` to
     /// detect when a rebuild is required.
@@ -45,15 +50,15 @@ pub struct CardSpriteAtlas {
 
 impl CardSpriteAtlas {
     /// Pre-rasterise all 52 card faces + 1 card back at exactly
-    /// `CARD_W * scale × CARD_H * scale` physical pixels. The bundled
-    /// CC0 SVG deck is parsed and rasterised once into a master
-    /// bitmap, then sliced into per-card sprites; the `font` argument
-    /// is unused today but kept for API stability while we may layer
-    /// procedural art (e.g. corner highlights, hints) on top later.
-    pub fn build(_font: &Arc<Font>, scale: f64) -> Self {
+    /// `card_w_logical * scale × card_h_logical * scale` physical
+    /// pixels. The bundled CC0 SVG deck is parsed and rasterised once
+    /// into a master bitmap, then sliced into per-card sprites; the
+    /// `font` argument is unused today but kept for API stability
+    /// while we may layer procedural art on top later.
+    pub fn build(_font: &Arc<Font>, card_w_logical: f64, card_h_logical: f64, scale: f64) -> Self {
         let scale = scale.max(0.5);
-        let px_w = (CARD_W * scale).round().max(1.0) as u32;
-        let px_h = (CARD_H * scale).round().max(1.0) as u32;
+        let px_w = (card_w_logical * scale).round().max(1.0) as u32;
+        let px_h = (card_h_logical * scale).round().max(1.0) as u32;
 
         let deck = DeckBitmap::build(px_w, px_h);
         let back = Arc::new(deck.extract_back());
@@ -71,6 +76,8 @@ impl CardSpriteAtlas {
         Self {
             px_w,
             px_h,
+            card_w_logical,
+            card_h_logical,
             render_scale: scale,
             faces,
             back,

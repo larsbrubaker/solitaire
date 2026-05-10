@@ -43,6 +43,11 @@ pub struct AppModel {
     /// Open Help dialog, if any. The `HelpDialog` widget reads this and
     /// paints the corresponding markdown content as a modal overlay.
     pub help: Option<HelpKind>,
+    /// Mom's Solitaire state: when the player clicks an Ace gap at
+    /// column 0, that gap's pile id lands here and the game waits for
+    /// the next click to land on a King — that King will be swapped
+    /// into the gap. `None` means no king-pickup is in progress.
+    pub moms_waiting_king_at: Option<crate::piles::PileId>,
 }
 
 impl AppModel {
@@ -54,6 +59,7 @@ impl AppModel {
             toast: None,
             klondike_draw_count: 1,
             help: None,
+            moms_waiting_king_at: None,
         }
     }
 
@@ -74,6 +80,9 @@ impl AppModel {
         self.session = Some(session);
         self.kind = Some(kind);
         self.screen = Screen::Game;
+        // Any Mom's-specific UI state is per-game; reset so a new
+        // Klondike doesn't inherit a stale "waiting for king."
+        self.moms_waiting_king_at = None;
     }
 
     /// Restart the current deal — same kind, same seed, fresh shuffle.
@@ -102,6 +111,7 @@ impl AppModel {
         self.session = None;
         self.kind = None;
         self.screen = Screen::Title;
+        self.moms_waiting_king_at = None;
     }
 
     pub fn show_toast(&mut self, msg: impl Into<String>) {

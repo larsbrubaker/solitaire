@@ -142,24 +142,97 @@ impl GameWidget {
     }
 
     /// Rebuild the sprite atlas at the current effective render scale
-    /// (playfield scale × device DPR) so each sprite's pixel count
-    /// matches its on-screen physical size 1:1.
+    /// (playfield scale × device DPR) AND the active variant's per-
+    /// pile card dimensions so each sprite's pixel count matches its
+    /// on-screen physical size 1:1. Rebuilds on either change.
     fn ensure_atlas_for(&mut self, playfield_scale: f64) {
         let target = (playfield_scale * agg_gui::device_scale()).max(0.5);
-        // Rebuild only on a meaningful change to avoid thrashing during
-        // imperceptible window-frame jitter.
-        if (target - self.atlas.render_scale).abs() < 0.02 {
+        // Active variant's card size — Mom's Solitaire shrinks every
+        // pile to 70×98; the others use the standard 90×126. Read
+        // from any pile in the current session (they all match).
+        let (card_w, card_h) = self
+            .model
+            .borrow()
+            .session
+            .as_ref()
+            .and_then(|s| s.piles().iter().next().map(|p| (p.card_w, p.card_h)))
+            .unwrap_or((CARD_W, CARD_H));
+        let scale_unchanged = (target - self.atlas.render_scale).abs() < 0.02;
+        let dims_unchanged = (card_w - self.atlas.card_w_logical).abs() < 0.5
+            && (card_h - self.atlas.card_h_logical).abs() < 0.5;
+        if scale_unchanged && dims_unchanged {
             return;
         }
         let t0 = web_time::Instant::now();
-        self.atlas = CardSpriteAtlas::build(&self.font, target);
+        self.atlas = CardSpriteAtlas::build(&self.font, card_w, card_h, target);
         eprintln!(
-            "solitaire: rebuilt atlas at scale {:.3} ({}x{} px) in {:.1} ms",
+            "solitaire: rebuilt atlas at scale {:.3} for {}×{} cards ({}×{} px) in {:.1} ms",
             target,
+            card_w,
+            card_h,
             self.atlas.px_w,
             self.atlas.px_h,
             t0.elapsed().as_secs_f64() * 1000.0
         );
+    }
+
+    fn is_moms(&self) -> bool {
+        self.model
+            .borrow()
+            .session
+            .as_ref()
+            .map(|s| s.game_slug() == "moms")
+            .unwrap_or(false)
+    }
+
+    /// Mom's-Solitaire click handler. Looks up the clicked cell and
+    /// asks `games::moms::resolve_click` what to do with it (start a
+    /// king-pickup, fire a swap, or ignore). The session's normal
+    /// `try_apply` runs the swap so undo / win-detection just work.
+    fn try_moms_click(&mut self, vx: f64, vy: f64) -> bool {
+        use crate::games::moms::{resolve_click, ClickResolution};
+        let mut model = self.model.borrow_mut();
+        let waiting = model.moms_waiting_king_at;
+        // Phase 1: pure inspection — read piles, decide what the click
+        // means. Borrow ends with `resolution`.
+        let resolution = {
+            let Some(session) = model.session.as_ref() else {
+                return false;
+            };
+            let hit = session.piles().hit_test(vx, vy);
+            let pile_id = match hit {
+                Some(crate::piles::HitResult::Card { pile, .. }) => pile,
+                Some(crate::piles::HitResult::EmptySlot { pile }) => pile,
+                None => return false,
+            };
+            resolve_click(session.piles(), pile_id, waiting)
+        };
+        // Phase 2: apply mutation; the swap may also report a win.
+        match resolution {
+            ClickResolution::Ignored => false,
+            ClickResolution::StartWaitingForKing(gap) => {
+                model.moms_waiting_king_at = Some(gap);
+                agg_gui::animation::request_draw();
+                true
+            }
+            ClickResolution::ApplySwap(m) => {
+                let won = {
+                    let Some(session) = model.session.as_mut() else {
+                        return false;
+                    };
+                    if !session.try_apply(m) {
+                        return false;
+                    }
+                    session.is_won()
+                };
+                model.moms_waiting_king_at = None;
+                if won {
+                    model.screen = Screen::Won;
+                }
+                agg_gui::animation::request_draw();
+                true
+            }
+        }
     }
 
     fn try_start_drag(&mut self, vx: f64, vy: f64) -> bool {
@@ -392,6 +465,15 @@ impl Widget for GameWidget {
                 let is_double = self.is_double_click(vx, vy);
                 self.last_click = Some((web_time::Instant::now(), vx, vy));
 
+                // Mom's Solitaire is click-only — the player clicks a
+                // gap and the engine finds the matching card. No
+                // drag, no double-click-to-foundation (no foundation).
+                if self.is_moms() {
+                    if self.try_moms_click(vx, vy) {
+                        return EventResult::Consumed;
+                    }
+                    return EventResult::Ignored;
+                }
                 if is_double && self.try_double_click_to_foundation(vx, vy) {
                     self.last_click = None;
                     return EventResult::Consumed;

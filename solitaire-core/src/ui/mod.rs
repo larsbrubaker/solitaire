@@ -30,6 +30,7 @@ use menu_widget::MenuBarHost;
 use overlay_stack::OverlayStack;
 use title_widget::TitleWidget;
 
+use crate::consts::{CARD_H, CARD_W};
 use crate::render::CardSpriteAtlas;
 
 /// CascadiaCode bundled into the binary.
@@ -48,7 +49,10 @@ pub fn build_solitaire_app() -> App {
     // Pre-rasterise the 53 unique card sprites at a default 1× scale.
     // GameWidget rebuilds the atlas at the actual render scale once the
     // first paint runs and the playfield bounds + device DPR are known.
-    let atlas = CardSpriteAtlas::build(&font, 1.0);
+    // Build a stand-in atlas at the standard card dimensions; the first
+    // paint after a session starts rebuilds it at the active variant's
+    // card size + actual playfield scale.
+    let atlas = CardSpriteAtlas::build(&font, CARD_W, CARD_H, 1.0);
 
     let title = TitleWidget::new(model.clone(), font.clone());
     let game = GameWidget::new(model.clone(), font.clone(), atlas);

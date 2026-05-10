@@ -35,8 +35,8 @@ use crate::session::Move;
 
 use super::GameRules;
 
-const COLS: u8 = 13;
-const ROWS: u8 = 4;
+pub const COLS: u8 = 13;
+pub const ROWS: u8 = 4;
 
 /// Logical card width for a Mom's cell. The standard 90 px wide card
 /// would put 13 columns at 1170 px — wider than `VIRTUAL_W=1024` —
@@ -53,14 +53,14 @@ const PITCH_Y: f64 = MOMS_CARD_H + ROW_GAP;
 /// `(X, Y)` → linear `PileId`. Y=0 is the TOP row in Y-up screen
 /// coordinates (the row with the highest pile origin Y), so the
 /// first row of cards reads K, Q, J… visually from the top down.
-const fn cell_id(x: u8, y: u8) -> PileId {
+pub const fn cell_id(x: u8, y: u8) -> PileId {
     y * COLS + x
 }
 
-const fn cell_x(id: PileId) -> u8 {
+pub const fn cell_x(id: PileId) -> u8 {
     id % COLS
 }
-const fn cell_y(id: PileId) -> u8 {
+pub const fn cell_y(id: PileId) -> u8 {
     id / COLS
 }
 
@@ -233,6 +233,86 @@ impl GameRules for MomsSolitaire {
     fn game_slug(&self) -> &'static str {
         "moms"
     }
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Click-based UI flow
+//
+// Mom's Solitaire is played by clicking — never by dragging. The player
+// clicks on a gap (Ace cell), and the game finds the unique card that
+// matches and swaps it in. The col-0 case is two-step: click the gap to
+// arm a wait, then click any King to fill it. Helpers below let
+// `GameWidget` resolve a single click into one of three outcomes
+// without re-implementing the layout knowledge in the UI layer.
+// ────────────────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClickResolution {
+    /// Click did not produce a move and didn't change waiting state.
+    Ignored,
+    /// Click was on a col-0 gap. UI should set
+    /// `model.moms_waiting_king_at = Some(pile)`. Next click on a King
+    /// will resolve to `ApplySwap`.
+    StartWaitingForKing(PileId),
+    /// A swap should be applied to the session. Whether or not the
+    /// game was previously in `waiting_for_king`, the UI clears that
+    /// state when this fires.
+    ApplySwap(Move),
+}
+
+/// Resolve a single click. `currently_waiting`, when `Some`, is the
+/// pile id of a col-0 gap the player previously clicked.
+pub fn resolve_click(
+    piles: &PileSet,
+    clicked: PileId,
+    currently_waiting: Option<PileId>,
+) -> ClickResolution {
+    let Some(top) = piles.get(clicked).top() else {
+        return ClickResolution::Ignored;
+    };
+    // ── Branch 1: filling a previously-armed col-0 gap ──────────
+    if let Some(gap) = currently_waiting {
+        if top.rank == Rank::King {
+            return ClickResolution::ApplySwap(Move::swap(clicked, gap));
+        }
+        // Click landed on something that isn't a King — the C# stays
+        // in waiting state. Treat as Ignored; the UI keeps the wait.
+        return ClickResolution::Ignored;
+    }
+    // ── Branch 2: clicking on a gap to start a move ─────────────
+    if top.rank != Rank::Ace {
+        return ClickResolution::Ignored;
+    }
+    let x = cell_x(clicked);
+    let y = cell_y(clicked);
+    if x == 0 {
+        return ClickResolution::StartWaitingForKing(clicked);
+    }
+    let left_id = cell_id(x - 1, y);
+    let Some(left) = piles.get(left_id).top() else {
+        return ClickResolution::Ignored;
+    };
+    if left.rank == Rank::Ace || left.rank == Rank::Two {
+        // Dead gap: would need a value-0 / value-1 card and Aces are
+        // gaps not movable cards. No move possible until adjacent
+        // moves change the picture.
+        return ClickResolution::Ignored;
+    }
+    let Some((want_suit, want_rank)) = one_rank_lower_same_suit(left) else {
+        return ClickResolution::Ignored;
+    };
+    // Find the matching card in the grid and swap it here.
+    for id in 0..(COLS * ROWS) {
+        if id == clicked {
+            continue;
+        }
+        if let Some(c) = piles.get(id).top() {
+            if c.suit == want_suit && c.rank == want_rank {
+                return ClickResolution::ApplySwap(Move::swap(id, clicked));
+            }
+        }
+    }
+    ClickResolution::Ignored
 }
 
 #[cfg(test)]
