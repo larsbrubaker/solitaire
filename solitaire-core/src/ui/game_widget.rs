@@ -126,9 +126,8 @@ impl GameWidget {
         // this, double-clicking a card off auto-foundation leaves the
         // newly-revealed card face-down.
         let from_pile_kind = p.kind;
-        let beneath_face_down = from_pile_kind == PileKind::Tableau
-            && card_idx > 0
-            && !p.cards[card_idx - 1].face_up;
+        let beneath_face_down =
+            from_pile_kind == PileKind::Tableau && card_idx > 0 && !p.cards[card_idx - 1].face_up;
         for dst in foundation_ids {
             let mut m = Move::simple(src, 1, dst);
             if beneath_face_down {
