@@ -55,8 +55,39 @@ async function main() {
     };
   };
 
+  // Mobile: on the first tap, ask the browser for fullscreen so the
+  // URL/address bar disappears and the playfield gets the entire
+  // viewport. Required to be called from a user gesture; we hook it
+  // into the canvas pointerdown handler. No-ops if already fullscreen,
+  // or if the device isn't touch-capable, or if requestFullscreen isn't
+  // supported (iOS Safari has its own bag of quirks — there a separate
+  // "Add to Home Screen" launch is the way to remove the URL bar).
+  let fullscreenAttempted = false;
+  const maybeRequestFullscreen = () => {
+    if (fullscreenAttempted) return;
+    if (document.fullscreenElement) {
+      fullscreenAttempted = true;
+      return;
+    }
+    const isTouch =
+      (navigator.maxTouchPoints ?? 0) > 0 || "ontouchstart" in window;
+    if (!isTouch) return;
+    fullscreenAttempted = true;
+    const el = document.documentElement as HTMLElement & {
+      webkitRequestFullscreen?: () => Promise<void>;
+    };
+    const req = el.requestFullscreen ?? el.webkitRequestFullscreen;
+    if (!req) return;
+    Promise.resolve(req.call(el)).catch(() => {
+      // User denied or browser doesn't allow it on this gesture — let
+      // a future tap try again.
+      fullscreenAttempted = false;
+    });
+  };
+
   canvas.addEventListener("pointerdown", (event) => {
     event.preventDefault();
+    maybeRequestFullscreen();
     canvas.setPointerCapture(event.pointerId);
     const point = canvasPoint(event);
     wasm.on_mouse_down(point.x, point.y, event.button);

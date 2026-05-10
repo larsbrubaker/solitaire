@@ -40,6 +40,13 @@ struct DragState {
     cur_y: f64,
 }
 
+/// Window in which a second mouse-down at the same spot counts as a
+/// double-click — used for the auto-send-to-foundation shortcut.
+const DOUBLE_CLICK_MS: u128 = 350;
+/// Maximum pointer drift between two clicks for them to be treated
+/// as a double-click (in virtual pixels).
+const DOUBLE_CLICK_RADIUS: f64 = 6.0;
+
 pub struct GameWidget {
     bounds: Rect,
     children: Vec<Box<dyn Widget>>,
@@ -47,6 +54,9 @@ pub struct GameWidget {
     font: Arc<Font>,
     atlas: CardSpriteAtlas,
     drag: Option<DragState>,
+    /// Last MouseDown timestamp + virtual-coord position; used to
+    /// detect double-clicks for the auto-foundation shortcut.
+    last_click: Option<(web_time::Instant, f64, f64)>,
 }
 
 impl GameWidget {
@@ -58,7 +68,63 @@ impl GameWidget {
             font,
             atlas,
             drag: None,
+            last_click: None,
         }
+    }
+
+    fn is_double_click(&self, vx: f64, vy: f64) -> bool {
+        let Some((t, lx, ly)) = self.last_click else {
+            return false;
+        };
+        t.elapsed().as_millis() <= DOUBLE_CLICK_MS
+            && (lx - vx).abs() <= DOUBLE_CLICK_RADIUS
+            && (ly - vy).abs() <= DOUBLE_CLICK_RADIUS
+    }
+
+    /// On a double-click of the topmost face-up card under the cursor,
+    /// try every Foundation pile in declaration order and apply the
+    /// first legal `src → foundation` move. Returns `true` if a move
+    /// was applied.
+    fn try_double_click_to_foundation(&mut self, vx: f64, vy: f64) -> bool {
+        let mut model = self.model.borrow_mut();
+        let Some(session) = model.session.as_mut() else {
+            return false;
+        };
+        let piles = session.piles();
+        let Some(hit) = piles.hit_test(vx, vy) else {
+            return false;
+        };
+        let HitResult::Card { pile: src, card_idx } = hit else {
+            return false;
+        };
+        // Only the topmost card is auto-moveable.
+        let p = piles.get(src);
+        if card_idx + 1 != p.cards.len() {
+            return false;
+        }
+        let top = &p.cards[card_idx];
+        if !top.face_up {
+            return false;
+        }
+        // Cancel any in-flight drag started by the first click of the pair.
+        self.drag = None;
+        // Snapshot foundation pile ids while we still hold an immutable
+        // borrow of `piles` via `session.piles()`. After this block we
+        // can call `session.try_apply` (which takes &mut self) without
+        // tripping the borrow checker.
+        let foundation_ids: Vec<PileId> = piles
+            .iter()
+            .filter(|p| p.kind == PileKind::Foundation && p.id != src)
+            .map(|p| p.id)
+            .collect();
+        for dst in foundation_ids {
+            let m = Move::simple(src, 1, dst);
+            if session.legal_move(&m) && session.try_apply(m) {
+                agg_gui::animation::request_draw();
+                return true;
+            }
+        }
+        false
     }
 
     /// Rebuild the sprite atlas at the current effective render scale
@@ -289,6 +355,15 @@ impl Widget for GameWidget {
                 ..
             } => {
                 let (vx, vy) = screen_to_virtual(bounds, pos.x, pos.y);
+                // Detect double-click against the previous MouseDown
+                // BEFORE updating the timestamp.
+                let is_double = self.is_double_click(vx, vy);
+                self.last_click = Some((web_time::Instant::now(), vx, vy));
+
+                if is_double && self.try_double_click_to_foundation(vx, vy) {
+                    self.last_click = None;
+                    return EventResult::Consumed;
+                }
                 // Pile-click handler first (stock dispense / recycle).
                 if self.try_pile_click(vx, vy) {
                     return EventResult::Consumed;

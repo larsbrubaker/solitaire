@@ -3,9 +3,16 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <!-- Mobile-friendly chrome: when the page is added to the home
+         screen it launches as a standalone web-app (no URL bar). The
+         theme-color tints the Android status bar to match the felt. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="theme-color" content="#0c6b3a" />
     <title>Solitaire</title>
     <style>
-      html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
+      html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #0c6b3a; }
       body { display: flex; align-items: center; justify-content: center; }
       canvas { display: block; touch-action: none; }
     </style>
