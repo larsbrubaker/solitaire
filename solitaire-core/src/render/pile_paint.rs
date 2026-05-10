@@ -22,18 +22,41 @@
 //! each card's origin to integer device pixels so adjacent cards
 //! don't smear across sub-pixel boundaries either.
 
+use agg_gui::color::Color;
 use agg_gui::draw_ctx::DrawCtx;
 
+use crate::cards::Rank;
 use crate::consts::CARD_CORNER_R;
 use crate::piles::Pile;
 
 use super::atlas::CardSpriteAtlas;
-use super::SLOT_BORDER;
+use super::{FELT_GREEN_DARK, SLOT_BORDER};
+
+/// Mom's Solitaire gap fill — a soft inner panel inside the slot
+/// border so the Ace cells read clearly as drop targets, distinct
+/// from the felt and from a Klondike-style empty pile placeholder.
+const MOMS_GAP_FILL: Color = FELT_GREEN_DARK;
 
 /// Paint an empty-slot placeholder. Cheap (one rounded-rect stroke) so
 /// no atlas entry is needed. Caller passes the slot's per-pile
 /// dimensions so Mom's Solitaire's smaller cells render correctly.
 pub fn paint_empty_slot(ctx: &mut dyn DrawCtx, x: f64, y: f64, w: f64, h: f64) {
+    ctx.begin_path();
+    ctx.rounded_rect(x, y, w, h, CARD_CORNER_R);
+    ctx.set_stroke_color(SLOT_BORDER);
+    ctx.set_line_width(2.0);
+    ctx.stroke();
+}
+
+/// Paint a Mom's-Solitaire gap (Ace cell rendered as a hole rather
+/// than as a card). Filled with a slightly darker green and an
+/// outlined border so the player can see at a glance which cells
+/// are drop targets.
+fn paint_gap_slot(ctx: &mut dyn DrawCtx, x: f64, y: f64, w: f64, h: f64) {
+    ctx.begin_path();
+    ctx.rounded_rect(x, y, w, h, CARD_CORNER_R);
+    ctx.set_fill_color(MOMS_GAP_FILL);
+    ctx.fill();
     ctx.begin_path();
     ctx.rounded_rect(x, y, w, h, CARD_CORNER_R);
     ctx.set_stroke_color(SLOT_BORDER);
@@ -86,6 +109,14 @@ pub fn paint_pile(
     if stop == 0 {
         let (x, y, w, h) = pile.empty_slot_rect();
         paint_empty_slot(ctx, x, y, w, h);
+        return;
+    }
+
+    // Mom's Solitaire: a single-card pile whose top is an Ace renders
+    // as a gap rather than as the Ace card. Drop-target visual.
+    if pile.render_ace_as_gap && pile.cards.len() == 1 && pile.cards[0].rank == Rank::Ace {
+        let (x, y) = pile.position_for(0);
+        paint_gap_slot(ctx, x, y, pile.card_w, pile.card_h);
         return;
     }
 

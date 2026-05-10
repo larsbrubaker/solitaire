@@ -38,6 +38,10 @@ pub struct Pile {
     pub fan_top_n: u8,
     /// Per-card horizontal offset within the fan group (Y-up coords).
     pub fan_dx: f64,
+    /// When `true`, an Ace at the top of this pile renders as an empty
+    /// gap slot rather than as the Ace card. Mom's Solitaire (Montana)
+    /// uses this — Aces are gaps, not playable cards. Default `false`.
+    pub render_ace_as_gap: bool,
 }
 
 impl Pile {
@@ -59,6 +63,7 @@ impl Pile {
             card_h: CARD_H,
             fan_top_n: 0,
             fan_dx: 0.0,
+            render_ace_as_gap: false,
         }
     }
 

@@ -140,10 +140,12 @@ impl GameRules for MomsSolitaire {
         // Resize every cell to Mom's smaller card geometry first; the
         // generic `PileSet::from_slots` initialised them with
         // `consts::CARD_W / CARD_H`, which would draw 90-px cards into
-        // 70-px-wide cells.
+        // 70-px-wide cells. Also flag each cell so an Ace top-card
+        // renders as a gap (drop target) instead of as a playing card.
         for p in piles.iter_mut() {
             p.card_w = MOMS_CARD_W;
             p.card_h = MOMS_CARD_H;
+            p.render_ace_as_gap = true;
         }
         let mut deck = fresh_deck();
         deck.shuffle(rng);
