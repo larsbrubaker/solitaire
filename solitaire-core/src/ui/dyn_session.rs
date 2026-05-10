@@ -15,6 +15,7 @@ pub trait DynGameSession {
     fn piles(&self) -> &PileSet;
     fn is_won(&self) -> bool;
     fn game_slug(&self) -> &'static str;
+    fn seed(&self) -> u64;
 }
 
 impl<R: GameRules> DynGameSession for GameSession<R> {
@@ -41,5 +42,8 @@ impl<R: GameRules> DynGameSession for GameSession<R> {
     }
     fn game_slug(&self) -> &'static str {
         self.rules.game_slug()
+    }
+    fn seed(&self) -> u64 {
+        self.seed
     }
 }

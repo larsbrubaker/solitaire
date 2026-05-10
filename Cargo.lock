@@ -26,7 +26,30 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "agg-gui"
+version = "0.1.1"
+dependencies = [
+ "agg-rust",
+ "base64",
+ "bevy_reflect",
+ "clipper2-rust",
+ "ehttp",
+ "image 0.24.9",
+ "png 0.17.16",
+ "pulldown-cmark",
+ "rustybuzz",
+ "tess2-rust",
+ "ttf-parser",
+ "usvg",
+ "wasm-bindgen",
+ "web-sys",
+ "web-time",
+]
+
+[[package]]
+name = "agg-gui"
 version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8d0bbae2c96c3edf9a2fe16d176a89a0fc16dcd29dfb23381d1ec46753c0274a"
 dependencies = [
  "agg-rust",
  "arboard",
@@ -600,7 +623,7 @@ checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
 name = "demo-wgpu"
 version = "0.1.0"
 dependencies = [
- "agg-gui",
+ "agg-gui 0.1.1",
  "agg-rust",
  "bytemuck",
  "web-time",
@@ -2688,7 +2711,7 @@ dependencies = [
 name = "solitaire-core"
 version = "0.1.0"
 dependencies = [
- "agg-gui",
+ "agg-gui 0.2.0",
  "ehttp",
  "flume",
  "futures-util",
@@ -2705,7 +2728,7 @@ dependencies = [
 name = "solitaire-native"
 version = "0.1.0"
 dependencies = [
- "agg-gui",
+ "agg-gui 0.2.0",
  "demo-wgpu",
  "dirs",
  "dotenvy",
@@ -2723,7 +2746,7 @@ dependencies = [
 name = "solitaire-wasm"
 version = "0.1.0"
 dependencies = [
- "agg-gui",
+ "agg-gui 0.2.0",
  "console_error_panic_hook",
  "demo-wgpu",
  "js-sys",
@@ -3692,7 +3715,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]

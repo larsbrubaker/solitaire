@@ -26,6 +26,10 @@ pub struct AppModel {
     pub session: Option<Box<dyn DynGameSession>>,
     pub kind: Option<GameKind>,
     pub toast: Option<(String, Instant)>,
+    /// Persisted across sessions and game variants — the user's preferred
+    /// Klondike draw count (1 = standard, 3 = Microsoft "Classic"). Read
+    /// when starting Klondike; ignored for FreeCell/Spider.
+    pub klondike_draw_count: u8,
 }
 
 impl AppModel {
@@ -35,20 +39,48 @@ impl AppModel {
             session: None,
             kind: None,
             toast: None,
+            klondike_draw_count: 1,
         }
     }
 
     pub fn start_game(&mut self, kind: GameKind) {
-        let seed = wallclock_seed();
+        self.start_game_with_seed(kind, wallclock_seed());
+    }
+
+    pub fn start_game_with_seed(&mut self, kind: GameKind, seed: u64) {
         let session: Box<dyn DynGameSession> = match kind {
-            GameKind::Klondike => Box::new(GameSession::new(Klondike::new(), seed)),
-            GameKind::Classic => Box::new(GameSession::new(Klondike::classic(), seed)),
+            GameKind::Klondike => Box::new(GameSession::new(
+                Klondike::with_draw_count(self.klondike_draw_count),
+                seed,
+            )),
             GameKind::FreeCell => Box::new(GameSession::new(FreeCell::new(), seed)),
             GameKind::Spider => Box::new(GameSession::new(Spider::four_suit(), seed)),
         };
         self.session = Some(session);
         self.kind = Some(kind);
         self.screen = Screen::Game;
+    }
+
+    /// Restart the current deal — same kind, same seed, fresh shuffle.
+    pub fn restart_current_deal(&mut self) {
+        let Some(kind) = self.kind else { return };
+        let Some(seed) = self.session.as_ref().map(|s| s.seed()) else {
+            return;
+        };
+        self.start_game_with_seed(kind, seed);
+    }
+
+    /// Apply a new Klondike draw count. If a Klondike game is in progress,
+    /// re-deal it with the same seed under the new rules so the user sees
+    /// the change immediately.
+    pub fn set_klondike_draw_count(&mut self, n: u8) {
+        if self.klondike_draw_count == n {
+            return;
+        }
+        self.klondike_draw_count = n;
+        if matches!(self.kind, Some(GameKind::Klondike)) {
+            self.restart_current_deal();
+        }
     }
 
     pub fn back_to_title(&mut self) {

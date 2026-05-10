@@ -1,10 +1,15 @@
-//! Procedural card rendering — no PNGs, no SVG. Every card face, suit
-//! glyph, and pip layout is drawn with `DrawCtx` primitives at paint time.
+//! Card rendering — the active deck is the bundled CC0 SVG ("English
+//! pattern playing cards deck PLUS CC0", from Wikimedia Commons),
+//! rasterised through agg-gui's SVG renderer at atlas-build time.
+//! `card_face.rs` and `card_back.rs` retain procedural fallbacks that
+//! aren't currently wired into the atlas; keep them around as reference
+//! art and as a starting point for future deck themes.
 
 pub mod atlas;
 mod card_back;
 mod card_face;
 mod pile_paint;
+mod svg_deck;
 
 pub use atlas::CardSpriteAtlas;
 pub use card_back::paint_card_back;

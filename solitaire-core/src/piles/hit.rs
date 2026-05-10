@@ -37,6 +37,19 @@ impl Pile {
             }
             return None;
         }
+        // Top-N-fanned piles (Klondike waste in 3-draw) only let the
+        // topmost card be picked up — older fanned cards are decorative.
+        if self.fan_top_n > 0 {
+            let top = self.cards.len() - 1;
+            let (cx, cy, cw, ch) = self.card_rect(top);
+            if x >= cx && x <= cx + cw && y >= cy && y <= cy + ch {
+                return Some(HitResult::Card {
+                    pile: self.id,
+                    card_idx: top,
+                });
+            }
+            return None;
+        }
         // Iterate from the topmost card backward — the LAST card painted is
         // the FIRST to receive the click (it's drawn on top of earlier ones).
         for idx in (0..self.cards.len()).rev() {

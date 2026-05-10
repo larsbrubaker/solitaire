@@ -15,6 +15,7 @@ pub mod dyn_session;
 pub mod game_widget;
 pub mod hud_widget;
 pub mod icons;
+pub mod menu_widget;
 pub mod overlay_stack;
 pub mod title_widget;
 
@@ -22,6 +23,7 @@ use app_model::shared_model;
 use app_root::AppRootWidget;
 use game_widget::GameWidget;
 use hud_widget::HudWidget;
+use menu_widget::MenuBarHost;
 use overlay_stack::OverlayStack;
 use title_widget::TitleWidget;
 
@@ -48,6 +50,7 @@ pub fn build_solitaire_app() -> App {
     let title = TitleWidget::new(model.clone(), font.clone());
     let game = GameWidget::new(model.clone(), font.clone(), atlas);
     let hud = HudWidget::new(model.clone(), font.clone());
+    let menu = MenuBarHost::new(model.clone(), font.clone());
     let root = AppRootWidget::new(model.clone());
 
     // Painted bottom→top, hit-tested top→bottom.
@@ -55,6 +58,7 @@ pub fn build_solitaire_app() -> App {
         .add(Box::new(root))
         .add(Box::new(game))
         .add(Box::new(hud))
+        .add(Box::new(menu))
         .add(Box::new(title));
 
     App::new(Box::new(stack))

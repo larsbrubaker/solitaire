@@ -1,4 +1,4 @@
-//! Title screen — four buttons (Klondike, FreeCell, Spider, Classic) +
+//! Title screen — three buttons (Klondike, FreeCell, Spider) +
 //! the toast for "coming soon" responses on unimplemented variants.
 //!
 //! Visible only while `model.screen == Screen::Title`.
@@ -38,11 +38,10 @@ pub struct TitleWidget {
     hover_idx: Option<usize>,
 }
 
-const KINDS: [GameKind; 4] = [
+const KINDS: [GameKind; 3] = [
     GameKind::Klondike,
     GameKind::FreeCell,
     GameKind::Spider,
-    GameKind::Classic,
 ];
 
 impl TitleWidget {
@@ -57,7 +56,8 @@ impl TitleWidget {
     }
 
     fn button_rect(&self, idx: usize) -> (f64, f64, f64, f64) {
-        let total_h = 4.0 * BTN_H + 3.0 * BTN_GAP_Y;
+        let n = KINDS.len() as f64;
+        let total_h = n * BTN_H + (n - 1.0) * BTN_GAP_Y;
         let start_y_top = (VIRTUAL_H - total_h) / 2.0 - 60.0;
         // Y-up: top of the FIRST button is at this Y. Each subsequent
         // button is BELOW (smaller numerical Y).
@@ -88,7 +88,8 @@ impl TitleWidget {
         let w = m.map(|t| t.width).unwrap_or(0.0);
         let x = (VIRTUAL_W - w) / 2.0;
         // Title sits well above the buttons.
-        let total_h = 4.0 * BTN_H + 3.0 * BTN_GAP_Y;
+        let n = KINDS.len() as f64;
+        let total_h = n * BTN_H + (n - 1.0) * BTN_GAP_Y;
         let buttons_top = (VIRTUAL_H - total_h) / 2.0 + total_h - 60.0;
         let y = buttons_top + 40.0;
         ctx.fill_text(label, x, y);
@@ -117,10 +118,11 @@ impl TitleWidget {
         ctx.set_font(self.font.clone());
         ctx.set_font_size(28.0);
         let label = kind.display_name();
-        let m = ctx.measure_text(label);
-        let lw = m.map(|t| t.width).unwrap_or(0.0);
-        let lx = x + (w - lw) / 2.0;
-        let ly = y + (h - 28.0) / 2.0;
+        let Some(m) = ctx.measure_text(label) else {
+            return;
+        };
+        let lx = x + (w - m.width) / 2.0;
+        let ly = y + m.centered_baseline_y(h);
         ctx.fill_text(label, lx, ly);
     }
 

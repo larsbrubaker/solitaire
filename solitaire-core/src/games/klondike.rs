@@ -1,10 +1,11 @@
 //! Klondike solitaire — 7 tableau columns, 4 foundations, 1 stock, 1 waste.
-//! 1-card draw mode (3-card draw is a future toggle).
+//! Draw count is configurable (1 by default, 3 for the Microsoft "Classic"
+//! 3-card-draw variant). Both modes share slug `klondike`.
 
 use rand::rngs::StdRng;
 
 use crate::cards::{Card, Rank};
-use crate::consts::{COL_PITCH, PLAYFIELD_LEFT, TABLEAU_BASE_Y, TOP_ROW_BOTTOM_Y};
+use crate::consts::{COL_PITCH, PLAYFIELD_LEFT, TABLEAU_BASE_Y, TOP_ROW_BOTTOM_Y, WASTE_FAN_DX};
 use crate::piles::{PileId, PileKind, PileLayout, PileSet, PileSlot};
 use crate::session::Move;
 
@@ -120,25 +121,18 @@ static SLOTS: [PileSlot; 13] = slots();
 
 pub struct Klondike {
     pub draw_count: u8,
-    pub slug: &'static str,
 }
 
 impl Klondike {
     /// Standard Klondike — 1-card draw.
     pub const fn new() -> Self {
-        Self {
-            draw_count: 1,
-            slug: "klondike",
-        }
+        Self { draw_count: 1 }
     }
 
-    /// "Classic" — 3-card draw, same layout otherwise. Distinct slug for
-    /// the leaderboard.
-    pub const fn classic() -> Self {
-        Self {
-            draw_count: 3,
-            slug: "classic",
-        }
+    /// Klondike with a configurable draw count (1 = standard, 3 = Microsoft
+    /// "Classic"). Both share slug `klondike`; the user picks via menu.
+    pub const fn with_draw_count(draw_count: u8) -> Self {
+        Self { draw_count }
     }
 }
 
@@ -210,6 +204,14 @@ impl GameRules for Klondike {
         }
         for card in iter {
             piles.get_mut(STOCK).cards.push(card);
+        }
+
+        // 3-card-draw mode: keep the most-recent draw_count cards visible
+        // as a fan on the waste, like the Microsoft "Classic" UX.
+        if self.draw_count > 1 {
+            let waste = piles.get_mut(WASTE);
+            waste.fan_top_n = self.draw_count;
+            waste.fan_dx = WASTE_FAN_DX;
         }
     }
 
@@ -309,7 +311,7 @@ impl GameRules for Klondike {
     }
 
     fn game_slug(&self) -> &'static str {
-        self.slug
+        "klondike"
     }
 
     fn on_pile_click(&self, piles: &PileSet, pile: PileId) -> Vec<Move> {

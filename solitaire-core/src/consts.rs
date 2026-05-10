@@ -34,6 +34,12 @@ pub const TABLEAU_FAN_DOWN: f64 = 28.0;
 /// Smaller than face-up because nothing readable is shown on the back.
 pub const TABLEAU_FAN_DOWN_FACEDOWN: f64 = 14.0;
 
+/// X-offset between cards in the waste-pile fan when Klondike runs in
+/// 3-card-draw mode (Microsoft "Classic" style — the most-recent draw
+/// stays visible). The empty column to the right of the waste leaves
+/// room for ~2 × COL_PITCH of fan width before hitting the foundations.
+pub const WASTE_FAN_DX: f64 = 24.0;
+
 /// Y-up origin (bottom of card) for the top row of cards (stock, waste,
 /// foundations).
 pub const TOP_ROW_BOTTOM_Y: f64 = VIRTUAL_H - TOP_MARGIN - CARD_H;

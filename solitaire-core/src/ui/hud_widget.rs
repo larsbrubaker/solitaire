@@ -126,10 +126,11 @@ impl HudWidget {
         ctx.set_font(self.font.clone());
         ctx.set_font_size(18.0);
         let label = btn_label(b);
-        let m = ctx.measure_text(label);
-        let lw = m.map(|t| t.width).unwrap_or(0.0);
-        let lx = x + (w - lw) / 2.0;
-        let ly = y + (h - 18.0) / 2.0;
+        let Some(m) = ctx.measure_text(label) else {
+            return;
+        };
+        let lx = x + (w - m.width) / 2.0;
+        let ly = y + m.centered_baseline_y(h);
         ctx.fill_text(label, lx, ly);
     }
 }

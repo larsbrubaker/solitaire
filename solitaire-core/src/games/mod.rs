@@ -2,7 +2,6 @@
 //! shared engine. Each variant implements this trait; `GameWidget` holds
 //! the active session behind a `DynGameSession` trait object.
 
-pub mod classic;
 pub mod freecell;
 pub mod klondike;
 pub mod spider;
@@ -17,7 +16,6 @@ pub enum GameKind {
     Klondike,
     FreeCell,
     Spider,
-    Classic,
 }
 
 impl GameKind {
@@ -26,7 +24,6 @@ impl GameKind {
             GameKind::Klondike => "klondike",
             GameKind::FreeCell => "freecell",
             GameKind::Spider => "spider",
-            GameKind::Classic => "classic",
         }
     }
 
@@ -35,7 +32,6 @@ impl GameKind {
             GameKind::Klondike => "Klondike",
             GameKind::FreeCell => "FreeCell",
             GameKind::Spider => "Spider",
-            GameKind::Classic => "Classic",
         }
     }
 }
@@ -48,8 +44,8 @@ pub trait GameRules: 'static {
     fn is_won(&self, piles: &PileSet) -> bool;
     fn game_slug(&self) -> &'static str;
 
-    /// Click handler — used by stock-tap interactions (Klondike/Classic
-    /// stock dispense/recycle; Spider broadcast-deal). Returns the
+    /// Click handler — used by stock-tap interactions (Klondike stock
+    /// dispense/recycle; Spider broadcast-deal). Returns the
     /// sequence of moves to apply in order. Empty vec means the click
     /// produced no moves.
     fn on_pile_click(&self, _piles: &PileSet, _pile: PileId) -> Vec<Move> {

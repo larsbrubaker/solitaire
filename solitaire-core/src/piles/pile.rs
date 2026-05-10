@@ -25,6 +25,12 @@ pub struct Pile {
     pub origin_x: f64,
     pub origin_y: f64,
     pub cards: Vec<Card>,
+    /// Up to this many of the topmost cards are fanned right by `fan_dx`;
+    /// the rest stack at the origin. Used for the Klondike waste pile in
+    /// 3-card-draw mode. `0` (default) disables the fan.
+    pub fan_top_n: u8,
+    /// Per-card horizontal offset within the fan group (Y-up coords).
+    pub fan_dx: f64,
 }
 
 impl Pile {
@@ -42,6 +48,8 @@ impl Pile {
             origin_x,
             origin_y,
             cards: Vec::new(),
+            fan_top_n: 0,
+            fan_dx: 0.0,
         }
     }
 
@@ -68,7 +76,25 @@ impl Pile {
             let prev_face_up = self.cards.get(i - 1).map(|c| c.face_up).unwrap_or(false);
             y += self.layout.dy_for(prev_face_up);
         }
-        (self.origin_x, y)
+        let x = self.origin_x + self.fan_x_offset(idx);
+        (x, y)
+    }
+
+    /// X offset applied to card `idx` due to top-N fan (waste pile in
+    /// 3-draw Klondike). Returns 0 when no fan is configured or `idx` is
+    /// below the fan group.
+    fn fan_x_offset(&self, idx: usize) -> f64 {
+        if self.fan_top_n == 0 || self.fan_dx == 0.0 {
+            return 0.0;
+        }
+        let n = self.cards.len();
+        let top_n = (self.fan_top_n as usize).min(n);
+        let fan_base = n.saturating_sub(top_n);
+        if idx >= fan_base {
+            (idx - fan_base) as f64 * self.fan_dx
+        } else {
+            0.0
+        }
     }
 
     /// Bounding rect of the empty slot (card-shaped placeholder painted
