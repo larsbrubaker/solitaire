@@ -32,14 +32,12 @@ async function main() {
 
   const resizeCanvas = () => {
     const dpr = Math.max(0.5, window.devicePixelRatio || 1);
-    const maxWidth = window.innerWidth;
-    const maxHeight = window.innerHeight;
-    const aspect = 1024 / 768;
-    const cssWidth = Math.floor(
-      maxWidth / aspect <= maxHeight ? maxWidth : maxHeight * aspect,
-    );
-    const cssHeight = Math.floor(cssWidth / aspect);
-
+    // Canvas fills the entire viewport. The 4:3 playfield is letterboxed
+    // INSIDE the Rust app via `playfield_transform`; CSS letterboxing
+    // would shrink the menu bar and HUD too, which is the wrong move on
+    // a phone where every pixel matters.
+    const cssWidth = window.innerWidth;
+    const cssHeight = window.innerHeight;
     canvas.style.width = `${cssWidth}px`;
     canvas.style.height = `${cssHeight}px`;
     canvas.width = Math.max(1, Math.floor(cssWidth * dpr));

@@ -18,7 +18,7 @@ use agg_gui::event::{Event, EventResult, Key, Modifiers, MouseButton};
 use agg_gui::geometry::{Rect, Size};
 use agg_gui::text::Font;
 use agg_gui::widget::Widget;
-use agg_gui::widgets::MarkdownView;
+use agg_gui::widgets::{MarkdownView, ScrollView};
 
 use super::app_model::{HelpKind, SharedModel};
 use super::help_content::{markdown_for, title_for};
@@ -110,7 +110,13 @@ impl HelpDialog {
             let md = MarkdownView::new(markdown_for(k), self.font.clone())
                 .with_padding(0.0)
                 .with_font_size(15.0);
-            self.children.push(Box::new(md));
+            // Wrap in a ScrollView so help text taller than the panel
+            // body stays scrollable. Without this the markdown lays
+            // itself out at total content height and overflows the
+            // panel — historically painting up into the title strip,
+            // which looked like "lines piled on top of each other."
+            let scroll = ScrollView::new(Box::new(md));
+            self.children.push(Box::new(scroll));
         }
         self.rendered_kind = kind;
         self.update_child_bounds();
@@ -159,6 +165,14 @@ impl Widget for HelpDialog {
     }
     fn is_visible(&self) -> bool {
         self.current_kind().is_some()
+    }
+
+    /// Constrain the child ScrollView's paint to the panel's content
+    /// area. Without this, content that overflows the body's bounds
+    /// would paint up into the title strip — which manifested as the
+    /// rules text appearing on top of itself near the dialog's top.
+    fn clip_children_rect(&self) -> Option<(f64, f64, f64, f64)> {
+        self.content_rect()
     }
 
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
