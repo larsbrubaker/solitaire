@@ -212,6 +212,7 @@ impl Widget for GameWidget {
     }
 
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
+        let t0 = web_time::Instant::now();
         let (tx, ty, scale) = playfield_transform(self.bounds);
         ctx.save();
         ctx.translate(tx, ty);
@@ -243,6 +244,11 @@ impl Widget for GameWidget {
         }
 
         ctx.restore();
+
+        let ms = t0.elapsed().as_secs_f64() * 1000.0;
+        if ms > 30.0 {
+            eprintln!("solitaire: GameWidget paint took {:.1} ms", ms);
+        }
     }
 
     fn on_event(&mut self, event: &Event) -> EventResult {

@@ -72,6 +72,10 @@ impl TitleWidget {
             let (bx, by, bw, bh) = self.button_rect(i);
             if x >= bx && x <= bx + bw && y >= by && y <= by + bh {
                 let mut m = self.model.borrow_mut();
+                eprintln!(
+                    "solitaire: title click idx={} kind={:?} enabled={}",
+                    i, kind, enabled
+                );
                 if *enabled {
                     if let GameKind::Klondike = kind {
                         m.start_klondike();
