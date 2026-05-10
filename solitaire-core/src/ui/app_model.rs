@@ -21,6 +21,15 @@ pub enum Screen {
     Won,
 }
 
+/// Which Help dialog (if any) is currently overlaid. `None` = no dialog.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HelpKind {
+    About,
+    Klondike,
+    FreeCell,
+    Spider,
+}
+
 pub struct AppModel {
     pub screen: Screen,
     pub session: Option<Box<dyn DynGameSession>>,
@@ -30,6 +39,9 @@ pub struct AppModel {
     /// Klondike draw count (1 = standard, 3 = Microsoft "Classic"). Read
     /// when starting Klondike; ignored for FreeCell/Spider.
     pub klondike_draw_count: u8,
+    /// Open Help dialog, if any. The `HelpDialog` widget reads this and
+    /// paints the corresponding markdown content as a modal overlay.
+    pub help: Option<HelpKind>,
 }
 
 impl AppModel {
@@ -40,6 +52,7 @@ impl AppModel {
             kind: None,
             toast: None,
             klondike_draw_count: 1,
+            help: None,
         }
     }
 

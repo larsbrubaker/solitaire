@@ -20,7 +20,7 @@ use agg_gui::text::Font;
 use agg_gui::widget::Widget;
 use agg_gui::widgets::menu::{MenuBar, MenuEntry, MenuItem, TopMenu, MENU_BAR_H};
 
-use super::app_model::{AppModel, Screen, SharedModel};
+use super::app_model::{AppModel, HelpKind, Screen, SharedModel};
 
 pub struct MenuBarHost {
     bounds: Rect,
@@ -76,6 +76,16 @@ fn build_menus(model: &AppModel) -> Vec<TopMenu> {
                     .into(),
             ],
         ),
+        TopMenu::new(
+            "Help",
+            vec![
+                MenuItem::action("Klondike Rules", "help-klondike").into(),
+                MenuItem::action("FreeCell Rules", "help-freecell").into(),
+                MenuItem::action("Spider Rules", "help-spider").into(),
+                MenuEntry::Separator,
+                MenuItem::action("About\u{2026}", "help-about").into(),
+            ],
+        ),
     ]
 }
 
@@ -90,6 +100,10 @@ fn handle_action(model: &mut AppModel, action: &str) {
         "title" => model.back_to_title(),
         "draw-1" => model.set_klondike_draw_count(1),
         "draw-3" => model.set_klondike_draw_count(3),
+        "help-about" => model.help = Some(HelpKind::About),
+        "help-klondike" => model.help = Some(HelpKind::Klondike),
+        "help-freecell" => model.help = Some(HelpKind::FreeCell),
+        "help-spider" => model.help = Some(HelpKind::Spider),
         _ => {}
     }
 }

@@ -13,6 +13,8 @@ pub mod app_model;
 pub mod app_root;
 pub mod dyn_session;
 pub mod game_widget;
+pub mod help_content;
+pub mod help_widget;
 pub mod hud_widget;
 pub mod icons;
 pub mod menu_widget;
@@ -22,6 +24,7 @@ pub mod title_widget;
 use app_model::shared_model;
 use app_root::AppRootWidget;
 use game_widget::GameWidget;
+use help_widget::HelpDialog;
 use hud_widget::HudWidget;
 use menu_widget::MenuBarHost;
 use overlay_stack::OverlayStack;
@@ -51,15 +54,19 @@ pub fn build_solitaire_app() -> App {
     let game = GameWidget::new(model.clone(), font.clone(), atlas);
     let hud = HudWidget::new(model.clone(), font.clone());
     let menu = MenuBarHost::new(model.clone(), font.clone());
+    let help = HelpDialog::new(model.clone(), font.clone());
     let root = AppRootWidget::new(model.clone());
 
-    // Painted bottom→top, hit-tested top→bottom.
+    // Painted bottom→top, hit-tested top→bottom. HelpDialog sits at the
+    // very top so its scrim covers the menu bar and the title screen
+    // chrome equally.
     let stack = OverlayStack::new()
         .add(Box::new(root))
         .add(Box::new(game))
         .add(Box::new(hud))
         .add(Box::new(menu))
-        .add(Box::new(title));
+        .add(Box::new(title))
+        .add(Box::new(help));
 
     App::new(Box::new(stack))
 }
