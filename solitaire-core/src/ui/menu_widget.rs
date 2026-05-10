@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use agg_gui::draw_ctx::DrawCtx;
 use agg_gui::event::{Event, EventResult};
-use agg_gui::geometry::{Rect, Size};
+use agg_gui::geometry::{Point, Rect, Size};
 use agg_gui::text::Font;
 use agg_gui::widget::Widget;
 use agg_gui::widgets::menu::{MenuBar, MenuEntry, MenuItem, TopMenu, MENU_BAR_H};
@@ -126,6 +126,20 @@ impl Widget for MenuBarHost {
     fn is_visible(&self) -> bool {
         let s = self.model.borrow().screen;
         matches!(s, Screen::Game | Screen::Won)
+    }
+    /// Claim only the top BAR_H pixels for ordinary input; without this
+    /// the OverlayStack's top→bottom hit-test stops at us (full window
+    /// bounds) and never reaches HudWidget / GameWidget below — same
+    /// gotcha HudWidget calls out in its own `hit_test` override.
+    /// Open-popup events go through `has_active_modal` on the inner
+    /// `MenuBar` so we don't need to forward those here.
+    fn hit_test(&self, local_pos: Point) -> bool {
+        if !self.is_visible() {
+            return false;
+        }
+        let top = self.bounds.height;
+        let bottom = self.bounds.height - MENU_BAR_H;
+        local_pos.y >= bottom && local_pos.y <= top
     }
     fn paint(&mut self, _ctx: &mut dyn DrawCtx) {
         // Bar paints itself via the framework's tree walk; we have no
