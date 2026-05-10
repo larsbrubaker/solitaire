@@ -4,6 +4,7 @@
 
 pub mod freecell;
 pub mod klondike;
+pub mod moms;
 pub mod spider;
 
 use rand::rngs::StdRng;
@@ -16,6 +17,7 @@ pub enum GameKind {
     Klondike,
     FreeCell,
     Spider,
+    MomsSolitaire,
 }
 
 impl GameKind {
@@ -24,6 +26,7 @@ impl GameKind {
             GameKind::Klondike => "klondike",
             GameKind::FreeCell => "freecell",
             GameKind::Spider => "spider",
+            GameKind::MomsSolitaire => "moms",
         }
     }
 
@@ -32,6 +35,7 @@ impl GameKind {
             GameKind::Klondike => "Klondike",
             GameKind::FreeCell => "FreeCell",
             GameKind::Spider => "Spider",
+            GameKind::MomsSolitaire => "Mom's Solitaire",
         }
     }
 }

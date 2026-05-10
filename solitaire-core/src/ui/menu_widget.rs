@@ -115,6 +115,7 @@ fn handle_action(model: &mut AppModel, action: &str) {
                 Some(GameKind::Klondike) => Some(HelpKind::Klondike),
                 Some(GameKind::FreeCell) => Some(HelpKind::FreeCell),
                 Some(GameKind::Spider) => Some(HelpKind::Spider),
+                Some(GameKind::MomsSolitaire) => Some(HelpKind::MomsSolitaire),
                 None => None,
             };
         }

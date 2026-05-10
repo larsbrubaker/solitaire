@@ -10,6 +10,7 @@ pub fn title_for(kind: HelpKind) -> &'static str {
         HelpKind::Klondike => "Klondike — Rules",
         HelpKind::FreeCell => "FreeCell — Rules",
         HelpKind::Spider => "Spider — Rules",
+        HelpKind::MomsSolitaire => "Mom's Solitaire — Rules",
     }
 }
 
@@ -19,6 +20,7 @@ pub fn markdown_for(kind: HelpKind) -> &'static str {
         HelpKind::Klondike => KLONDIKE,
         HelpKind::FreeCell => FREECELL,
         HelpKind::Spider => SPIDER,
+        HelpKind::MomsSolitaire => MOMS,
     }
 }
 
@@ -146,6 +148,69 @@ All 52 cards on the foundations, Ace → King by suit.
   multiply the size of the runs you can move.
 - Don't bury low cards behind high ones early; you'll need to dig
   them out again to start the foundations.
+"#;
+
+const MOMS: &str = r#"
+# Mom's Solitaire
+
+A Yukon-style variant: all 52 cards land in the seven tableau columns
+at the deal, there's no stock to worry about, and you have a lot more
+freedom than Klondike about which groups of cards you can pick up.
+
+## The story
+
+In 1989, my cousin **Marlin Eller** wrote a solitaire game in Forth
+on a Mac+ over a couple of long evenings, as a Mother's Day gift for
+his mom **Margaret Eller**. I sat next to him and watched him write
+the entire thing — for more than eight hours across two days. At
+some point he turned to me and said, *"no one who doesn't love
+programming can sit here and watch someone write code."* I'm a
+programmer because of that gift. Margaret got hers; I got mine.
+
+I never learned the exact rules of Marlin's variant. This one is
+named in honour of that afternoon — the rules below are a Yukon
+treatment, which feels true to a 1989 Mac+ Forth project: a solid
+ruleset, no stock to manage, every card on the table from move one.
+
+## Layout
+
+- **7 tableau columns**, dealt:
+  - Column 1: 1 face-up card.
+  - Columns 2–7: face-down cards underneath plus 5 face-up cards on
+    top. Column 2 has 1 face-down + 5 face-up = 6 cards; column 7
+    has 6 face-down + 5 face-up = 11 cards. Total: 52 cards.
+- **4 foundations** (top-left), empty at start.
+- **No stock, no waste.**
+
+## How to play
+
+- **Tableau → tableau (the Yukon rule):** pick up any face-up card
+  along with **every card stacked on top of it**, regardless of
+  whether those upper cards form an alternating-colour run. Drop the
+  group on a column where the receiving top is one rank higher and
+  opposite colour to the bottom card you're moving. The cards above
+  the bottom one don't need to match anything — they come along for
+  the ride.
+- **Tableau → foundation:** drop a single card onto a foundation if
+  it's an Ace, or one rank higher in the same suit.
+- **Empty tableau column:** only a King (or a King-led group) may
+  be placed on an empty column.
+- **Auto-flip:** once removing the topmost cards exposes a face-down
+  card, it flips automatically.
+
+## Win condition
+
+All 52 cards on the four foundations, ordered Ace → King in their
+own suit.
+
+## Why it feels different
+
+Klondike asks you to keep the cards on top of the one you want to
+move in alternating-colour-descending order — which often means
+patiently restacking a small group before you can move it. Mom's
+Solitaire drops that constraint: any face-up card is portable along
+with whatever's piled on it. The trade-off is that there's no stock
+to bail you out when you hit a dead end.
 "#;
 
 const SPIDER: &str = r#"

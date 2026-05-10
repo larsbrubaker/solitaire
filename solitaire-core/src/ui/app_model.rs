@@ -7,6 +7,7 @@ use web_time::Instant;
 
 use crate::games::freecell::FreeCell;
 use crate::games::klondike::Klondike;
+use crate::games::moms::MomsSolitaire;
 use crate::games::spider::Spider;
 use crate::games::GameKind;
 use crate::session::GameSession;
@@ -28,6 +29,7 @@ pub enum HelpKind {
     Klondike,
     FreeCell,
     Spider,
+    MomsSolitaire,
 }
 
 pub struct AppModel {
@@ -68,6 +70,7 @@ impl AppModel {
             )),
             GameKind::FreeCell => Box::new(GameSession::new(FreeCell::new(), seed)),
             GameKind::Spider => Box::new(GameSession::new(Spider::four_suit(), seed)),
+            GameKind::MomsSolitaire => Box::new(GameSession::new(MomsSolitaire::new(), seed)),
         };
         self.session = Some(session);
         self.kind = Some(kind);

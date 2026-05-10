@@ -127,8 +127,16 @@ impl HelpDialog {
             return;
         };
         if let Some(child) = self.children.first_mut() {
-            child.set_bounds(Rect::new(cx, cy, cw, ch));
+            let rect = Rect::new(cx, cy, cw, ch);
+            child.set_bounds(rect);
             child.layout(Size::new(cw, ch));
+            // `ScrollView::layout` resets its own `bounds.x/y` to (0, 0);
+            // re-apply so the framework's default child-translate places
+            // the scroll panel at our panel's content origin instead of
+            // HelpDialog's bottom-left. Without this, the markdown
+            // paints far off to the side and we see only the slice that
+            // happens to fall inside `clip_children_rect`.
+            child.set_bounds(rect);
         }
     }
 

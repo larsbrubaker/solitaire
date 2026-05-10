@@ -1,5 +1,6 @@
-//! Title screen — three buttons (Klondike, FreeCell, Spider) +
-//! the toast for "coming soon" responses on unimplemented variants.
+//! Title screen — four buttons (Klondike, FreeCell, Spider, Mom's
+//! Solitaire) + the toast for "coming soon" responses on
+//! unimplemented variants.
 //!
 //! Visible only while `model.screen == Screen::Title`.
 
@@ -38,7 +39,12 @@ pub struct TitleWidget {
     hover_idx: Option<usize>,
 }
 
-const KINDS: [GameKind; 3] = [GameKind::Klondike, GameKind::FreeCell, GameKind::Spider];
+const KINDS: [GameKind; 4] = [
+    GameKind::Klondike,
+    GameKind::FreeCell,
+    GameKind::Spider,
+    GameKind::MomsSolitaire,
+];
 
 impl TitleWidget {
     pub fn new(model: SharedModel, font: Arc<Font>) -> Self {
