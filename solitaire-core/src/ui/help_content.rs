@@ -1,66 +1,44 @@
-//! Markdown content for the Help dialogs (About + per-variant rules).
-//! Kept separate from the dialog widget so future edits to copy don't
-//! force a recompile of the rendering code.
+//! Per-game Help content (Rules + About) rendered through agg-gui's
+//! `MarkdownView`. Kept separate from the dialog widget so future
+//! edits to copy don't force a recompile of the rendering code. Each
+//! game owns BOTH its rules and its about — only Mom's mentions
+//! Marlin and Margaret, since that variant exists because of them.
+
+use crate::games::GameKind;
 
 use super::app_model::HelpKind;
 
 pub fn title_for(kind: HelpKind) -> &'static str {
     match kind {
-        HelpKind::About => "About Solitaire",
-        HelpKind::Klondike => "Klondike — Rules",
-        HelpKind::FreeCell => "FreeCell — Rules",
-        HelpKind::Spider => "Spider — Rules",
-        HelpKind::MomsSolitaire => "Mom's Solitaire — Rules",
+        HelpKind::Rules(GameKind::Klondike) => "Klondike — Rules",
+        HelpKind::Rules(GameKind::FreeCell) => "FreeCell — Rules",
+        HelpKind::Rules(GameKind::Spider) => "Spider — Rules",
+        HelpKind::Rules(GameKind::MomsSolitaire) => "Mom's Solitaire — Rules",
+        HelpKind::About(GameKind::Klondike) => "About Klondike",
+        HelpKind::About(GameKind::FreeCell) => "About FreeCell",
+        HelpKind::About(GameKind::Spider) => "About Spider",
+        HelpKind::About(GameKind::MomsSolitaire) => "About Mom's Solitaire",
     }
 }
 
 pub fn markdown_for(kind: HelpKind) -> &'static str {
     match kind {
-        HelpKind::About => ABOUT,
-        HelpKind::Klondike => KLONDIKE,
-        HelpKind::FreeCell => FREECELL,
-        HelpKind::Spider => SPIDER,
-        HelpKind::MomsSolitaire => MOMS,
+        HelpKind::Rules(GameKind::Klondike) => KLONDIKE_RULES,
+        HelpKind::Rules(GameKind::FreeCell) => FREECELL_RULES,
+        HelpKind::Rules(GameKind::Spider) => SPIDER_RULES,
+        HelpKind::Rules(GameKind::MomsSolitaire) => MOMS_RULES,
+        HelpKind::About(GameKind::Klondike) => KLONDIKE_ABOUT,
+        HelpKind::About(GameKind::FreeCell) => FREECELL_ABOUT,
+        HelpKind::About(GameKind::Spider) => SPIDER_ABOUT,
+        HelpKind::About(GameKind::MomsSolitaire) => MOMS_ABOUT,
     }
 }
 
-const ABOUT: &str = r#"
-# Solitaire
+// ────────────────────────────────────────────────────────────────────
+// Rules
+// ────────────────────────────────────────────────────────────────────
 
-A small, fast, scaling-clean implementation of the classic card games:
-Klondike (1- and 3-card draw), FreeCell, and Spider — with more on the
-way.
-
-## Built on
-
-- **agg-gui** — a Rust GUI library that pairs an AGG-derived 2D
-  rasteriser with a wgpu/winit backend, so card art, text, and
-  widget chrome render through a single pixel-accurate path.
-- **CC0 SVG playing cards** — Loren Osborn's *English pattern playing
-  cards deck PLUS CC0* on Wikimedia Commons (built on Dmitry Fomin's
-  card faces, with extra contributions from Guy vandegrift). Released
-  under CC0 1.0 Universal — no attribution required, but credited
-  here gladly.
-
-## A note on people
-
-This game exists because of programmers who shared the craft.
-
-In 1989 my cousin **Marlin Eller** wrote a solitaire game in Forth
-on a Mac+ over a couple of long evenings, as a Mother's Day gift for
-his mom **Margaret Eller**. I sat next to him and watched him write
-the entire thing — for more than eight hours across two days. At
-some point he turned to me and said, *"no one who doesn't love
-programming can sit here and watch someone write code."* I'm a
-programmer because of that gift. Margaret got hers; I got mine.
-
-## Source
-
-Available under MIT/Apache-2.0 at
-**github.com/larsbrubaker/solitaire**.
-"#;
-
-const KLONDIKE: &str = r#"
+const KLONDIKE_RULES: &str = r#"
 # Klondike
 
 The classic Solitaire most people grew up with. Sometimes called
@@ -97,18 +75,9 @@ just "Solitaire."
 
 All 52 cards on the four foundations, ordered Ace → King in their
 own suit.
-
-## Tips
-
-- Reveal face-down tableau cards as early as possible — covered
-  cards are dead weight until uncovered.
-- Don't rush an Ace or 2 to the foundation if it's the only card
-  blocking a productive tableau move.
-- 3-card draw is meaningfully harder than 1-card; only every third
-  draw is reachable, so plan further ahead.
 "#;
 
-const FREECELL: &str = r#"
+const FREECELL_RULES: &str = r#"
 # FreeCell
 
 A near-fully-skill-based variant — almost every deal is winnable, and
@@ -140,37 +109,43 @@ all cards are visible from the start.
 ## Win condition
 
 All 52 cards on the foundations, Ace → King by suit.
-
-## Tips
-
-- Treat free cells as scarce. Filling all four is usually a trap.
-- Empty cascades are even more valuable than free cells — they
-  multiply the size of the runs you can move.
-- Don't bury low cards behind high ones early; you'll need to dig
-  them out again to start the foundations.
 "#;
 
-const MOMS: &str = r#"
+const SPIDER_RULES: &str = r#"
+# Spider
+
+Two decks, four suits, more cards than tableau width — a long,
+patient game where you build complete K → A runs.
+
+## Layout
+
+- **10 cascade columns**, dealt 6, 6, 6, 6, 5, 5, 5, 5, 5, 5 cards.
+  Topmost card of each column is face-up; the rest face-down.
+- **8 foundations** — accept a single complete K-down-to-A run in a
+  single suit. They auto-collapse from the cascade when complete.
+- **Stock** — 50 cards, dealt 10 at a time across the 10 cascades.
+
+## How to play
+
+- **Cascade → cascade**: drop one or more cards onto another cascade
+  if the receiving top is **one rank higher** (suits don't matter
+  for stacking, but only **same-suit** runs can be moved as a unit).
+- **Stock click**: deals one card face-up to each of the 10 cascades.
+  Requires no cascade is empty.
+- **Complete-run auto-foundation**: a run of 13 same-suit cards
+  K-to-A in a cascade automatically moves to a foundation slot.
+
+## Win condition
+
+All 8 foundations filled with K → A runs (104 cards total, 8 sets).
+"#;
+
+const MOMS_RULES: &str = r#"
 # Mom's Solitaire
 
 A Yukon-style variant: all 52 cards land in the seven tableau columns
 at the deal, there's no stock to worry about, and you have a lot more
 freedom than Klondike about which groups of cards you can pick up.
-
-## The story
-
-In 1989, my cousin **Marlin Eller** wrote a solitaire game in Forth
-on a Mac+ over a couple of long evenings, as a Mother's Day gift for
-his mom **Margaret Eller**. I sat next to him and watched him write
-the entire thing — for more than eight hours across two days. At
-some point he turned to me and said, *"no one who doesn't love
-programming can sit here and watch someone write code."* I'm a
-programmer because of that gift. Margaret got hers; I got mine.
-
-I never learned the exact rules of Marlin's variant. This one is
-named in honour of that afternoon — the rules below are a Yukon
-treatment, which feels true to a 1989 Mac+ Forth project: a solid
-ruleset, no stock to manage, every card on the table from move one.
 
 ## Layout
 
@@ -202,51 +177,137 @@ ruleset, no stock to manage, every card on the table from move one.
 
 All 52 cards on the four foundations, ordered Ace → King in their
 own suit.
-
-## Why it feels different
-
-Klondike asks you to keep the cards on top of the one you want to
-move in alternating-colour-descending order — which often means
-patiently restacking a small group before you can move it. Mom's
-Solitaire drops that constraint: any face-up card is portable along
-with whatever's piled on it. The trade-off is that there's no stock
-to bail you out when you hit a dead end.
 "#;
 
-const SPIDER: &str = r#"
-# Spider
+// ────────────────────────────────────────────────────────────────────
+// About — per-game. Marlin and Margaret appear ONLY in Mom's.
+// Shared engine credits live at the bottom of every variant's About.
+// ────────────────────────────────────────────────────────────────────
 
-Two decks, four suits, more cards than tableau width — a long,
-patient game where you build complete K → A runs.
+const SHARED_CREDITS: &str = r#"
+## About this implementation
 
-## Layout
-
-- **10 cascade columns**, dealt 6, 6, 6, 6, 5, 5, 5, 5, 5, 5 cards.
-  Topmost card of each column is face-up; the rest face-down.
-- **8 foundations** — accept a single complete K-down-to-A run in a
-  single suit. They auto-collapse from the cascade when complete.
-- **Stock** — 50 cards, dealt 10 at a time across the 10 cascades.
-
-## How to play
-
-- **Cascade → cascade**: drop one or more cards onto another cascade
-  if the receiving top is **one rank higher** (suits don't matter
-  for stacking, but only **same-suit** runs can be moved as a unit).
-- **Stock click**: deals one card face-up to each of the 10 cascades.
-  Requires no cascade is empty.
-- **Complete-run auto-foundation**: a run of 13 same-suit cards
-  K-to-A in a cascade automatically moves to a foundation slot.
-
-## Win condition
-
-All 8 foundations filled with K → A runs (104 cards total, 8 sets).
-
-## Tips
-
-- Suit matters for movement, not for stacking. A 5♠ on a 6♥ is
-  legal — but you can only move that pair as a unit if it's same-
-  suit.
-- Don't deal from the stock until you've made every possible move
-  on the board. Each stock-deal lands face-up cards on top of every
-  cascade and can bury work in progress.
+- **agg-gui** — the Rust GUI library this app is built on.
+- **CC0 SVG playing cards** — Loren Osborn's *English pattern playing
+  cards deck PLUS CC0* on Wikimedia Commons (built on Dmitry Fomin's
+  card faces, with extra contributions from Guy vandegrift). Released
+  under CC0 1.0 Universal — no attribution required, but credited
+  here gladly.
+- Source: **github.com/larsbrubaker/solitaire**.
 "#;
+
+const KLONDIKE_ABOUT: &str = const_concat::concat!(
+    r#"
+# About Klondike
+
+Klondike is the solitaire most people just call "Solitaire." It
+takes its name from the Klondike Gold Rush of 1896–99, where the
+game became a popular pastime among prospectors. It belongs to the
+broader **Patience** family of single-player card games that emerged
+in northern Europe in the late 18th century, but Klondike's
+particular layout — seven cascading columns and four foundations —
+is the version that travelled with miners across the Yukon and
+eventually showed up bundled with Microsoft Windows in 1990.
+
+The 3-card-draw flavour shipped as the default in early Microsoft
+Solitaire and is what most people remember from those office
+afternoons; this app exposes both 1- and 3-card draw as a setting
+under **Options → Draw 1 / Draw 3**.
+"#,
+    SHARED_CREDITS
+);
+
+const FREECELL_ABOUT: &str = const_concat::concat!(
+    r#"
+# About FreeCell
+
+FreeCell as we know it was created by **Paul Alfille** in 1978 on
+the **PLATO** computer system at the University of Illinois. Alfille
+built on an older variant called *Eight Off* but added the eight
+cascades and the rule that almost every deal is winnable — a sharp
+break from Klondike, where roughly one deal in three is a dead end
+from the start.
+
+It went mainstream when Microsoft bundled it with **Windows 3.1's
+Entertainment Pack** in 1991 and then with every copy of Windows
+from 95 onward. Among the 32,000 numbered "Microsoft FreeCell"
+deals, only one — game **#11982** — has been proven unwinnable.
+"#,
+    SHARED_CREDITS
+);
+
+const SPIDER_ABOUT: &str = const_concat::concat!(
+    r#"
+# About Spider
+
+Spider is older than its modern reputation suggests — printed
+references date it to at least the 1940s, and it was a fixture of
+patience compendiums long before Microsoft's **Windows ME** and
+**Windows XP Plus!** packs put it in front of millions of office
+workers. Its name is usually traced to its eight foundations: four
+pairs of legs.
+
+The 1-suit and 2-suit difficulties are common simplifications;
+this app currently plays the **4-suit** version (the hardest), where
+suit matters for assembling K → A runs onto the foundations.
+"#,
+    SHARED_CREDITS
+);
+
+const MOMS_ABOUT: &str = const_concat::concat!(
+    r#"
+# About Mom's Solitaire
+
+In 1989, my cousin **Marlin Eller** wrote a solitaire game in Forth
+on a Mac+ over a couple of long evenings, as a Mother's Day gift for
+his mom **Margaret Eller**. I sat next to him and watched him write
+the entire thing — for more than eight hours across two days. At
+some point he turned to me and said, *"no one who doesn't love
+programming can sit here and watch someone write code."* I'm a
+programmer because of that gift. Margaret got hers; I got mine.
+
+I never learned the exact rules of Marlin's variant. This one is
+named in honour of that afternoon — the rules are a Yukon
+treatment, which feels true to a 1989 Mac+ Forth project: a solid
+ruleset, no stock to manage, every card on the table from move one.
+"#,
+    SHARED_CREDITS
+);
+
+// Tiny compile-time string concat — the shared credits block is
+// reused at the foot of every variant's About. Pulled into a private
+// module so the trait import doesn't pollute the file's surface.
+mod const_concat {
+    /// `concat!` only takes literal expressions; this macro lets us
+    /// glue together two `&'static str` constants at compile time.
+    macro_rules! concat {
+        ($a:expr, $b:expr) => {{
+            const A: &str = $a;
+            const B: &str = $b;
+            const LEN: usize = A.len() + B.len();
+            const fn build() -> [u8; LEN] {
+                let mut out = [0u8; LEN];
+                let a = A.as_bytes();
+                let b = B.as_bytes();
+                let mut i = 0;
+                while i < a.len() {
+                    out[i] = a[i];
+                    i += 1;
+                }
+                let mut j = 0;
+                while j < b.len() {
+                    out[a.len() + j] = b[j];
+                    j += 1;
+                }
+                out
+            }
+            const BYTES: &[u8] = &build();
+            // SAFETY: BYTES is the concatenation of two valid &str
+            // byte slices; the result is therefore valid UTF-8.
+            const RESULT: &str = unsafe { std::str::from_utf8_unchecked(BYTES) };
+            RESULT
+        }};
+    }
+
+    pub(super) use concat;
+}

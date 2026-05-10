@@ -22,14 +22,13 @@ pub enum Screen {
     Won,
 }
 
-/// Which Help dialog (if any) is currently overlaid. `None` = no dialog.
+/// Which Help dialog (if any) is currently overlaid. `None` = no
+/// dialog. Both topics are keyed by `GameKind` so the player only
+/// ever sees content for the variant they're playing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HelpKind {
-    About,
-    Klondike,
-    FreeCell,
-    Spider,
-    MomsSolitaire,
+    Rules(GameKind),
+    About(GameKind),
 }
 
 pub struct AppModel {
