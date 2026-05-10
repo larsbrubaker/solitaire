@@ -1,0 +1,14 @@
+[alias]
+dev = [
+    "watch",
+    "-i",
+    "target",
+    "-i",
+    "demo",
+    "-i",
+    "solitaire-wasm",
+    "-i",
+    "reference",
+    "-x",
+    "run -p solitaire-native",
+]
