@@ -13,14 +13,10 @@ use crate::games::GameRules;
 use crate::piles::PileSet;
 
 /// One play session: the rules, the live pile state, and an undo stack.
-/// Score and timing live in the UI model, not here — the rules engine is
-/// stateless beyond the move history.
 pub struct GameSession<R: GameRules> {
     pub rules: R,
     pub piles: PileSet,
     pub undo: UndoStack,
-    /// RNG seed used to deal — re-deal-same-game uses this; logged with
-    /// score submissions for reproducibility.
     pub seed: u64,
 }
 
@@ -28,7 +24,7 @@ impl<R: GameRules> GameSession<R> {
     pub fn new(rules: R, seed: u64) -> Self {
         let slots = rules.pile_layout();
         let mut piles = PileSet::from_slots(slots);
-        let mut rng = rand::rngs::StdRng::from_seed_u64(seed);
+        let mut rng = StdRngFromSeed::from_seed_u64(seed);
         rules.deal(&mut piles, &mut rng);
         Self {
             rules,
@@ -38,25 +34,37 @@ impl<R: GameRules> GameSession<R> {
         }
     }
 
-    /// Try to apply a move. Returns `true` if the move was legal and
-    /// applied; `false` if rejected.
+    /// Try to apply a player-initiated move. After success, runs the
+    /// rules engine's `after_move` hook in a loop so auto follow-ups
+    /// (Spider's K-to-A run collapse, future polish) chain transparently.
     pub fn try_apply(&mut self, m: Move) -> bool {
         if !self.rules.legal_move(&self.piles, &m) {
             return false;
         }
         apply_move(&mut self.piles, &m);
-        self.undo.push(m);
+        self.undo.push_user(m);
+        while let Some(am) = self.rules.after_move(&self.piles) {
+            apply_move(&mut self.piles, &am);
+            self.undo.push_auto(am);
+        }
         true
     }
 
-    /// Pop the most recent move and revert it. Returns `false` if the
+    /// Pop the most recent USER move (and any auto follow-ups stacked
+    /// after it) and revert in reverse order. Returns `false` if the
     /// undo stack is empty.
     pub fn try_undo(&mut self) -> bool {
-        let Some(m) = self.undo.pop() else {
-            return false;
-        };
-        revert_move(&mut self.piles, &m);
-        true
+        let mut undone_anything = false;
+        loop {
+            let Some((m, auto)) = self.undo.pop() else {
+                return undone_anything;
+            };
+            revert_move(&mut self.piles, &m);
+            undone_anything = true;
+            if !auto {
+                return true;
+            }
+        }
     }
 
     pub fn is_won(&self) -> bool {
@@ -64,8 +72,6 @@ impl<R: GameRules> GameSession<R> {
     }
 }
 
-/// Local extension on `StdRng` so callers can seed without pulling
-/// `SeedableRng` into every call site.
 trait StdRngFromSeed {
     fn from_seed_u64(seed: u64) -> Self;
 }

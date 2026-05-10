@@ -118,11 +118,27 @@ const fn slots() -> [PileSlot; 13] {
 
 static SLOTS: [PileSlot; 13] = slots();
 
-pub struct Klondike;
+pub struct Klondike {
+    pub draw_count: u8,
+    pub slug: &'static str,
+}
 
 impl Klondike {
-    pub fn new() -> Self {
-        Self
+    /// Standard Klondike — 1-card draw.
+    pub const fn new() -> Self {
+        Self {
+            draw_count: 1,
+            slug: "klondike",
+        }
+    }
+
+    /// "Classic" — 3-card draw, same layout otherwise. Distinct slug for
+    /// the leaderboard.
+    pub const fn classic() -> Self {
+        Self {
+            draw_count: 3,
+            slug: "classic",
+        }
     }
 }
 
@@ -209,9 +225,9 @@ impl GameRules for Klondike {
         let take = m.take as usize;
         let moved = &from.cards[from.cards.len() - take..];
 
-        // ── Stock click: stock → waste, take=1, flip_moved ──────────────
+        // ── Stock click: stock → waste, 1..draw_count cards, flip_moved ─
         if m.from == STOCK && m.to == WASTE {
-            return m.take == 1 && m.flip_moved;
+            return m.take >= 1 && m.take <= self.draw_count && m.flip_moved;
         }
         // ── Stock recycle: waste → stock, take=all, reverse, flip_moved ─
         if m.from == WASTE && m.to == STOCK {
@@ -293,30 +309,28 @@ impl GameRules for Klondike {
     }
 
     fn game_slug(&self) -> &'static str {
-        "klondike"
+        self.slug
     }
 
-    fn on_pile_click(&self, piles: &PileSet, pile: PileId) -> Option<Move> {
+    fn on_pile_click(&self, piles: &PileSet, pile: PileId) -> Vec<Move> {
         if pile == STOCK {
-            // Click on stock: if stock has cards, dispense one face-up
-            // onto waste; if stock is empty and waste isn't, recycle waste
-            // back into stock face-down.
             if !piles.get(STOCK).is_empty() {
-                return Some(Move::simple(STOCK, 1, WASTE).with_flip_moved());
+                let n = (piles.get(STOCK).len() as u8).min(self.draw_count);
+                return vec![Move::simple(STOCK, n, WASTE).with_flip_moved()];
             }
             let waste_len = piles.get(WASTE).len();
             if waste_len > 0 {
-                return Some(Move {
+                return vec![Move {
                     from: WASTE,
                     take: waste_len as u8,
                     to: STOCK,
                     flip_moved: true,
                     flip_source_after: false,
                     reverse_order: true,
-                });
+                }];
             }
         }
-        None
+        Vec::new()
     }
 }
 
@@ -431,7 +445,9 @@ mod tests {
             .get_mut(STOCK)
             .cards
             .push(Card::new(Suit::Spades, Rank::Ace));
-        let m = rules.on_pile_click(&piles, STOCK).unwrap();
+        let moves = rules.on_pile_click(&piles, STOCK);
+        assert_eq!(moves.len(), 1);
+        let m = moves[0];
         assert!(rules.legal_move(&piles, &m));
         apply_move(&mut piles, &m);
         assert_eq!(piles.get(WASTE).len(), 1);
@@ -448,7 +464,8 @@ mod tests {
                 .cards
                 .push(Card::new(Suit::Spades, r).face_up());
         }
-        let m = rules.on_pile_click(&piles, STOCK).unwrap();
+        let moves = rules.on_pile_click(&piles, STOCK);
+        let m = moves[0];
         assert!(rules.legal_move(&piles, &m));
         apply_move(&mut piles, &m);
         assert_eq!(piles.get(STOCK).len(), 3);

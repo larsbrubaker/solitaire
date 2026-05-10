@@ -82,9 +82,9 @@ impl HudWidget {
                         }
                     }
                     Btn::NewDeal => {
-                        // Restart the same variant.
-                        if model.kind == Some(crate::games::GameKind::Klondike) {
-                            model.start_klondike();
+                        // Restart whatever variant is active.
+                        if let Some(kind) = model.kind {
+                            model.start_game(kind);
                         }
                     }
                     Btn::Home => {

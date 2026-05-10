@@ -5,13 +5,14 @@ use std::rc::Rc;
 
 use web_time::Instant;
 
+use crate::games::freecell::FreeCell;
 use crate::games::klondike::Klondike;
+use crate::games::spider::Spider;
 use crate::games::GameKind;
 use crate::session::GameSession;
 
 use super::dyn_session::DynGameSession;
 
-/// Top-level screen the app is showing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Screen {
     #[default]
@@ -22,13 +23,8 @@ pub enum Screen {
 
 pub struct AppModel {
     pub screen: Screen,
-    /// Active game session. `None` while on the title screen.
     pub session: Option<Box<dyn DynGameSession>>,
-    /// Which variant the active session is for. Used by the HUD title and
-    /// score-write game-slug.
     pub kind: Option<GameKind>,
-    /// "Coming soon" toast — shown when the user clicks an unimplemented
-    /// title button (FreeCell, Spider, Classic in Phase 2).
     pub toast: Option<(String, Instant)>,
 }
 
@@ -42,11 +38,16 @@ impl AppModel {
         }
     }
 
-    pub fn start_klondike(&mut self) {
+    pub fn start_game(&mut self, kind: GameKind) {
         let seed = wallclock_seed();
-        let session: GameSession<Klondike> = GameSession::new(Klondike::new(), seed);
-        self.session = Some(Box::new(session));
-        self.kind = Some(GameKind::Klondike);
+        let session: Box<dyn DynGameSession> = match kind {
+            GameKind::Klondike => Box::new(GameSession::new(Klondike::new(), seed)),
+            GameKind::Classic => Box::new(GameSession::new(Klondike::classic(), seed)),
+            GameKind::FreeCell => Box::new(GameSession::new(FreeCell::new(), seed)),
+            GameKind::Spider => Box::new(GameSession::new(Spider::four_suit(), seed)),
+        };
+        self.session = Some(session);
+        self.kind = Some(kind);
         self.screen = Screen::Game;
     }
 
@@ -83,9 +84,6 @@ pub fn shared_model() -> SharedModel {
 }
 
 fn wallclock_seed() -> u64 {
-    // `web-time::Instant` doesn't yield ns directly; use elapsed-since-an
-    // arbitrary epoch as the seed source. Combined with std::process::id
-    // for a tiny extra perturbation.
     let now = Instant::now();
     let nanos = now.elapsed().as_nanos() as u64;
     nanos.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0xCAFEBABE

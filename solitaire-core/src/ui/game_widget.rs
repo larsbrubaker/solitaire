@@ -140,14 +140,22 @@ impl GameWidget {
             HitResult::Card { pile, .. } => pile,
             HitResult::EmptySlot { pile } => pile,
         };
-        let Some(m) = session.on_pile_click(pile_id) else {
+        let moves = session.on_pile_click(pile_id);
+        if moves.is_empty() {
             return false;
-        };
-        let applied = session.try_apply(m);
-        if applied {
+        }
+        let mut applied_any = false;
+        for m in moves {
+            if session.try_apply(m) {
+                applied_any = true;
+            } else {
+                break;
+            }
+        }
+        if applied_any {
             agg_gui::animation::request_draw();
         }
-        applied
+        applied_any
     }
 
     fn finish_drag(&mut self, vx: f64, vy: f64) {

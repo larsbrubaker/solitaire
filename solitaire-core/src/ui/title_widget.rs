@@ -38,11 +38,11 @@ pub struct TitleWidget {
     hover_idx: Option<usize>,
 }
 
-const KINDS: [(GameKind, bool); 4] = [
-    (GameKind::Klondike, true),
-    (GameKind::FreeCell, false),
-    (GameKind::Spider, false),
-    (GameKind::Classic, false),
+const KINDS: [GameKind; 4] = [
+    GameKind::Klondike,
+    GameKind::FreeCell,
+    GameKind::Spider,
+    GameKind::Classic,
 ];
 
 impl TitleWidget {
@@ -68,21 +68,11 @@ impl TitleWidget {
     }
 
     fn click_at(&mut self, x: f64, y: f64) -> bool {
-        for (i, (kind, enabled)) in KINDS.iter().enumerate() {
+        for (i, kind) in KINDS.iter().enumerate() {
             let (bx, by, bw, bh) = self.button_rect(i);
             if x >= bx && x <= bx + bw && y >= by && y <= by + bh {
                 let mut m = self.model.borrow_mut();
-                eprintln!(
-                    "solitaire: title click idx={} kind={:?} enabled={}",
-                    i, kind, enabled
-                );
-                if *enabled {
-                    if let GameKind::Klondike = kind {
-                        m.start_klondike();
-                    }
-                } else {
-                    m.show_toast(format!("{} — coming soon", kind.display_name()));
-                }
+                m.start_game(*kind);
                 return true;
             }
         }
@@ -192,8 +182,8 @@ impl Widget for TitleWidget {
         ctx.scale(scale, scale);
 
         self.paint_title(ctx);
-        for (i, (kind, enabled)) in KINDS.iter().enumerate() {
-            self.paint_button(ctx, i, *kind, *enabled);
+        for (i, kind) in KINDS.iter().enumerate() {
+            self.paint_button(ctx, i, *kind, true);
         }
         self.paint_toast(ctx);
 

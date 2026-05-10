@@ -9,6 +9,6 @@ mod suit;
 mod tests;
 
 pub use card::Card;
-pub use deck::{shuffled_seeded, standard_deck};
+pub use deck::{shuffled_seeded, spider_deck, standard_deck};
 pub use rank::Rank;
 pub use suit::{CardColor, Suit};

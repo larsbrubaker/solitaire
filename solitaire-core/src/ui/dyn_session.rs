@@ -10,7 +10,7 @@ pub trait DynGameSession {
     fn try_apply(&mut self, m: Move) -> bool;
     fn try_undo(&mut self) -> bool;
     fn legal_move(&self, m: &Move) -> bool;
-    fn on_pile_click(&self, pile: PileId) -> Option<Move>;
+    fn on_pile_click(&self, pile: PileId) -> Vec<Move>;
     fn auto_complete_step(&self) -> Option<Move>;
     fn piles(&self) -> &PileSet;
     fn is_won(&self) -> bool;
@@ -27,7 +27,7 @@ impl<R: GameRules> DynGameSession for GameSession<R> {
     fn legal_move(&self, m: &Move) -> bool {
         self.rules.legal_move(&self.piles, m)
     }
-    fn on_pile_click(&self, pile: PileId) -> Option<Move> {
+    fn on_pile_click(&self, pile: PileId) -> Vec<Move> {
         self.rules.on_pile_click(&self.piles, pile)
     }
     fn auto_complete_step(&self) -> Option<Move> {
