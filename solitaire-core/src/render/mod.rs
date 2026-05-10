@@ -1,13 +1,15 @@
 //! Procedural card rendering — no PNGs, no SVG. Every card face, suit
 //! glyph, and pip layout is drawn with `DrawCtx` primitives at paint time.
 
+pub mod atlas;
 mod card_back;
 mod card_face;
 mod pile_paint;
 
+pub use atlas::CardSpriteAtlas;
 pub use card_back::paint_card_back;
 pub use card_face::paint_card_face;
-pub use pile_paint::{paint_empty_slot, paint_pile};
+pub use pile_paint::{paint_card_at, paint_empty_slot, paint_pile};
 
 use agg_gui::color::Color;
 

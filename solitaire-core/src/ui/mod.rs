@@ -25,6 +25,8 @@ use hud_widget::HudWidget;
 use overlay_stack::OverlayStack;
 use title_widget::TitleWidget;
 
+use crate::render::CardSpriteAtlas;
+
 /// CascadiaCode bundled into the binary.
 const FONT_BYTES: &[u8] = include_bytes!("../../assets/CascadiaCode.ttf");
 
@@ -38,9 +40,13 @@ fn load_default_font() -> Arc<Font> {
 pub fn build_solitaire_app() -> App {
     let model = shared_model();
     let font = load_default_font();
+    // Pre-rasterise the 53 unique card sprites once. Subsequent paints
+    // blit cached pixels via `draw_image_rgba_arc`; the wgpu backend
+    // shares one GPU texture per Arc identity.
+    let atlas = CardSpriteAtlas::build(&font);
 
     let title = TitleWidget::new(model.clone(), font.clone());
-    let game = GameWidget::new(model.clone(), font.clone());
+    let game = GameWidget::new(model.clone(), font.clone(), atlas.clone());
     let hud = HudWidget::new(model.clone(), font.clone());
     let root = AppRootWidget::new(model.clone());
 

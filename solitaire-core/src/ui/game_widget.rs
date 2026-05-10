@@ -17,7 +17,7 @@ use agg_gui::widget::Widget;
 use crate::cards::Card;
 use crate::consts::{CARD_H, CARD_W};
 use crate::piles::{HitResult, PileId, PileKind};
-use crate::render::{paint_card_back, paint_card_face, paint_pile};
+use crate::render::{paint_card_at, paint_pile, CardSpriteAtlas};
 use crate::session::Move;
 
 use super::app_model::{Screen, SharedModel};
@@ -45,16 +45,18 @@ pub struct GameWidget {
     children: Vec<Box<dyn Widget>>,
     model: SharedModel,
     font: Arc<Font>,
+    atlas: Arc<CardSpriteAtlas>,
     drag: Option<DragState>,
 }
 
 impl GameWidget {
-    pub fn new(model: SharedModel, font: Arc<Font>) -> Self {
+    pub fn new(model: SharedModel, font: Arc<Font>, atlas: Arc<CardSpriteAtlas>) -> Self {
         Self {
             bounds: Rect::default(),
             children: Vec::new(),
             model,
             font,
+            atlas,
             drag: None,
         }
     }
@@ -174,14 +176,8 @@ impl GameWidget {
         let bx = drag.cur_x - drag.grab_dx;
         let by = drag.cur_y - drag.grab_dy;
         for (i, card) in drag.cards.iter().enumerate() {
-            // Cards in the dragged stack fan downward at FannedDown's pace,
-            // matching how they looked on a tableau column.
             let y = by - i as f64 * crate::consts::TABLEAU_FAN_DOWN;
-            if card.face_up {
-                paint_card_face(ctx, card, bx, y, CARD_W, CARD_H, &self.font);
-            } else {
-                paint_card_back(ctx, bx, y, CARD_W, CARD_H);
-            }
+            paint_card_at(ctx, card, bx, y, &self.atlas);
         }
     }
 }
@@ -228,7 +224,7 @@ impl Widget for GameWidget {
                     .as_ref()
                     .filter(|d| d.source_pile == pile.id)
                     .map(|d| d.start_idx);
-                paint_pile(ctx, pile, hide_from, &self.font);
+                paint_pile(ctx, pile, hide_from, &self.atlas);
             }
         }
         drop(model);
