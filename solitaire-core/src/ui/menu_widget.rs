@@ -20,6 +20,8 @@ use agg_gui::text::Font;
 use agg_gui::widget::Widget;
 use agg_gui::widgets::menu::{MenuBar, MenuEntry, MenuItem, TopMenu, MENU_BAR_H};
 
+use crate::games::GameKind;
+
 use super::app_model::{AppModel, HelpKind, Screen, SharedModel};
 
 pub struct MenuBarHost {
@@ -79,9 +81,11 @@ fn build_menus(model: &AppModel) -> Vec<TopMenu> {
         TopMenu::new(
             "Help",
             vec![
-                MenuItem::action("Klondike Rules", "help-klondike").into(),
-                MenuItem::action("FreeCell Rules", "help-freecell").into(),
-                MenuItem::action("Spider Rules", "help-spider").into(),
+                // Single "Rules" entry — the action dispatcher picks the
+                // right HelpKind from `model.kind` so the help shown is
+                // always for the game being played, not a long list of
+                // rules for every variant.
+                MenuItem::action("Rules", "help-rules").into(),
                 MenuEntry::Separator,
                 MenuItem::action("About\u{2026}", "help-about").into(),
             ],
@@ -101,9 +105,19 @@ fn handle_action(model: &mut AppModel, action: &str) {
         "draw-1" => model.set_klondike_draw_count(1),
         "draw-3" => model.set_klondike_draw_count(3),
         "help-about" => model.help = Some(HelpKind::About),
-        "help-klondike" => model.help = Some(HelpKind::Klondike),
-        "help-freecell" => model.help = Some(HelpKind::FreeCell),
-        "help-spider" => model.help = Some(HelpKind::Spider),
+        "help-rules" => {
+            // Map the active game to its HelpKind. The Help menu is
+            // only visible while a game is in progress (see
+            // `MenuBarHost::is_visible`), so `model.kind` is always
+            // `Some` when this fires — the `_` arm is just defence in
+            // depth in case that visibility rule loosens later.
+            model.help = match model.kind {
+                Some(GameKind::Klondike) => Some(HelpKind::Klondike),
+                Some(GameKind::FreeCell) => Some(HelpKind::FreeCell),
+                Some(GameKind::Spider) => Some(HelpKind::Spider),
+                None => None,
+            };
+        }
         _ => {}
     }
 }

@@ -52,8 +52,6 @@ some point he turned to me and said, *"no one who doesn't love
 programming can sit here and watch someone write code."* I'm a
 programmer because of that gift. Margaret got hers; I got mine.
 
-A future release of this app will include Marlin's original variant.
-
 ## Source
 
 Available under MIT/Apache-2.0 at
