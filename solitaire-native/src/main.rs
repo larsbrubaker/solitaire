@@ -17,7 +17,7 @@
 #![allow(deprecated)] // matches the agg-gui demo-native winit 0.30 idiom
 
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use agg_gui::{winit_adapter, App, Modifiers, Size};
 use demo_wgpu::{begin_frame, WgpuGfxCtx};
@@ -134,8 +134,14 @@ fn main() {
     let mut cursor_y = 0.0_f64;
     let mut current_mods = Modifiers::default();
 
-    let mut frame_count: u32 = 0;
-    let mut frame_window_start = Instant::now();
+    // Roll-up of paint-only render times (i.e. the `paint_frame` call
+    // duration, NOT the wall-clock interval between frames). Reported
+    // every `RENDER_REPORT_INTERVAL`; aggregated to keep stdout quiet.
+    const RENDER_REPORT_INTERVAL: Duration = Duration::from_secs(3);
+    let mut render_ms_sum: f64 = 0.0;
+    let mut render_ms_max: f64 = 0.0;
+    let mut render_frames: u32 = 0;
+    let mut render_window_start = Instant::now();
 
     event_loop
         .run(move |event, elwt| match event {
@@ -236,17 +242,23 @@ fn main() {
                 event: WindowEvent::RedrawRequested,
                 ..
             } => {
+                let render_start = Instant::now();
                 paint_frame(&gpu, &mut wgpu_ctx, &mut app, win_w, win_h);
-                frame_count += 1;
-                if frame_count >= 60 {
-                    let avg_ms =
-                        frame_window_start.elapsed().as_secs_f64() * 1000.0 / frame_count as f64;
+                let render_ms = render_start.elapsed().as_secs_f64() * 1000.0;
+                render_ms_sum += render_ms;
+                if render_ms > render_ms_max {
+                    render_ms_max = render_ms;
+                }
+                render_frames += 1;
+                if render_window_start.elapsed() >= RENDER_REPORT_INTERVAL && render_frames > 0 {
+                    let avg = render_ms_sum / render_frames as f64;
                     eprintln!(
-                        "solitaire: {avg_ms:.1} ms/frame ({:.0} fps)",
-                        1000.0 / avg_ms
+                        "solitaire: render avg {avg:.2} ms (peak {render_ms_max:.2} ms) over last {render_frames} frames"
                     );
-                    frame_count = 0;
-                    frame_window_start = Instant::now();
+                    render_ms_sum = 0.0;
+                    render_ms_max = 0.0;
+                    render_frames = 0;
+                    render_window_start = Instant::now();
                 }
             }
 
