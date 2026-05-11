@@ -99,6 +99,8 @@ fn build_menus(model: &AppModel) -> Vec<TopMenu> {
                     .radio(draw == 3)
                     .keep_open()
                     .into(),
+                MenuEntry::Separator,
+                MenuItem::action("Toggle Fullscreen", "toggle-fullscreen").into(),
             ],
         ),
         TopMenu::new(
@@ -126,6 +128,7 @@ fn handle_action(model: &mut AppModel, action: &str) {
         "draw-3" => model.set_klondike_draw_count(3),
         "help-rules" => model.help = model.kind.map(HelpKind::Rules),
         "help-about" => model.help = model.kind.map(HelpKind::About),
+        "toggle-fullscreen" => crate::platform::request_toggle_fullscreen(),
         _ => {}
     }
 }

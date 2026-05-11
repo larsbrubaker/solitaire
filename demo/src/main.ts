@@ -63,39 +63,35 @@ async function main() {
     };
   };
 
-  // Mobile: on the first tap, ask the browser for fullscreen so the
-  // URL/address bar disappears and the playfield gets the entire
-  // viewport. Required to be called from a user gesture; we hook it
-  // into the canvas pointerdown handler. No-ops if already fullscreen,
-  // or if the device isn't touch-capable, or if requestFullscreen isn't
-  // supported (iOS Safari has its own bag of quirks — there a separate
-  // "Add to Home Screen" launch is the way to remove the URL bar).
-  let fullscreenAttempted = false;
-  const maybeRequestFullscreen = () => {
-    if (fullscreenAttempted) return;
-    if (document.fullscreenElement) {
-      fullscreenAttempted = true;
-      return;
-    }
-    const isTouch =
-      (navigator.maxTouchPoints ?? 0) > 0 || "ontouchstart" in window;
-    if (!isTouch) return;
-    fullscreenAttempted = true;
+  // Toggle fullscreen on demand. Called from Rust via the
+  // `solitaire_core::platform` fullscreen hook (registered below) so
+  // the player explicitly opts in via the Options → Toggle Fullscreen
+  // menu item rather than being kicked into fullscreen on the first
+  // tap. iOS Safari doesn't expose `requestFullscreen` — there the
+  // "Add to Home Screen" launch is the supported route — so this
+  // silently no-ops if the API isn't available.
+  const toggleFullscreen = () => {
     const el = document.documentElement as HTMLElement & {
       webkitRequestFullscreen?: () => Promise<void>;
     };
+    const d = document as Document & {
+      webkitExitFullscreen?: () => Promise<void>;
+    };
+    if (document.fullscreenElement) {
+      const exit = document.exitFullscreen ?? d.webkitExitFullscreen;
+      if (exit) Promise.resolve(exit.call(document)).catch(() => {});
+      return;
+    }
     const req = el.requestFullscreen ?? el.webkitRequestFullscreen;
     if (!req) return;
-    Promise.resolve(req.call(el)).catch(() => {
-      // User denied or browser doesn't allow it on this gesture — let
-      // a future tap try again.
-      fullscreenAttempted = false;
-    });
+    Promise.resolve(req.call(el)).catch(() => {});
   };
+  if (typeof wasm.register_fullscreen_toggle === "function") {
+    wasm.register_fullscreen_toggle(toggleFullscreen);
+  }
 
   canvas.addEventListener("pointerdown", (event) => {
     event.preventDefault();
-    maybeRequestFullscreen();
     canvas.setPointerCapture(event.pointerId);
     const point = canvasPoint(event);
     wasm.on_mouse_down(point.x, point.y, event.button);

@@ -282,6 +282,34 @@ pub fn on_mouse_leave() {
     mark_dirty();
 }
 
+/// JS-side fullscreen toggle. Stored so the Rust menu handler can call
+/// it via `solitaire_core::platform::request_toggle_fullscreen`. We
+/// register a wrapper closure with the platform hook the first time
+/// this gets called, and just overwrite the stored callback on
+/// subsequent calls (Vite HMR / re-init).
+#[wasm_bindgen]
+pub fn register_fullscreen_toggle(cb: js_sys::Function) {
+    use std::cell::RefCell;
+    thread_local! {
+        static FS_CB: RefCell<Option<js_sys::Function>> = const { RefCell::new(None) };
+        static REGISTERED: RefCell<bool> = const { RefCell::new(false) };
+    }
+    FS_CB.with(|cell| *cell.borrow_mut() = Some(cb));
+    REGISTERED.with(|cell| {
+        if *cell.borrow() {
+            return;
+        }
+        *cell.borrow_mut() = true;
+        solitaire_core::platform::set_fullscreen_toggle(|| {
+            FS_CB.with(|cell| {
+                if let Some(cb) = cell.borrow().as_ref() {
+                    let _ = cb.call0(&JsValue::NULL);
+                }
+            });
+        });
+    });
+}
+
 #[wasm_bindgen]
 pub fn needs_draw() -> bool {
     if NEEDS_DRAW.with(|cell| cell.get()) {
