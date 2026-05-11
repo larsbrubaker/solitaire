@@ -6,7 +6,10 @@
 //!
 //! Both hosts wrap an `agg_gui::widgets::menu::MenuBar` and route
 //! action strings through a shared [`handle_action`] table back into
-//! [`AppModel`].
+//! [`AppModel`]. The Options menu is per-variant — Draw 1/3 only shows
+//! for Klondike, Spider's suit-count + one-suit-choice picker only
+//! shows for Spider, etc. Hosts watch `model.kind` and rebuild the
+//! inner `MenuBar` whenever the active variant changes.
 
 use std::sync::Arc;
 
@@ -17,6 +20,9 @@ use agg_gui::text::Font;
 use agg_gui::widget::Widget;
 use agg_gui::widgets::menu::{MenuBar, MenuEntry, MenuItem, MenuOrientation, TopMenu, MENU_BAR_H};
 
+use crate::cards::Suit;
+use crate::games::GameKind;
+
 use super::app_model::{AppModel, HelpKind, Screen, SharedModel};
 use super::layout::{self, ChromeMode, SIDEBAR_MENU_H, SIDEBAR_W};
 
@@ -26,15 +32,23 @@ pub struct MenuBarHost {
     bounds: Rect,
     children: Vec<Box<dyn Widget>>,
     model: SharedModel,
+    font: Arc<Font>,
+    /// Last `model.kind` the inner bar was built for. When the active
+    /// variant changes we rebuild the bar so the Options menu reflects
+    /// the new variant's settings.
+    current_kind: Option<GameKind>,
 }
 
 impl MenuBarHost {
     pub fn new(model: SharedModel, font: Arc<Font>) -> Self {
-        let bar = build_menu_bar(model.clone(), font, MenuOrientation::Horizontal);
+        let kind = model.borrow().kind;
+        let bar = build_menu_bar(model.clone(), font.clone(), MenuOrientation::Horizontal);
         Self {
             bounds: Rect::default(),
             children: vec![Box::new(bar)],
             model,
+            font,
+            current_kind: kind,
         }
     }
 }
@@ -46,15 +60,20 @@ pub struct SidebarMenuHost {
     bounds: Rect,
     children: Vec<Box<dyn Widget>>,
     model: SharedModel,
+    font: Arc<Font>,
+    current_kind: Option<GameKind>,
 }
 
 impl SidebarMenuHost {
     pub fn new(model: SharedModel, font: Arc<Font>) -> Self {
-        let bar = build_menu_bar(model.clone(), font, MenuOrientation::Vertical);
+        let kind = model.borrow().kind;
+        let bar = build_menu_bar(model.clone(), font.clone(), MenuOrientation::Vertical);
         Self {
             bounds: Rect::default(),
             children: vec![Box::new(bar)],
             model,
+            font,
+            current_kind: kind,
         }
     }
 }
@@ -70,49 +89,118 @@ fn build_menu_bar(model: SharedModel, font: Arc<Font>, orientation: MenuOrientat
     .with_orientation(orientation)
 }
 
-/// Build the menus from current model state. Called once at construction;
-/// `MenuBar` then owns the items and mutates radio/check selection on
-/// click. We don't rebuild on every frame — that would lose the
-/// transient hover/open state the bar tracks internally.
+/// Build the menu structure for the variant currently in `model`. The
+/// Game and Help menus are universal; the Options menu is per-variant.
 fn build_menus(model: &AppModel) -> Vec<TopMenu> {
-    let draw = model.klondike_draw_count;
-    vec![
-        TopMenu::new(
-            "Game",
-            vec![
-                MenuItem::action("New Deal", "new-deal")
-                    .shortcut("F2")
-                    .into(),
-                MenuItem::action("Restart this Deal", "restart").into(),
-                MenuEntry::Separator,
-                MenuItem::action("Back to Title", "title").into(),
-            ],
-        ),
-        TopMenu::new(
-            "Options",
-            vec![
+    let kind = model.kind;
+    let mut out = vec![game_menu(), options_menu(model, kind), help_menu()];
+    // Title screen — no variant selected. Drop the Options menu since
+    // every entry is per-variant. (Toggle Fullscreen will reappear once
+    // the player picks a game.)
+    if kind.is_none() {
+        out.remove(1);
+    }
+    out
+}
+
+fn game_menu() -> TopMenu {
+    TopMenu::new(
+        "Game",
+        vec![
+            MenuItem::action("New Deal", "new-deal")
+                .shortcut("F2")
+                .into(),
+            MenuItem::action("Restart this Deal", "restart").into(),
+            MenuEntry::Separator,
+            MenuItem::action("Back to Title", "title").into(),
+        ],
+    )
+}
+
+fn help_menu() -> TopMenu {
+    TopMenu::new(
+        "Help",
+        vec![
+            // Both items dispatch by `model.kind` so the player only
+            // ever sees content for the variant they're playing.
+            MenuItem::action("Rules", "help-rules").into(),
+            MenuItem::action("About\u{2026}", "help-about").into(),
+        ],
+    )
+}
+
+fn options_menu(model: &AppModel, kind: Option<GameKind>) -> TopMenu {
+    let mut items: Vec<MenuEntry> = Vec::new();
+    match kind {
+        Some(GameKind::Klondike) => {
+            let draw = model.klondike_draw_count;
+            items.push(
                 MenuItem::action("Draw 1", "draw-1")
                     .radio(draw == 1)
                     .keep_open()
                     .into(),
+            );
+            items.push(
                 MenuItem::action("Draw 3", "draw-3")
                     .radio(draw == 3)
                     .keep_open()
                     .into(),
-                MenuEntry::Separator,
-                MenuItem::action("Toggle Fullscreen", "toggle-fullscreen").into(),
-            ],
-        ),
-        TopMenu::new(
-            "Help",
-            vec![
-                // Both items dispatch by `model.kind` so the player only
-                // ever sees content for the variant they're playing.
-                MenuItem::action("Rules", "help-rules").into(),
-                MenuItem::action("About\u{2026}", "help-about").into(),
-            ],
-        ),
-    ]
+            );
+            items.push(MenuEntry::Separator);
+        }
+        Some(GameKind::Spider) => {
+            let count = model.spider_suit_count;
+            // 1-suit Spider hosts a sub-menu where the player picks the
+            // active suit; the parent row's radio reflects whether
+            // 1-suit mode is the current count, the children's radios
+            // reflect which suit is selected within 1-suit mode.
+            items.push(
+                MenuItem::submenu(
+                    "1 Suit",
+                    vec![
+                        spider_one_suit_item(model, Suit::Spades, "Spades", "spider-suit-spades"),
+                        spider_one_suit_item(model, Suit::Hearts, "Hearts", "spider-suit-hearts"),
+                        spider_one_suit_item(
+                            model,
+                            Suit::Diamonds,
+                            "Diamonds",
+                            "spider-suit-diamonds",
+                        ),
+                        spider_one_suit_item(model, Suit::Clubs, "Clubs", "spider-suit-clubs"),
+                    ],
+                )
+                .radio(count == 1)
+                .into(),
+            );
+            items.push(
+                MenuItem::action("2 Suits", "spider-2-suit")
+                    .radio(count == 2)
+                    .keep_open()
+                    .into(),
+            );
+            items.push(
+                MenuItem::action("4 Suits", "spider-4-suit")
+                    .radio(count == 4)
+                    .keep_open()
+                    .into(),
+            );
+            items.push(MenuEntry::Separator);
+        }
+        _ => {}
+    }
+    items.push(MenuItem::action("Toggle Fullscreen", "toggle-fullscreen").into());
+    TopMenu::new("Options", items)
+}
+
+fn spider_one_suit_item(model: &AppModel, suit: Suit, label: &str, action: &str) -> MenuEntry {
+    // Radio fires only when 1-suit Spider is already active AND this is
+    // the chosen suit. Picking a suit while in 2/4-suit mode SWITCHES
+    // to 1-suit mode with the chosen suit (handled in handle_action).
+    let selected = model.spider_suit_count == 1 && model.spider_one_suit == suit;
+    MenuItem::action(label.to_string(), action.to_string())
+        .radio(selected)
+        .keep_open()
+        .into()
 }
 
 fn handle_action(model: &mut AppModel, action: &str) {
@@ -126,10 +214,79 @@ fn handle_action(model: &mut AppModel, action: &str) {
         "title" => model.back_to_title(),
         "draw-1" => model.set_klondike_draw_count(1),
         "draw-3" => model.set_klondike_draw_count(3),
+        "spider-2-suit" => model.set_spider_suit_count(2),
+        "spider-4-suit" => model.set_spider_suit_count(4),
+        "spider-suit-spades" => spider_set_one_suit(model, Suit::Spades),
+        "spider-suit-hearts" => spider_set_one_suit(model, Suit::Hearts),
+        "spider-suit-diamonds" => spider_set_one_suit(model, Suit::Diamonds),
+        "spider-suit-clubs" => spider_set_one_suit(model, Suit::Clubs),
         "help-rules" => model.help = model.kind.map(HelpKind::Rules),
         "help-about" => model.help = model.kind.map(HelpKind::About),
         "toggle-fullscreen" => crate::platform::request_toggle_fullscreen(),
         _ => {}
+    }
+}
+
+/// Pick `suit` AND switch to 1-suit Spider (re-deal). Picking a 1-suit
+/// item while 2/4-suit is active should switch modes — that's what the
+/// player asked for. The setters handle the no-op-when-unchanged case.
+fn spider_set_one_suit(model: &mut AppModel, suit: Suit) {
+    model.set_spider_one_suit(suit);
+    model.set_spider_suit_count(1);
+}
+
+impl MenuBarHost {
+    /// Rebuild the inner `MenuBar` if the active variant has changed
+    /// since last sync. Called from `paint()` so per-frame menu rebuilds
+    /// pick up state changes (new game started, draw count flipped via
+    /// menu, etc.). The rebuild discards transient hover/open state on
+    /// the bar — acceptable because variant changes are rare and almost
+    /// always happen via "New Deal" / "Back to Title" with no popup
+    /// open.
+    fn sync_kind(&mut self) {
+        let kind = self.model.borrow().kind;
+        if self.current_kind == kind {
+            return;
+        }
+        self.current_kind = kind;
+        let bar = build_menu_bar(
+            self.model.clone(),
+            self.font.clone(),
+            MenuOrientation::Horizontal,
+        );
+        self.children = vec![Box::new(bar)];
+        // Re-apply the layout so the new bar gets a real rect before
+        // the framework's next paint walk.
+        let bar_y = self.bounds.y + self.bounds.height - MENU_BAR_H;
+        let bar_rect = Rect::new(self.bounds.x, bar_y, self.bounds.width, MENU_BAR_H);
+        if let Some(bar) = self.children.first_mut() {
+            bar.layout(Size::new(self.bounds.width, MENU_BAR_H));
+            bar.set_bounds(bar_rect);
+        }
+        agg_gui::animation::request_draw();
+    }
+}
+
+impl SidebarMenuHost {
+    fn sync_kind(&mut self) {
+        let kind = self.model.borrow().kind;
+        if self.current_kind == kind {
+            return;
+        }
+        self.current_kind = kind;
+        let bar = build_menu_bar(
+            self.model.clone(),
+            self.font.clone(),
+            MenuOrientation::Vertical,
+        );
+        self.children = vec![Box::new(bar)];
+        let strip_y = self.bounds.y + self.bounds.height - SIDEBAR_MENU_H;
+        let bar_rect = Rect::new(self.bounds.x, strip_y, SIDEBAR_W, SIDEBAR_MENU_H);
+        if let Some(bar) = self.children.first_mut() {
+            bar.layout(Size::new(SIDEBAR_W, SIDEBAR_MENU_H));
+            bar.set_bounds(bar_rect);
+        }
+        agg_gui::animation::request_draw();
     }
 }
 
@@ -188,11 +345,9 @@ impl Widget for MenuBarHost {
         local_pos.y >= bottom && local_pos.y <= top
     }
     fn paint(&mut self, _ctx: &mut dyn DrawCtx) {
-        // Bar paints itself via the framework's tree walk; we have no
-        // body of our own.
+        self.sync_kind();
     }
     fn on_event(&mut self, _event: &Event) -> EventResult {
-        // Same: events route to the bar child via tree dispatch.
         EventResult::Ignored
     }
     fn needs_draw(&self) -> bool {
@@ -209,8 +364,6 @@ impl Widget for SidebarMenuHost {
     }
     fn set_bounds(&mut self, bounds: Rect) {
         self.bounds = bounds;
-        // Pin the vertical menu strip to the TOP of the left sidebar
-        // column. Y-up: highest local Y is at the top.
         let strip_x = bounds.x;
         let strip_w = SIDEBAR_W;
         let strip_h = SIDEBAR_MENU_H;
@@ -244,8 +397,6 @@ impl Widget for SidebarMenuHost {
         if !self.is_visible() {
             return false;
         }
-        // Claim only the top-left strip occupied by the vertical menu
-        // so playfield clicks pass through to GameWidget.
         let top = self.bounds.height;
         let bottom = self.bounds.height - SIDEBAR_MENU_H;
         local_pos.x >= 0.0
@@ -253,7 +404,9 @@ impl Widget for SidebarMenuHost {
             && local_pos.y >= bottom
             && local_pos.y <= top
     }
-    fn paint(&mut self, _ctx: &mut dyn DrawCtx) {}
+    fn paint(&mut self, _ctx: &mut dyn DrawCtx) {
+        self.sync_kind();
+    }
     fn on_event(&mut self, _event: &Event) -> EventResult {
         EventResult::Ignored
     }
@@ -265,7 +418,6 @@ impl Widget for SidebarMenuHost {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::games::GameKind;
 
     #[test]
     fn draw_count_action_updates_model() {
@@ -297,10 +449,40 @@ mod tests {
         m.start_game_with_seed(GameKind::FreeCell, 99);
         let pre_slug = m.session.as_ref().unwrap().game_slug();
         m.set_klondike_draw_count(3);
-        // FreeCell session is preserved (still freecell, same seed).
         let post = m.session.as_ref().unwrap();
         assert_eq!(post.game_slug(), pre_slug);
         assert_eq!(post.seed(), 99);
         assert_eq!(m.klondike_draw_count, 3);
+    }
+
+    #[test]
+    fn spider_suit_count_change_during_spider_re_deals() {
+        let mut m = AppModel::new();
+        m.start_game_with_seed(GameKind::Spider, 7);
+        assert_eq!(m.spider_suit_count, 4);
+        m.set_spider_suit_count(1);
+        assert_eq!(m.spider_suit_count, 1);
+        // Same seed, so the same shuffle slots are filled — but the
+        // deck only has one suit's cards in it now.
+        let session = m.session.as_ref().unwrap();
+        assert_eq!(session.seed(), 7);
+        // Verify the deck composition: every face-up card in the
+        // cascade tops should be the same suit as the configured
+        // `spider_one_suit` (Spades by default).
+        let piles = session.piles();
+        for cid in 9..=18u8 {
+            let top = piles.get(cid).top().unwrap();
+            assert_eq!(top.suit, m.spider_one_suit);
+        }
+    }
+
+    #[test]
+    fn picking_spider_one_suit_switches_to_one_suit_mode() {
+        let mut m = AppModel::new();
+        m.start_game_with_seed(GameKind::Spider, 11);
+        assert_eq!(m.spider_suit_count, 4);
+        handle_action(&mut m, "spider-suit-hearts");
+        assert_eq!(m.spider_suit_count, 1);
+        assert_eq!(m.spider_one_suit, Suit::Hearts);
     }
 }

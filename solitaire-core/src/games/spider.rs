@@ -8,7 +8,7 @@
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 
-use crate::cards::{spider_deck, Card, Rank};
+use crate::cards::{spider_deck, Card, Rank, Suit};
 use crate::consts::{CARD_W, TABLEAU_BASE_Y, TOP_ROW_BOTTOM_Y, VIRTUAL_W};
 use crate::piles::{PileId, PileKind, PileLayout, PileSet, PileSlot};
 use crate::session::Move;
@@ -77,20 +77,45 @@ static SLOTS: [PileSlot; 19] = slots();
 
 pub struct Spider {
     pub suit_count: u8,
+    /// Suit used by 1-suit Spider. Ignored when `suit_count > 1`.
+    /// Players who want a beginner deal pick this in the Options menu
+    /// (matches the "Spider Solitaire 1-suit" variant their wife / kid
+    /// plays). Defaults to Spades since that's what the original code
+    /// hard-coded.
+    pub one_suit: Suit,
 }
 
 impl Spider {
     pub const fn new(suit_count: u8) -> Self {
-        Self { suit_count }
+        Self {
+            suit_count,
+            one_suit: Suit::Spades,
+        }
     }
     pub const fn one_suit() -> Self {
         Self::new(1)
+    }
+    pub const fn one_suit_of(suit: Suit) -> Self {
+        Self {
+            suit_count: 1,
+            one_suit: suit,
+        }
     }
     pub const fn two_suit() -> Self {
         Self::new(2)
     }
     pub const fn four_suit() -> Self {
         Self::new(4)
+    }
+
+    /// Suits used for this game's deck. Driven by `suit_count`; for
+    /// 1-suit Spider the active suit is `self.one_suit`.
+    fn suits(&self) -> Vec<Suit> {
+        match self.suit_count {
+            1 => vec![self.one_suit],
+            2 => vec![Suit::Spades, Suit::Hearts],
+            _ => vec![Suit::Spades, Suit::Hearts, Suit::Diamonds, Suit::Clubs],
+        }
     }
 }
 
@@ -143,7 +168,7 @@ impl GameRules for Spider {
     }
 
     fn deal(&self, piles: &mut PileSet, rng: &mut StdRng) {
-        let mut deck = spider_deck(self.suit_count);
+        let mut deck = spider_deck(&self.suits());
         deck.shuffle(rng);
         let mut iter = deck.into_iter();
         // Cascades 0..3 get 6 cards, cascades 4..9 get 5 cards. Top card
@@ -363,6 +388,92 @@ mod tests {
         assert_eq!(m.from, cid);
         assert_eq!(m.to, FOUND_FIRST);
         assert_eq!(m.take, 13);
+    }
+
+    #[test]
+    fn suited_multi_card_move_to_empty_cascade_is_legal() {
+        // Regression check: a suited descending tail dragged to an
+        // EMPTY cascade should land. (Reported as "I can't move a group
+        // of cards to a new pile" — the rule allows it; verifying.)
+        let rules = Spider::four_suit();
+        let mut piles = PileSet::from_slots(rules.pile_layout());
+        let src = CASCADE_FIRST;
+        for r in [Rank::Eight, Rank::Seven, Rank::Six] {
+            piles
+                .get_mut(src)
+                .cards
+                .push(Card::new(Suit::Spades, r).face_up());
+        }
+        // Cascade 1 is empty.
+        let dst = CASCADE_FIRST + 1;
+        assert!(piles.get(dst).is_empty());
+        let m = Move::simple(src, 3, dst);
+        assert!(rules.legal_move(&piles, &m));
+    }
+
+    #[test]
+    fn suited_multi_card_move_onto_higher_card_is_legal() {
+        // Same suited tail (8♠ 7♠ 6♠) onto a 9 of any suit lands.
+        let rules = Spider::four_suit();
+        let mut piles = PileSet::from_slots(rules.pile_layout());
+        let src = CASCADE_FIRST;
+        for r in [Rank::Eight, Rank::Seven, Rank::Six] {
+            piles
+                .get_mut(src)
+                .cards
+                .push(Card::new(Suit::Spades, r).face_up());
+        }
+        let dst = CASCADE_FIRST + 1;
+        piles
+            .get_mut(dst)
+            .cards
+            .push(Card::new(Suit::Hearts, Rank::Nine).face_up());
+        let m = Move::simple(src, 3, dst);
+        assert!(rules.legal_move(&piles, &m));
+    }
+
+    #[test]
+    fn complete_run_collapse_chain_after_user_move() {
+        // Integration check: place an Ace on top of a Q-down-to-2
+        // suited run via `try_apply`. The K we'll set up first.
+        // Expected: after_move detects the K→A run and auto-collapses.
+        let mut s = GameSession::new(Spider::four_suit(), 1);
+        // Replace the dealt state with a curated cascade.
+        s.piles = PileSet::from_slots(Spider::four_suit().pile_layout());
+        let cid = CASCADE_FIRST;
+        // Push K..2 (face-up).
+        for r in [
+            Rank::King,
+            Rank::Queen,
+            Rank::Jack,
+            Rank::Ten,
+            Rank::Nine,
+            Rank::Eight,
+            Rank::Seven,
+            Rank::Six,
+            Rank::Five,
+            Rank::Four,
+            Rank::Three,
+            Rank::Two,
+        ] {
+            s.piles
+                .get_mut(cid)
+                .cards
+                .push(Card::new(Suit::Spades, r).face_up());
+        }
+        // Park the Ace on cascade 1.
+        let src = CASCADE_FIRST + 1;
+        s.piles
+            .get_mut(src)
+            .cards
+            .push(Card::new(Suit::Spades, Rank::Ace).face_up());
+        // User move: Ace onto the 2. Should trigger the K→A collapse
+        // via `after_move`.
+        let m = Move::simple(src, 1, cid);
+        assert!(s.try_apply(m), "user A→2 move accepted");
+        // After collapse: cascade 0 empty, foundation 0 has 13 cards.
+        assert!(s.piles.get(cid).is_empty(), "K-A run collapsed off cascade");
+        assert_eq!(s.piles.get(FOUND_FIRST).len(), 13);
     }
 
     #[test]

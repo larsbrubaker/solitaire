@@ -28,25 +28,16 @@ pub fn shuffled_seeded(seed: u64) -> Vec<Card> {
     deck
 }
 
-/// Spider deck: always 104 cards, split across the chosen number of
-/// suits (1, 2, or 4). `deck_id` increments per copy so undo can
-/// distinguish duplicate (suit, rank) pairs.
-pub fn spider_deck(suit_count: u8) -> Vec<Card> {
-    let suits: &[crate::cards::Suit] = match suit_count {
-        1 => &[crate::cards::Suit::Spades],
-        2 => &[crate::cards::Suit::Spades, crate::cards::Suit::Hearts],
-        _ => &[
-            crate::cards::Suit::Spades,
-            crate::cards::Suit::Hearts,
-            crate::cards::Suit::Diamonds,
-            crate::cards::Suit::Clubs,
-        ],
-    };
+/// Spider deck: always 104 cards, split across the caller's chosen
+/// `suits` set. `deck_id` increments per copy so undo can distinguish
+/// duplicate (suit, rank) pairs. Caller is responsible for `suits` being
+/// 1, 2, or 4 entries (the 104-card total only divides cleanly by those).
+pub fn spider_deck(suits: &[Suit]) -> Vec<Card> {
     let copies = 104 / (suits.len() * 13);
     let mut out = Vec::with_capacity(104);
     for d in 0..copies as u8 {
         for &suit in suits {
-            for rank in crate::cards::Rank::ALL {
+            for rank in Rank::ALL {
                 let mut c = Card::new(suit, rank);
                 c.deck_id = d;
                 out.push(c);

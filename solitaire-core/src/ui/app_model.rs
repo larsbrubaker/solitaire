@@ -7,6 +7,7 @@ use rand::rngs::StdRng;
 use rand::SeedableRng;
 use web_time::Instant;
 
+use crate::cards::Suit;
 use crate::games::freecell::FreeCell;
 use crate::games::klondike::Klondike;
 use crate::games::moms::MomsSolitaire;
@@ -42,6 +43,11 @@ pub struct AppModel {
     /// Klondike draw count (1 = standard, 3 = Microsoft "Classic"). Read
     /// when starting Klondike; ignored for FreeCell/Spider.
     pub klondike_draw_count: u8,
+    /// Spider suit count (1 = beginner, 2 = intermediate, 4 = classic).
+    /// Read when starting Spider; ignored otherwise.
+    pub spider_suit_count: u8,
+    /// Suit used by 1-suit Spider. Ignored for other suit counts.
+    pub spider_one_suit: Suit,
     /// Open Help dialog, if any. The `HelpDialog` widget reads this and
     /// paints the corresponding markdown content as a modal overlay.
     pub help: Option<HelpKind>,
@@ -64,6 +70,8 @@ impl AppModel {
             kind: None,
             toast: None,
             klondike_draw_count: 1,
+            spider_suit_count: 4,
+            spider_one_suit: Suit::Spades,
             help: None,
             moms_waiting_king_at: None,
             moms_shuffles: 0,
@@ -81,7 +89,13 @@ impl AppModel {
                 seed,
             )),
             GameKind::FreeCell => Box::new(GameSession::new(FreeCell::new(), seed)),
-            GameKind::Spider => Box::new(GameSession::new(Spider::four_suit(), seed)),
+            GameKind::Spider => Box::new(GameSession::new(
+                Spider {
+                    suit_count: self.spider_suit_count,
+                    one_suit: self.spider_one_suit,
+                },
+                seed,
+            )),
             GameKind::MomsSolitaire => Box::new(GameSession::new(MomsSolitaire::new(), seed)),
         };
         self.session = Some(session);
@@ -112,6 +126,31 @@ impl AppModel {
         }
         self.klondike_draw_count = n;
         if matches!(self.kind, Some(GameKind::Klondike)) {
+            self.restart_current_deal();
+        }
+    }
+
+    /// Apply a new Spider suit count (1 / 2 / 4). Same restart-with-same-
+    /// seed semantics as `set_klondike_draw_count`.
+    pub fn set_spider_suit_count(&mut self, n: u8) {
+        if self.spider_suit_count == n {
+            return;
+        }
+        self.spider_suit_count = n;
+        if matches!(self.kind, Some(GameKind::Spider)) {
+            self.restart_current_deal();
+        }
+    }
+
+    /// Apply a new active suit for 1-suit Spider. No-op (other than
+    /// the model field update) when the active game isn't 1-suit
+    /// Spider, since no on-screen card would change.
+    pub fn set_spider_one_suit(&mut self, suit: Suit) {
+        if self.spider_one_suit == suit {
+            return;
+        }
+        self.spider_one_suit = suit;
+        if matches!(self.kind, Some(GameKind::Spider)) && self.spider_suit_count == 1 {
             self.restart_current_deal();
         }
     }
