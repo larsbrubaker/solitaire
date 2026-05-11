@@ -9,8 +9,14 @@
 
 use std::cell::RefCell;
 
+type ToggleFn = Box<dyn Fn()>;
+type StorageLoadFn = Box<dyn Fn(&str) -> Option<String>>;
+type StorageSaveFn = Box<dyn Fn(&str, &str)>;
+
 thread_local! {
-    static FULLSCREEN_TOGGLE: RefCell<Option<Box<dyn Fn()>>> = const { RefCell::new(None) };
+    static FULLSCREEN_TOGGLE: RefCell<Option<ToggleFn>> = const { RefCell::new(None) };
+    static STORAGE_LOAD: RefCell<Option<StorageLoadFn>> = const { RefCell::new(None) };
+    static STORAGE_SAVE: RefCell<Option<StorageSaveFn>> = const { RefCell::new(None) };
 }
 
 /// Register the platform's fullscreen toggle implementation. Called
@@ -27,4 +33,44 @@ pub fn request_toggle_fullscreen() {
             f();
         }
     });
+}
+
+/// Register the platform's key/value storage backend. Used by
+/// `AppModel` to persist the player's Options-menu choices across
+/// launches. The WASM shell wires this up to `window.localStorage`;
+/// native shells can plug in a file-backed store. With no backend
+/// registered (default for headless tests) `storage_load` returns
+/// `None` and `storage_save` is a no-op.
+pub fn set_storage_io(
+    load: impl Fn(&str) -> Option<String> + 'static,
+    save: impl Fn(&str, &str) + 'static,
+) {
+    STORAGE_LOAD.with(|cell| *cell.borrow_mut() = Some(Box::new(load)));
+    STORAGE_SAVE.with(|cell| *cell.borrow_mut() = Some(Box::new(save)));
+}
+
+/// Read a previously-stored value for `key`. `None` if absent OR if
+/// no backend was registered.
+pub fn storage_load(key: &str) -> Option<String> {
+    STORAGE_LOAD.with(|cell| cell.borrow().as_ref().and_then(|f| f(key)))
+}
+
+/// Write `value` to `key`. Silently dropped if no backend was
+/// registered.
+pub fn storage_save(key: &str, value: &str) {
+    STORAGE_SAVE.with(|cell| {
+        if let Some(f) = cell.borrow().as_ref() {
+            f(key, value);
+        }
+    });
+}
+
+/// Test-only: drop the registered storage backend so subsequent
+/// `storage_load`/`storage_save` calls fall through to the default
+/// no-op behaviour. Prevents thread-local state from one test from
+/// leaking into another when cargo's test runner reuses threads.
+#[cfg(test)]
+pub fn clear_storage_io_for_test() {
+    STORAGE_LOAD.with(|cell| *cell.borrow_mut() = None);
+    STORAGE_SAVE.with(|cell| *cell.borrow_mut() = None);
 }

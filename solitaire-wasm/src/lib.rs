@@ -36,6 +36,12 @@ struct WgpuInit {
 #[wasm_bindgen(start)]
 pub fn start() {
     console_error_panic_hook::set_once();
+    // Register the localStorage-backed K/V store BEFORE building the
+    // app so `AppModel::new()`'s call to `UserSettings::load()` sees a
+    // live backend on its first read. Failures here (e.g. private
+    // mode, storage disabled) silently fall through to the default
+    // no-op store and the user just gets defaults — no crash.
+    register_local_storage_io();
     ensure_app();
     wasm_bindgen_futures::spawn_local(async {
         match init_wgpu_async().await {
@@ -46,6 +52,23 @@ pub fn start() {
         }
         mark_dirty();
     });
+}
+
+/// Bridge `window.localStorage` into `solitaire_core::platform`'s
+/// key/value hooks so `UserSettings` persists across reloads.
+fn register_local_storage_io() {
+    solitaire_core::platform::set_storage_io(
+        |key| {
+            web_sys::window()
+                .and_then(|w| w.local_storage().ok().flatten())
+                .and_then(|s| s.get_item(key).ok().flatten())
+        },
+        |key, value| {
+            if let Some(store) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+                let _ = store.set_item(key, value);
+            }
+        },
+    );
 }
 
 #[derive(Debug)]

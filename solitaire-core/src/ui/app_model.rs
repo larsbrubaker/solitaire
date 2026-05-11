@@ -14,6 +14,7 @@ use crate::games::moms::MomsSolitaire;
 use crate::games::spider::Spider;
 use crate::games::GameKind;
 use crate::session::GameSession;
+use crate::settings::UserSettings;
 
 use super::dyn_session::DynGameSession;
 
@@ -64,18 +65,37 @@ pub struct AppModel {
 
 impl AppModel {
     pub fn new() -> Self {
+        // Persisted Options-menu choices (Klondike draw count, Spider
+        // suit count + one-suit choice) load from the platform's
+        // key/value store (`localStorage` in WASM, file-backed on
+        // native, in-memory in headless tests). When the backend is
+        // absent or the stored blob doesn't parse, fall back to the
+        // `UserSettings::default()` values.
+        let s = UserSettings::load();
         Self {
             screen: Screen::Title,
             session: None,
             kind: None,
             toast: None,
-            klondike_draw_count: 1,
-            spider_suit_count: 4,
-            spider_one_suit: Suit::Spades,
+            klondike_draw_count: s.klondike_draw_count,
+            spider_suit_count: s.spider_suit_count,
+            spider_one_suit: s.spider_one_suit,
             help: None,
             moms_waiting_king_at: None,
             moms_shuffles: 0,
         }
+    }
+
+    /// Snapshot the persisted-settings fields and write them to the
+    /// platform store. Called from every setter that touches a
+    /// persisted field. Failures are silent (no backend, etc.).
+    fn save_settings(&self) {
+        UserSettings {
+            klondike_draw_count: self.klondike_draw_count,
+            spider_suit_count: self.spider_suit_count,
+            spider_one_suit: self.spider_one_suit,
+        }
+        .save();
     }
 
     pub fn start_game(&mut self, kind: GameKind) {
@@ -125,6 +145,7 @@ impl AppModel {
             return;
         }
         self.klondike_draw_count = n;
+        self.save_settings();
         if matches!(self.kind, Some(GameKind::Klondike)) {
             self.restart_current_deal();
         }
@@ -137,6 +158,7 @@ impl AppModel {
             return;
         }
         self.spider_suit_count = n;
+        self.save_settings();
         if matches!(self.kind, Some(GameKind::Spider)) {
             self.restart_current_deal();
         }
@@ -150,6 +172,7 @@ impl AppModel {
             return;
         }
         self.spider_one_suit = suit;
+        self.save_settings();
         if matches!(self.kind, Some(GameKind::Spider)) && self.spider_suit_count == 1 {
             self.restart_current_deal();
         }

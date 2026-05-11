@@ -7,4 +7,5 @@ pub mod piles;
 pub mod platform;
 pub mod render;
 pub mod session;
+pub mod settings;
 pub mod ui;
