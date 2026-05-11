@@ -250,7 +250,19 @@ impl GameRules for Spider {
             // Find first empty foundation.
             for fid in FOUND_FIRST..=FOUND_LAST {
                 if piles.get(fid).is_empty() {
-                    return Some(Move::simple(cid, 13, fid));
+                    let mut m = Move::simple(cid, 13, fid);
+                    // If lifting the 13-card run exposes a face-down
+                    // card, flip it. Without this the cascade stays
+                    // visually "stuck" with a face-down top after the
+                    // collapse and the player has to guess that the
+                    // game is still progressing. (Drag-drop already
+                    // does this via finish_drag — the auto-collapse
+                    // path needed parity.)
+                    let n = cascade.cards.len();
+                    if n > 13 && !cascade.cards[n - 14].face_up {
+                        m = m.with_flip_source();
+                    }
+                    return Some(m);
                 }
             }
         }
@@ -430,6 +442,60 @@ mod tests {
             .push(Card::new(Suit::Hearts, Rank::Nine).face_up());
         let m = Move::simple(src, 3, dst);
         assert!(rules.legal_move(&piles, &m));
+    }
+
+    #[test]
+    fn foundation_collapse_flips_newly_exposed_facedown() {
+        // Regression: a K→A run collapse left the freshly exposed
+        // face-down card face-down, leaving the cascade visually stuck
+        // until the player did something else to trigger another move.
+        let mut s = GameSession::new(Spider::four_suit(), 1);
+        s.piles = PileSet::from_slots(Spider::four_suit().pile_layout());
+        let cid = CASCADE_FIRST;
+        // Bottom of cascade: a face-down "buried" card.
+        s.piles
+            .get_mut(cid)
+            .cards
+            .push(Card::new(Suit::Hearts, Rank::Five));
+        // Above it: a K-down-to-2 suited spades run.
+        for r in [
+            Rank::King,
+            Rank::Queen,
+            Rank::Jack,
+            Rank::Ten,
+            Rank::Nine,
+            Rank::Eight,
+            Rank::Seven,
+            Rank::Six,
+            Rank::Five,
+            Rank::Four,
+            Rank::Three,
+            Rank::Two,
+        ] {
+            s.piles
+                .get_mut(cid)
+                .cards
+                .push(Card::new(Suit::Spades, r).face_up());
+        }
+        // Park the Ace on cascade 1.
+        let src = CASCADE_FIRST + 1;
+        s.piles
+            .get_mut(src)
+            .cards
+            .push(Card::new(Suit::Spades, Rank::Ace).face_up());
+        // User move: Ace onto the 2. K→A collapse fires.
+        let m = Move::simple(src, 1, cid);
+        assert!(s.try_apply(m));
+        // Cascade now has 1 card (the previously-buried 5♥). It must
+        // be face-up after the collapse.
+        assert_eq!(s.piles.get(cid).len(), 1);
+        let top = s.piles.get(cid).top().unwrap();
+        assert_eq!(top.rank, Rank::Five);
+        assert_eq!(top.suit, Suit::Hearts);
+        assert!(
+            top.face_up,
+            "Spider auto-collapse must flip the newly exposed card"
+        );
     }
 
     #[test]
