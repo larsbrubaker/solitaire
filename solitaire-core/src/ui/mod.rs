@@ -27,7 +27,7 @@ use app_root::AppRootWidget;
 use game_widget::GameWidget;
 use help_widget::HelpDialog;
 use hud_widget::HudWidget;
-use menu_widget::MenuBarHost;
+use menu_widget::{MenuBarHost, SidebarMenuHost};
 use overlay_stack::OverlayStack;
 use title_widget::TitleWidget;
 
@@ -59,17 +59,21 @@ pub fn build_solitaire_app() -> App {
     let game = GameWidget::new(model.clone(), font.clone(), atlas);
     let hud = HudWidget::new(model.clone(), font.clone());
     let menu = MenuBarHost::new(model.clone(), font.clone());
+    let sidebar_menu = SidebarMenuHost::new(model.clone(), font.clone());
     let help = HelpDialog::new(model.clone(), font.clone());
     let root = AppRootWidget::new(model.clone());
 
     // Painted bottom→top, hit-tested top→bottom. HelpDialog sits at the
     // very top so its scrim covers the menu bar and the title screen
-    // chrome equally.
+    // chrome equally. Only ONE of `menu` / `sidebar_menu` is visible at
+    // a time (gated by chrome mode); both registered so the swap is
+    // automatic when the viewport changes.
     let stack = OverlayStack::new()
         .add(Box::new(root))
         .add(Box::new(game))
         .add(Box::new(hud))
         .add(Box::new(menu))
+        .add(Box::new(sidebar_menu))
         .add(Box::new(title))
         .add(Box::new(help));
 

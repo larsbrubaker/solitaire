@@ -20,9 +20,8 @@ use agg_gui::geometry::{Point, Rect, Size};
 use agg_gui::text::Font;
 use agg_gui::widget::Widget;
 
-use super::app_model::{HelpKind, Screen, SharedModel};
+use super::app_model::{Screen, SharedModel};
 use super::layout::{self, ChromeMode};
-use crate::games::GameKind;
 
 const HUD_BG: Color = Color::from_rgba8(0x09, 0x52, 0x2c, 0xe0);
 const BTN_BG: Color = Color::from_rgb8(0x1f, 0x4d, 0x2e);
@@ -35,13 +34,6 @@ enum Btn {
     Undo,
     NewDeal,
     Shuffle,
-    /// Klondike-only — toggles draw count between 1 and 3. Only shown
-    /// in sidebar mode, where the horizontal menu bar (which normally
-    /// hosts this option) is hidden.
-    DrawToggle,
-    /// Opens the Rules dialog for the active variant. Only shown in
-    /// sidebar mode, same reason as `DrawToggle`.
-    Help,
     Home,
 }
 
@@ -77,42 +69,28 @@ impl HudWidget {
         }
     }
 
-    /// Buttons to render for the active variant + chrome mode.
-    ///
-    /// Standard (desktop / portrait) — Undo, New Deal, (Shuffle for
-    /// Mom's), Title. The remaining menu-bar actions stay in the
-    /// horizontal menu bar at the top.
-    ///
-    /// Sidebar (landscape mobile) — additionally includes Help and,
-    /// for Klondike, a Draw 1/3 toggle, because the menu bar is hidden
-    /// in this mode to give the playfield the entire viewport height.
+    /// Buttons to render. Mom's Solitaire gets an extra `Shuffle`
+    /// between New Deal and Title; everything else gets the standard
+    /// three. The menu-bar / sidebar-menu actions (Restart, Draw 1/3,
+    /// Rules, About) live in the menu widget — not duplicated here.
     fn btns(&self) -> Vec<Btn> {
-        let kind = self.model.borrow().kind;
-        let in_sidebar = self.chrome().mode == ChromeMode::Sidebar;
-        let mut out = vec![Btn::Undo, Btn::NewDeal];
-        if matches!(kind, Some(GameKind::Klondike)) && in_sidebar {
-            out.push(Btn::DrawToggle);
+        let is_moms = matches!(
+            self.model.borrow().kind,
+            Some(crate::games::GameKind::MomsSolitaire)
+        );
+        if is_moms {
+            vec![Btn::Undo, Btn::NewDeal, Btn::Shuffle, Btn::Home]
+        } else {
+            vec![Btn::Undo, Btn::NewDeal, Btn::Home]
         }
-        if matches!(kind, Some(GameKind::MomsSolitaire)) {
-            out.push(Btn::Shuffle);
-        }
-        if in_sidebar {
-            out.push(Btn::Help);
-        }
-        out.push(Btn::Home);
-        out
     }
 
-    /// Label for `b`, parameterised on model state where the label
-    /// reflects current configuration (DrawToggle).
-    fn btn_label(&self, b: Btn) -> String {
+    fn btn_label(&self, b: Btn) -> &'static str {
         match b {
-            Btn::Undo => "Undo".to_string(),
-            Btn::NewDeal => "New Deal".to_string(),
-            Btn::Shuffle => "Shuffle".to_string(),
-            Btn::DrawToggle => format!("Draw {}", self.model.borrow().klondike_draw_count),
-            Btn::Help => "Help".to_string(),
-            Btn::Home => "Title".to_string(),
+            Btn::Undo => "Undo",
+            Btn::NewDeal => "New Deal",
+            Btn::Shuffle => "Shuffle",
+            Btn::Home => "Title",
         }
     }
 
@@ -177,15 +155,6 @@ impl HudWidget {
             Btn::Shuffle => {
                 model.try_moms_shuffle();
             }
-            Btn::DrawToggle => {
-                let next = if model.klondike_draw_count == 1 { 3 } else { 1 };
-                model.set_klondike_draw_count(next);
-            }
-            Btn::Help => {
-                if let Some(k) = model.kind {
-                    model.help = Some(HelpKind::Rules(k));
-                }
-            }
             Btn::Home => {
                 model.back_to_title();
             }
@@ -222,12 +191,12 @@ impl HudWidget {
         ctx.set_font(self.font.clone());
         ctx.set_font_size(18.0);
         let label = self.btn_label(b);
-        let Some(m) = ctx.measure_text(&label) else {
+        let Some(m) = ctx.measure_text(label) else {
             return;
         };
         let lx = x + (w - m.width) / 2.0;
         let ly = y + m.centered_baseline_y(h);
-        ctx.fill_text(&label, lx, ly);
+        ctx.fill_text(label, lx, ly);
     }
 
     /// Position + paint the Mom's-Solitaire shuffle counter. Tucked

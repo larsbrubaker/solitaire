@@ -19,6 +19,11 @@ pub const SIDEBAR_W: f64 = 120.0;
 pub const MENU_BAR_H: f64 = 26.0;
 /// HUD strip height in `Standard` mode.
 pub const HUD_STRIP_H: f64 = 48.0;
+/// Height of the vertical Game/Options/Help menu strip pinned to the
+/// TOP of the sidebar in `Sidebar` mode. Three top-level menus ×
+/// `VERTICAL_ROW_H` (36 px). The HUD action buttons sit below this in
+/// the same sidebar column.
+pub const SIDEBAR_MENU_H: f64 = 3.0 * 36.0;
 /// Breathing room between the playfield and the chrome (menu bar, HUD
 /// strip, or sidebar) so cards never paint flush against a chrome
 /// edge. Applied symmetrically on every side the playfield touches
@@ -63,15 +68,15 @@ pub fn compute(viewport: Size) -> ChromeLayout {
     // landscape, 16:9 / 19.5:9). Either triggers sidebar mode.
     let compact = h < 700.0 || (w > h * 1.5 && h < 900.0);
     if compact {
-        // Sidebar mode: NO top menu bar — the menu actions get exposed
-        // as vertical buttons inside the left sidebar instead, so the
-        // playfield can reach all the way to the top of the viewport
-        // and cards are as large as possible. `menu_rect` is reported
-        // as zero-area so the chrome consumer can ignore it.
-        let menu_rect = Rect::new(0.0, 0.0, 0.0, 0.0);
-        let hud_rect = Rect::new(0.0, 0.0, SIDEBAR_W, h);
-        // Tight inset on every side so the playfield gets the
-        // overwhelming majority of the screen in landscape mobile.
+        // Sidebar mode:
+        //   * `menu_rect` = top portion of the left column — the
+        //     vertical Game/Options/Help strip (`SIDEBAR_MENU_H` tall).
+        //   * `hud_rect`  = the remainder of the left column — the
+        //     action buttons (Undo / New Deal / etc.) stack here.
+        //   * `playfield_rect` = the rest of the viewport, inset by a
+        //     tight `SIDEBAR_PAD` so cards reach close to the edges.
+        let menu_rect = Rect::new(0.0, h - SIDEBAR_MENU_H, SIDEBAR_W, SIDEBAR_MENU_H);
+        let hud_rect = Rect::new(0.0, 0.0, SIDEBAR_W, h - SIDEBAR_MENU_H);
         const SIDEBAR_PAD: f64 = 6.0;
         let playfield_rect = Rect::new(
             SIDEBAR_W + SIDEBAR_PAD,
@@ -128,13 +133,15 @@ mod tests {
         // ~iPhone in landscape (logical pixels): 844 × 390.
         let l = compute(Size::new(844.0, 390.0));
         assert_eq!(l.mode, ChromeMode::Sidebar);
-        // Sidebar runs the full viewport height — no menu bar in this
-        // mode, the menu actions are exposed as sidebar buttons.
+        // Sidebar column is split: the top `SIDEBAR_MENU_H` houses the
+        // vertical Game/Options/Help strip, the rest below is the HUD
+        // action buttons.
         assert_eq!(l.hud_rect.width, SIDEBAR_W);
-        assert_eq!(l.hud_rect.height, 390.0);
-        // No menu bar painted in sidebar mode.
-        assert_eq!(l.menu_rect.width, 0.0);
-        assert_eq!(l.menu_rect.height, 0.0);
+        assert_eq!(l.hud_rect.height, 390.0 - SIDEBAR_MENU_H);
+        assert_eq!(l.menu_rect.width, SIDEBAR_W);
+        assert_eq!(l.menu_rect.height, SIDEBAR_MENU_H);
+        // Menu sits at the top of the column (high Y in Y-up).
+        assert_eq!(l.menu_rect.y, 390.0 - SIDEBAR_MENU_H);
         // Playfield sits to the right of the sidebar with a tight pad.
         assert!(l.playfield_rect.x > SIDEBAR_W);
         assert!(l.playfield_rect.width > 844.0 - SIDEBAR_W - 30.0);

@@ -1,15 +1,12 @@
-//! Top menu bar — Windows-style "Game / Options" drop-downs over the
-//! game screen. Hidden on the title screen. Wraps agg-gui's `MenuBar`
-//! widget; the bar lives at the top strip of the window in Y-up coords
-//! and dispatches action strings back into [`AppModel`].
+//! Game/Options/Help menu — desktop convention puts it across the top
+//! of the viewport as a horizontal bar (`MenuBarHost`). On landscape-
+//! mobile-shaped viewports we hide the top bar entirely and re-host the
+//! same menus as a VERTICAL strip pinned to the top of the left sidebar
+//! (`SidebarMenuHost`), with popups opening to the right.
 //!
-//! All menu state (radio selection for Draw 1/3, etc.) is owned by the
-//! `MenuBar` items; on action we mutate [`AppModel`] and request a
-//! redraw. No menu logic in this file beyond the action dispatch table.
-//!
-//! Pile widgets don't exist in this codebase but a top-of-stack menu
-//! widget is fine — its bounds are restricted to the top BAR_H pixels
-//! so playfield drags don't intersect.
+//! Both hosts wrap an `agg_gui::widgets::menu::MenuBar` and route
+//! action strings through a shared [`handle_action`] table back into
+//! [`AppModel`].
 
 use std::sync::Arc;
 
@@ -18,11 +15,13 @@ use agg_gui::event::{Event, EventResult};
 use agg_gui::geometry::{Point, Rect, Size};
 use agg_gui::text::Font;
 use agg_gui::widget::Widget;
-use agg_gui::widgets::menu::{MenuBar, MenuEntry, MenuItem, TopMenu, MENU_BAR_H};
+use agg_gui::widgets::menu::{MenuBar, MenuEntry, MenuItem, MenuOrientation, TopMenu, MENU_BAR_H};
 
 use super::app_model::{AppModel, HelpKind, Screen, SharedModel};
-use super::layout::{self, ChromeMode};
+use super::layout::{self, ChromeMode, SIDEBAR_MENU_H, SIDEBAR_W};
 
+/// Horizontal menu bar across the top of the viewport. Hidden in
+/// sidebar mode (its actions are mirrored by `SidebarMenuHost`).
 pub struct MenuBarHost {
     bounds: Rect,
     children: Vec<Box<dyn Widget>>,
@@ -31,19 +30,44 @@ pub struct MenuBarHost {
 
 impl MenuBarHost {
     pub fn new(model: SharedModel, font: Arc<Font>) -> Self {
-        let menus = build_menus(&model.borrow());
-        let model_for_action = model.clone();
-        let bar = MenuBar::new(font, menus, move |action| {
-            let mut m = model_for_action.borrow_mut();
-            handle_action(&mut m, action);
-            agg_gui::animation::request_draw();
-        });
+        let bar = build_menu_bar(model.clone(), font, MenuOrientation::Horizontal);
         Self {
             bounds: Rect::default(),
             children: vec![Box::new(bar)],
             model,
         }
     }
+}
+
+/// Vertical menu strip pinned to the TOP of the left sidebar. Only
+/// visible in `ChromeMode::Sidebar`. Each top menu (Game / Options /
+/// Help) is a row that opens its popup to the right.
+pub struct SidebarMenuHost {
+    bounds: Rect,
+    children: Vec<Box<dyn Widget>>,
+    model: SharedModel,
+}
+
+impl SidebarMenuHost {
+    pub fn new(model: SharedModel, font: Arc<Font>) -> Self {
+        let bar = build_menu_bar(model.clone(), font, MenuOrientation::Vertical);
+        Self {
+            bounds: Rect::default(),
+            children: vec![Box::new(bar)],
+            model,
+        }
+    }
+}
+
+fn build_menu_bar(model: SharedModel, font: Arc<Font>, orientation: MenuOrientation) -> MenuBar {
+    let menus = build_menus(&model.borrow());
+    let model_for_action = model.clone();
+    MenuBar::new(font, menus, move |action| {
+        let mut m = model_for_action.borrow_mut();
+        handle_action(&mut m, action);
+        agg_gui::animation::request_draw();
+    })
+    .with_orientation(orientation)
 }
 
 /// Build the menus from current model state. Called once at construction;
@@ -166,6 +190,68 @@ impl Widget for MenuBarHost {
     }
     fn on_event(&mut self, _event: &Event) -> EventResult {
         // Same: events route to the bar child via tree dispatch.
+        EventResult::Ignored
+    }
+    fn needs_draw(&self) -> bool {
+        self.children.iter().any(|c| c.needs_draw())
+    }
+}
+
+impl Widget for SidebarMenuHost {
+    fn type_name(&self) -> &'static str {
+        "SidebarMenuHost"
+    }
+    fn bounds(&self) -> Rect {
+        self.bounds
+    }
+    fn set_bounds(&mut self, bounds: Rect) {
+        self.bounds = bounds;
+        // Pin the vertical menu strip to the TOP of the left sidebar
+        // column. Y-up: highest local Y is at the top.
+        let strip_x = bounds.x;
+        let strip_w = SIDEBAR_W;
+        let strip_h = SIDEBAR_MENU_H;
+        let strip_y = bounds.y + bounds.height - strip_h;
+        let bar_rect = Rect::new(strip_x, strip_y, strip_w, strip_h);
+        if let Some(bar) = self.children.first_mut() {
+            bar.set_bounds(bar_rect);
+        }
+    }
+    fn children(&self) -> &[Box<dyn Widget>] {
+        &self.children
+    }
+    fn children_mut(&mut self) -> &mut Vec<Box<dyn Widget>> {
+        &mut self.children
+    }
+    fn layout(&mut self, available: Size) -> Size {
+        if let Some(bar) = self.children.first_mut() {
+            bar.layout(Size::new(SIDEBAR_W, SIDEBAR_MENU_H));
+        }
+        available
+    }
+    fn is_visible(&self) -> bool {
+        let s = self.model.borrow().screen;
+        if !matches!(s, Screen::Game | Screen::Won) {
+            return false;
+        }
+        let chrome = layout::compute(Size::new(self.bounds.width, self.bounds.height));
+        chrome.mode == ChromeMode::Sidebar
+    }
+    fn hit_test(&self, local_pos: Point) -> bool {
+        if !self.is_visible() {
+            return false;
+        }
+        // Claim only the top-left strip occupied by the vertical menu
+        // so playfield clicks pass through to GameWidget.
+        let top = self.bounds.height;
+        let bottom = self.bounds.height - SIDEBAR_MENU_H;
+        local_pos.x >= 0.0
+            && local_pos.x <= SIDEBAR_W
+            && local_pos.y >= bottom
+            && local_pos.y <= top
+    }
+    fn paint(&mut self, _ctx: &mut dyn DrawCtx) {}
+    fn on_event(&mut self, _event: &Event) -> EventResult {
         EventResult::Ignored
     }
     fn needs_draw(&self) -> bool {

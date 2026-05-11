@@ -239,19 +239,41 @@ impl Widget for TitleWidget {
     }
 }
 
-/// Compute the (translation_x, translation_y, scale) needed to letterbox
-/// the virtual VIRTUAL_W x VIRTUAL_H playfield inside `rect`. The
+/// Compute the (translation_x, translation_y, scale) used to position
+/// the virtual VIRTUAL_W × VIRTUAL_H playfield inside `rect`. The
 /// translation is in the same coordinate space as `rect`'s origin: pass
 /// a viewport-relative `Rect` (e.g. `chrome.playfield_rect`) and the
 /// returned `tx, ty` are also viewport-relative.
+///
+/// Two strategies, picked by `rect` aspect:
+///
+/// * `rect` close to 4:3 — standard letterbox-fit, cards centered.
+/// * `rect` markedly wider than 4:3 (>~20 %, typical for landscape-
+///   mobile sidebar mode) — scale-to-fill the width and anchor the
+///   virtual playfield's TOP to the rect's top edge. Cards land near
+///   the top of the rect; the unused bottom of the virtual playfield
+///   (where pile_layouts rarely place anything) gets cropped off the
+///   bottom of the playfield rect. This is what makes the cards
+///   actually visible on a phone — letterbox in a 2.2:1 rect would
+///   shrink the cards to a third of the available pixels.
 pub fn playfield_transform(rect: Rect) -> (f64, f64, f64) {
     let sx = rect.width / VIRTUAL_W;
     let sy = rect.height / VIRTUAL_H;
-    let scale = sx.min(sy);
+    let aspect_rect = rect.width / rect.height.max(1.0);
+    let aspect_virtual = VIRTUAL_W / VIRTUAL_H;
+    let scale_to_fill = aspect_rect > aspect_virtual * 1.2;
+    let scale = if scale_to_fill { sx } else { sx.min(sy) };
     let used_w = VIRTUAL_W * scale;
     let used_h = VIRTUAL_H * scale;
     let tx = rect.x + (rect.width - used_w) / 2.0;
-    let ty = rect.y + (rect.height - used_h) / 2.0;
+    let ty = if scale_to_fill {
+        // Anchor virtual_y = VIRTUAL_H (the top of the virtual
+        // playfield) to the TOP edge of `rect` so card content stays
+        // visible and only the empty bottom gets cropped.
+        rect.y + rect.height - used_h
+    } else {
+        rect.y + (rect.height - used_h) / 2.0
+    };
     (tx, ty, scale)
 }
 
