@@ -1,5 +1,15 @@
-//! Bottom-of-window HUD strip — Undo / New Deal / Back-to-title buttons,
-//! plus the active variant's name. Visible whenever a game is active.
+//! HUD widget — Undo / New Deal / (Shuffle) / Title buttons plus the
+//! Mom's-Solitaire shuffle counter. Visible whenever a game is active.
+//!
+//! Paints in viewport coordinates rather than the virtual playfield
+//! coordinate space so it can switch between two chrome layouts driven
+//! by [`layout::compute`]:
+//!
+//! * `ChromeMode::Standard` — horizontal strip across the bottom of the
+//!   viewport. Default for desktop and portrait phones.
+//! * `ChromeMode::Sidebar` — vertical column on the LEFT side of the
+//!   viewport with the menu bar still pinned to the top. Used on
+//!   landscape-mobile so the playfield gets the full window height.
 
 use std::sync::Arc;
 
@@ -10,10 +20,8 @@ use agg_gui::geometry::{Point, Rect, Size};
 use agg_gui::text::Font;
 use agg_gui::widget::Widget;
 
-use crate::consts::{HUD_HEIGHT, VIRTUAL_W};
-
 use super::app_model::{Screen, SharedModel};
-use super::title_widget::{playfield_transform, screen_to_virtual};
+use super::layout::{self, ChromeMode};
 
 const HUD_BG: Color = Color::from_rgba8(0x09, 0x52, 0x2c, 0xe0);
 const BTN_BG: Color = Color::from_rgb8(0x1f, 0x4d, 0x2e);
@@ -38,9 +46,18 @@ fn btn_label(b: Btn) -> &'static str {
     }
 }
 
-const BTN_W: f64 = 120.0;
-const BTN_H: f64 = 36.0;
-const BTN_GAP: f64 = 12.0;
+/// Standard-mode button height/width and gap (horizontal strip).
+const STD_BTN_W: f64 = 120.0;
+const STD_BTN_H: f64 = 36.0;
+const STD_BTN_GAP: f64 = 12.0;
+
+/// Sidebar-mode button height and vertical gap. Width derives from the
+/// sidebar column width minus padding so buttons fit a 44-ish px tap
+/// target on a phone.
+const SIDE_BTN_H: f64 = 44.0;
+const SIDE_BTN_GAP: f64 = 10.0;
+const SIDE_PAD_X: f64 = 12.0;
+const SIDE_PAD_TOP: f64 = 12.0;
 
 pub struct HudWidget {
     bounds: Rect,
@@ -76,50 +93,78 @@ impl HudWidget {
         }
     }
 
-    fn btn_rect_for(&self, idx: usize, n: usize) -> (f64, f64, f64, f64) {
-        let strip_y = 0.0; // Y-up: strip sits at the bottom.
-        let total_w = n as f64 * BTN_W + (n as f64 - 1.0) * BTN_GAP;
-        let start_x = (VIRTUAL_W - total_w) / 2.0;
-        let x = start_x + idx as f64 * (BTN_W + BTN_GAP);
-        let y = strip_y + (HUD_HEIGHT - BTN_H) / 2.0;
-        (x, y, BTN_W, BTN_H)
+    /// Resolve the current chrome layout for `self.bounds`.
+    fn chrome(&self) -> layout::ChromeLayout {
+        layout::compute(Size::new(self.bounds.width, self.bounds.height))
     }
 
-    fn click_at(&mut self, vx: f64, vy: f64) -> bool {
-        let btns = self.btns();
-        for (i, b) in btns.iter().enumerate() {
-            let (x, y, w, h) = self.btn_rect_for(i, btns.len());
-            if vx >= x && vx <= x + w && vy >= y && vy <= y + h {
-                let mut model = self.model.borrow_mut();
-                match b {
-                    Btn::Undo => {
-                        if let Some(s) = model.session.as_mut() {
-                            s.try_undo();
-                        }
-                    }
-                    Btn::NewDeal => {
-                        // Restart whatever variant is active.
-                        if let Some(kind) = model.kind {
-                            model.start_game(kind);
-                        }
-                    }
-                    Btn::Shuffle => {
-                        model.try_moms_shuffle();
-                    }
-                    Btn::Home => {
-                        model.back_to_title();
-                    }
-                }
-                agg_gui::animation::request_draw();
-                return true;
+    /// Pixel rect for the `idx`-th button in viewport coords. `n` is the
+    /// total button count for the active variant.
+    fn btn_rect_for(&self, idx: usize, n: usize) -> (f64, f64, f64, f64) {
+        let chrome = self.chrome();
+        let hud = chrome.hud_rect;
+        match chrome.mode {
+            ChromeMode::Standard => {
+                let total_w = n as f64 * STD_BTN_W + (n as f64 - 1.0) * STD_BTN_GAP;
+                let start_x = hud.x + (hud.width - total_w) / 2.0;
+                let x = start_x + idx as f64 * (STD_BTN_W + STD_BTN_GAP);
+                let y = hud.y + (hud.height - STD_BTN_H) / 2.0;
+                (x, y, STD_BTN_W, STD_BTN_H)
+            }
+            ChromeMode::Sidebar => {
+                let btn_w = hud.width - SIDE_PAD_X * 2.0;
+                let x = hud.x + SIDE_PAD_X;
+                // Y-up: idx 0 is the TOP-most button in the column. The
+                // top of the column is at hud.y + hud.height.
+                let top_of_first = hud.y + hud.height - SIDE_PAD_TOP;
+                let y = top_of_first - SIDE_BTN_H - idx as f64 * (SIDE_BTN_H + SIDE_BTN_GAP);
+                (x, y, btn_w, SIDE_BTN_H)
             }
         }
-        false
     }
 
-    fn paint_strip(&self, ctx: &mut dyn DrawCtx) {
+    fn hit_btn_at(&self, px: f64, py: f64) -> Option<Btn> {
+        let btns = self.btns();
+        let n = btns.len();
+        for (i, b) in btns.iter().enumerate() {
+            let (x, y, w, h) = self.btn_rect_for(i, n);
+            if px >= x && px <= x + w && py >= y && py <= y + h {
+                return Some(*b);
+            }
+        }
+        None
+    }
+
+    fn click_at(&mut self, px: f64, py: f64) -> bool {
+        let Some(b) = self.hit_btn_at(px, py) else {
+            return false;
+        };
+        let mut model = self.model.borrow_mut();
+        match b {
+            Btn::Undo => {
+                if let Some(s) = model.session.as_mut() {
+                    s.try_undo();
+                }
+            }
+            Btn::NewDeal => {
+                if let Some(kind) = model.kind {
+                    model.start_game(kind);
+                }
+            }
+            Btn::Shuffle => {
+                model.try_moms_shuffle();
+            }
+            Btn::Home => {
+                model.back_to_title();
+            }
+        }
+        agg_gui::animation::request_draw();
+        true
+    }
+
+    fn paint_strip(&self, ctx: &mut dyn DrawCtx, hud: Rect) {
         ctx.begin_path();
-        ctx.rect(0.0, 0.0, VIRTUAL_W, HUD_HEIGHT);
+        ctx.rect(hud.x, hud.y, hud.width, hud.height);
         ctx.set_fill_color(HUD_BG);
         ctx.fill();
     }
@@ -152,6 +197,42 @@ impl HudWidget {
         let ly = y + m.centered_baseline_y(h);
         ctx.fill_text(label, lx, ly);
     }
+
+    /// Position + paint the Mom's-Solitaire shuffle counter. Tucked
+    /// against the leading edge of the HUD in Standard mode and below
+    /// the button stack in Sidebar mode so it never collides with the
+    /// buttons.
+    fn paint_moms_counter(&self, ctx: &mut dyn DrawCtx) {
+        let model = self.model.borrow();
+        if !matches!(model.kind, Some(crate::games::GameKind::MomsSolitaire)) {
+            return;
+        }
+        let count = model.moms_shuffles;
+        drop(model);
+        let chrome = self.chrome();
+        let hud = chrome.hud_rect;
+        let label = format!("Shuffles: {count}");
+        ctx.set_fill_color(TXT);
+        ctx.set_font(self.font.clone());
+        ctx.set_font_size(16.0);
+        let Some(m) = ctx.measure_text(&label) else {
+            return;
+        };
+        match chrome.mode {
+            ChromeMode::Standard => {
+                let baseline = hud.y + m.centered_baseline_y(hud.height);
+                ctx.fill_text(&label, hud.x + 18.0, baseline);
+            }
+            ChromeMode::Sidebar => {
+                // Place the counter near the BOTTOM of the sidebar
+                // column (small numerical y in Y-up) so it's out of the
+                // way of the button stack at the top.
+                let baseline_y = hud.y + 12.0;
+                let lx = hud.x + (hud.width - m.width) / 2.0;
+                ctx.fill_text(&label, lx, baseline_y);
+            }
+        }
+    }
 }
 
 impl Widget for HudWidget {
@@ -179,75 +260,55 @@ impl Widget for HudWidget {
         matches!(s, Screen::Game | Screen::Won)
     }
 
-    /// Only claim pointer events that fall inside the bottom HUD strip.
-    /// Without this override the widget's full-bounds default would
-    /// swallow every click on the playfield and `GameWidget` (added
-    /// earlier in the OverlayStack) would never receive a drag start.
+    /// Only claim pointer events that fall inside the HUD rect for the
+    /// current chrome mode. Without this override the widget's full-
+    /// bounds default would swallow every click on the playfield and
+    /// `GameWidget` (added earlier in the OverlayStack) would never
+    /// receive a drag start.
     fn hit_test(&self, local_pos: Point) -> bool {
-        let (_, vy) = screen_to_virtual(self.bounds, local_pos.x, local_pos.y);
-        (0.0..=HUD_HEIGHT).contains(&vy)
+        let hud = self.chrome().hud_rect;
+        local_pos.x >= hud.x
+            && local_pos.x <= hud.x + hud.width
+            && local_pos.y >= hud.y
+            && local_pos.y <= hud.y + hud.height
     }
 
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
-        let (tx, ty, scale) = playfield_transform(self.bounds);
-        ctx.save();
-        ctx.translate(tx, ty);
-        ctx.scale(scale, scale);
-
-        self.paint_strip(ctx);
+        let chrome = self.chrome();
+        self.paint_strip(ctx, chrome.hud_rect);
         let btns = self.btns();
         let n = btns.len();
         for (i, b) in btns.iter().enumerate() {
             self.paint_btn(ctx, i, *b, n);
         }
-        // Mom's Solitaire shuffle counter — left-aligned in the strip.
-        let model = self.model.borrow();
-        if matches!(model.kind, Some(crate::games::GameKind::MomsSolitaire)) {
-            let count = model.moms_shuffles;
-            drop(model);
-            let label = format!("Shuffles: {count}");
-            ctx.set_fill_color(TXT);
-            ctx.set_font(self.font.clone());
-            ctx.set_font_size(16.0);
-            if let Some(m) = ctx.measure_text(&label) {
-                let baseline = m.centered_baseline_y(HUD_HEIGHT);
-                ctx.fill_text(&label, 18.0, baseline);
-            }
-        }
-        ctx.restore();
+        self.paint_moms_counter(ctx);
     }
 
     fn on_event(&mut self, event: &Event) -> EventResult {
         if !self.is_visible() {
             return EventResult::Ignored;
         }
-        let bounds = self.bounds;
+        let hud = self.chrome().hud_rect;
+        let inside = |p: Point| -> bool {
+            p.x >= hud.x && p.x <= hud.x + hud.width && p.y >= hud.y && p.y <= hud.y + hud.height
+        };
         match event {
             Event::MouseDown {
                 pos,
                 button: MouseButton::Left,
                 ..
             } => {
-                let (vx, vy) = screen_to_virtual(bounds, pos.x, pos.y);
-                if vy < HUD_HEIGHT && self.click_at(vx, vy) {
+                if inside(*pos) && self.click_at(pos.x, pos.y) {
                     return EventResult::Consumed;
                 }
                 EventResult::Ignored
             }
             Event::MouseMove { pos } => {
-                let (vx, vy) = screen_to_virtual(bounds, pos.x, pos.y);
-                let mut new_hover = None;
-                if vy < HUD_HEIGHT {
-                    let btns = self.btns();
-                    let n = btns.len();
-                    for (i, b) in btns.iter().enumerate() {
-                        let (x, y, w, h) = self.btn_rect_for(i, n);
-                        if vx >= x && vx <= x + w && vy >= y && vy <= y + h {
-                            new_hover = Some(*b);
-                            break;
-                        }
-                    }
-                }
+                let new_hover = if inside(*pos) {
+                    self.hit_btn_at(pos.x, pos.y)
+                } else {
+                    None
+                };
                 if new_hover != self.hover {
                     self.hover = new_hover;
                     agg_gui::animation::request_draw();

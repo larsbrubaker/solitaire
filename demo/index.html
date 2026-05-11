@@ -12,16 +12,16 @@
     <meta name="theme-color" content="#0c6b3a" />
     <title>Solitaire</title>
     <style>
-      /* Match Antidote's layout: the canvas has explicit dimensions
-         and the body flex-centres it. JS computes the largest 4:3
-         fit on resize and updates `canvas.style` accordingly.
-         The 100%/100% full-viewport approach we tried earlier
-         green-screened on some mobile browsers because of layout
-         cascading; Antidote uses this letterbox pattern and works,
-         so we match it for consistency. */
+      /* Canvas fills the entire viewport. We avoid the
+         html→body→canvas percent-height cascade that green-screened
+         on Android Chrome earlier; instead the canvas has explicit
+         buffer attributes (so the first paint sees a non-zero
+         buffer) and main.ts sets `canvas.style.width/height` in CSS
+         pixels off `window.innerWidth/innerHeight`. No CSS percent
+         heights at all on the canvas itself. */
       html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #0c6b3a; }
-      body { display: flex; align-items: center; justify-content: center; -webkit-tap-highlight-color: transparent; }
-      canvas { display: block; touch-action: none; }
+      body { -webkit-tap-highlight-color: transparent; }
+      canvas { display: block; position: absolute; top: 0; left: 0; touch-action: none; }
     </style>
   </head>
   <body>

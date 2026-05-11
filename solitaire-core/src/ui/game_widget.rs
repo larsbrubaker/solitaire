@@ -21,7 +21,15 @@ use crate::render::{paint_card_at, paint_pile, CardSpriteAtlas};
 use crate::session::Move;
 
 use super::app_model::{Screen, SharedModel};
+use super::layout;
 use super::title_widget::{playfield_transform, screen_to_virtual};
+
+/// Chrome-aware playfield rect for the current viewport. The playfield
+/// letterboxes 1024×720 inside this rect, leaving room for menu / HUD
+/// according to `layout::compute`.
+fn playfield_rect(bounds: Rect) -> Rect {
+    layout::compute(Size::new(bounds.width, bounds.height)).playfield_rect
+}
 
 #[derive(Clone, Debug)]
 struct DragState {
@@ -409,7 +417,7 @@ impl Widget for GameWidget {
 
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
         let t0 = web_time::Instant::now();
-        let (tx, ty, scale) = playfield_transform(self.bounds);
+        let (tx, ty, scale) = playfield_transform(playfield_rect(self.bounds));
         self.ensure_atlas_for(scale);
         ctx.save();
         ctx.translate(tx, ty);
@@ -465,7 +473,7 @@ impl Widget for GameWidget {
                 button: MouseButton::Left,
                 ..
             } => {
-                let (vx, vy) = screen_to_virtual(bounds, pos.x, pos.y);
+                let (vx, vy) = screen_to_virtual(playfield_rect(bounds), pos.x, pos.y);
                 // Detect double-click against the previous MouseDown
                 // BEFORE updating the timestamp.
                 let is_double = self.is_double_click(vx, vy);
@@ -495,7 +503,7 @@ impl Widget for GameWidget {
             }
             Event::MouseMove { pos } => {
                 if let Some(drag) = self.drag.as_mut() {
-                    let (vx, vy) = screen_to_virtual(bounds, pos.x, pos.y);
+                    let (vx, vy) = screen_to_virtual(playfield_rect(bounds), pos.x, pos.y);
                     drag.cur_x = vx;
                     drag.cur_y = vy;
                     agg_gui::animation::request_draw();
@@ -508,7 +516,7 @@ impl Widget for GameWidget {
                 ..
             } => {
                 if self.drag.is_some() {
-                    let (vx, vy) = screen_to_virtual(bounds, pos.x, pos.y);
+                    let (vx, vy) = screen_to_virtual(playfield_rect(bounds), pos.x, pos.y);
                     self.finish_drag(vx, vy);
                     return EventResult::Consumed;
                 }

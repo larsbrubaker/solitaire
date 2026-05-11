@@ -240,21 +240,25 @@ impl Widget for TitleWidget {
 }
 
 /// Compute the (translation_x, translation_y, scale) needed to letterbox
-/// the virtual VIRTUAL_W x VIRTUAL_H playfield inside `bounds`.
-pub fn playfield_transform(bounds: Rect) -> (f64, f64, f64) {
-    let sx = bounds.width / VIRTUAL_W;
-    let sy = bounds.height / VIRTUAL_H;
+/// the virtual VIRTUAL_W x VIRTUAL_H playfield inside `rect`. The
+/// translation is in the same coordinate space as `rect`'s origin: pass
+/// a viewport-relative `Rect` (e.g. `chrome.playfield_rect`) and the
+/// returned `tx, ty` are also viewport-relative.
+pub fn playfield_transform(rect: Rect) -> (f64, f64, f64) {
+    let sx = rect.width / VIRTUAL_W;
+    let sy = rect.height / VIRTUAL_H;
     let scale = sx.min(sy);
     let used_w = VIRTUAL_W * scale;
     let used_h = VIRTUAL_H * scale;
-    let tx = (bounds.width - used_w) / 2.0;
-    let ty = (bounds.height - used_h) / 2.0;
+    let tx = rect.x + (rect.width - used_w) / 2.0;
+    let ty = rect.y + (rect.height - used_h) / 2.0;
     (tx, ty, scale)
 }
 
-/// Inverse of `playfield_transform` — convert a screen-bounds-local
-/// pointer position to virtual playfield coordinates.
-pub fn screen_to_virtual(bounds: Rect, px: f64, py: f64) -> (f64, f64) {
-    let (tx, ty, scale) = playfield_transform(bounds);
+/// Inverse of `playfield_transform` — convert a pointer position (in
+/// the same coordinate space as `rect`) to virtual playfield
+/// coordinates.
+pub fn screen_to_virtual(rect: Rect, px: f64, py: f64) -> (f64, f64) {
+    let (tx, ty, scale) = playfield_transform(rect);
     ((px - tx) / scale, (py - ty) / scale)
 }

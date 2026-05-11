@@ -17,6 +17,7 @@ pub mod help_content;
 pub mod help_widget;
 pub mod hud_widget;
 pub mod icons;
+pub mod layout;
 pub mod menu_widget;
 pub mod overlay_stack;
 pub mod title_widget;
