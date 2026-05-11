@@ -30,8 +30,27 @@ async function main() {
   const wasm = await import(/* @vite-ignore */ wasmJsUrl);
   await wasm.default(wasmBgUrl);
 
+  // Probe the GPU's max texture size up-front. wgpu's WebGL2 backend
+  // rejects a Surface whose width or height exceeds MAX_TEXTURE_SIZE,
+  // and on low-end Android phones that limit is just 2048 — well below
+  // a 1080×2400-logical-px screen at DPR=3 (3240×7200 buffer).
+  // Probe with a throwaway canvas so we don't disturb the real
+  // canvas's wgpu surface.
+  const probeMaxTextureDim = (): number => {
+    try {
+      const probe = document.createElement("canvas");
+      const gl = probe.getContext("webgl2") as WebGL2RenderingContext | null;
+      if (!gl) return 2048;
+      const max = gl.getParameter(gl.MAX_TEXTURE_SIZE) as number;
+      return Math.max(1024, max | 0);
+    } catch {
+      return 2048;
+    }
+  };
+  const maxBufferDim = probeMaxTextureDim();
+  console.log("solitaire: GPU max texture dim", maxBufferDim);
+
   const resizeCanvas = () => {
-    const dpr = Math.max(0.5, window.devicePixelRatio || 1);
     // Canvas fills the entire viewport via explicit CSS pixel sizes
     // (no `width: 100%` cascade — that green-screened on Android
     // Chrome when the html→body→canvas chain resolved to 0 height).
@@ -40,6 +59,17 @@ async function main() {
     // itself to a left sidebar on narrow / landscape-mobile screens.
     const cssWidth = window.innerWidth;
     const cssHeight = window.innerHeight;
+    const requestedDpr = Math.max(0.5, window.devicePixelRatio || 1);
+    // Cap DPR so the backing buffer never exceeds MAX_TEXTURE_SIZE on
+    // either axis. Without this, tall Android viewports panic wgpu
+    // during Surface::configure (`width and height must be within the
+    // maximum supported texture size`). The cap is computed against
+    // BOTH axes; we deliberately don't apply a 0.5 floor here because
+    // a genuinely huge viewport on a 2048-max GPU may need sub-half
+    // DPR to fit, and a slightly fuzzy game beats a crashed one.
+    const capX = maxBufferDim / Math.max(1, cssWidth);
+    const capY = maxBufferDim / Math.max(1, cssHeight);
+    const dpr = Math.min(requestedDpr, capX, capY);
     canvas.style.width = `${cssWidth}px`;
     canvas.style.height = `${cssHeight}px`;
     canvas.width = Math.max(1, Math.floor(cssWidth * dpr));
