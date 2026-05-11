@@ -445,6 +445,42 @@ mod tests {
     }
 
     #[test]
+    fn one_suit_long_descending_tail_relocates_legally() {
+        // Mirrors the in-game state the user asked about: a 6-down-to-A
+        // suited spades run on cascade 0, an 8-7-6 spades face-up tail
+        // on cascade 1. Moving the 5-A (5 cards) from cascade 0 onto
+        // the 6 of cascade 1 is a legal Spider move — it just
+        // re-organises an already-suited tail under a higher card. The
+        // resulting cascade 1 becomes a clean 8→A suited run.
+        let rules = Spider::one_suit();
+        let mut piles = PileSet::from_slots(rules.pile_layout());
+        let src = CASCADE_FIRST;
+        for r in [
+            Rank::Six,
+            Rank::Five,
+            Rank::Four,
+            Rank::Three,
+            Rank::Two,
+            Rank::Ace,
+        ] {
+            piles
+                .get_mut(src)
+                .cards
+                .push(Card::new(Suit::Spades, r).face_up());
+        }
+        let dst = CASCADE_FIRST + 1;
+        for r in [Rank::Eight, Rank::Seven, Rank::Six] {
+            piles
+                .get_mut(dst)
+                .cards
+                .push(Card::new(Suit::Spades, r).face_up());
+        }
+        // Move the 5-A tail (5 cards) onto the 6.
+        let m = Move::simple(src, 5, dst);
+        assert!(rules.legal_move(&piles, &m));
+    }
+
+    #[test]
     fn foundation_collapse_flips_newly_exposed_facedown() {
         // Regression: a K→A run collapse left the freshly exposed
         // face-down card face-down, leaving the cascade visually stuck
