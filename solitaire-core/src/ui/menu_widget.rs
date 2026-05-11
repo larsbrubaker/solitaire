@@ -21,6 +21,7 @@ use agg_gui::widget::Widget;
 use agg_gui::widgets::menu::{MenuBar, MenuEntry, MenuItem, TopMenu, MENU_BAR_H};
 
 use super::app_model::{AppModel, HelpKind, Screen, SharedModel};
+use super::layout::{self, ChromeMode};
 
 pub struct MenuBarHost {
     bounds: Rect,
@@ -136,7 +137,14 @@ impl Widget for MenuBarHost {
     }
     fn is_visible(&self) -> bool {
         let s = self.model.borrow().screen;
-        matches!(s, Screen::Game | Screen::Won)
+        if !matches!(s, Screen::Game | Screen::Won) {
+            return false;
+        }
+        // Hide the horizontal menu bar in sidebar mode — the same
+        // actions are exposed as vertical buttons in HudWidget so the
+        // top 26 px of viewport can go to the playfield.
+        let chrome = layout::compute(Size::new(self.bounds.width, self.bounds.height));
+        chrome.mode != ChromeMode::Sidebar
     }
     /// Claim only the top BAR_H pixels for ordinary input; without this
     /// the OverlayStack's top→bottom hit-test stops at us (full window

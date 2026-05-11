@@ -63,18 +63,21 @@ pub fn compute(viewport: Size) -> ChromeLayout {
     // landscape, 16:9 / 19.5:9). Either triggers sidebar mode.
     let compact = h < 700.0 || (w > h * 1.5 && h < 900.0);
     if compact {
-        // Menu bar runs across the top of the WHOLE viewport (the
-        // sidebar slots below it). Y-up: the bar lives in the top
-        // MENU_BAR_H pixels.
-        let menu_rect = Rect::new(0.0, h - MENU_BAR_H, w, MENU_BAR_H);
-        let hud_rect = Rect::new(0.0, 0.0, SIDEBAR_W, h - MENU_BAR_H);
-        // Inset by PLAY_PAD on every side touching chrome so cards
-        // don't paint flush against the menu/sidebar.
+        // Sidebar mode: NO top menu bar — the menu actions get exposed
+        // as vertical buttons inside the left sidebar instead, so the
+        // playfield can reach all the way to the top of the viewport
+        // and cards are as large as possible. `menu_rect` is reported
+        // as zero-area so the chrome consumer can ignore it.
+        let menu_rect = Rect::new(0.0, 0.0, 0.0, 0.0);
+        let hud_rect = Rect::new(0.0, 0.0, SIDEBAR_W, h);
+        // Tight inset on every side so the playfield gets the
+        // overwhelming majority of the screen in landscape mobile.
+        const SIDEBAR_PAD: f64 = 6.0;
         let playfield_rect = Rect::new(
-            SIDEBAR_W + PLAY_PAD,
-            PLAY_PAD,
-            w - SIDEBAR_W - PLAY_PAD * 2.0,
-            h - MENU_BAR_H - PLAY_PAD * 2.0,
+            SIDEBAR_W + SIDEBAR_PAD,
+            SIDEBAR_PAD,
+            w - SIDEBAR_W - SIDEBAR_PAD * 2.0,
+            h - SIDEBAR_PAD * 2.0,
         );
         ChromeLayout {
             mode: ChromeMode::Sidebar,
@@ -125,12 +128,16 @@ mod tests {
         // ~iPhone in landscape (logical pixels): 844 × 390.
         let l = compute(Size::new(844.0, 390.0));
         assert_eq!(l.mode, ChromeMode::Sidebar);
+        // Sidebar runs the full viewport height — no menu bar in this
+        // mode, the menu actions are exposed as sidebar buttons.
         assert_eq!(l.hud_rect.width, SIDEBAR_W);
-        assert!(l.hud_rect.height > 0.0);
-        // Playfield sits to the right of the sidebar (with PLAY_PAD
-        // breathing room).
-        assert_eq!(l.playfield_rect.x, SIDEBAR_W + PLAY_PAD);
-        assert_eq!(l.playfield_rect.width, 844.0 - SIDEBAR_W - PLAY_PAD * 2.0);
+        assert_eq!(l.hud_rect.height, 390.0);
+        // No menu bar painted in sidebar mode.
+        assert_eq!(l.menu_rect.width, 0.0);
+        assert_eq!(l.menu_rect.height, 0.0);
+        // Playfield sits to the right of the sidebar with a tight pad.
+        assert!(l.playfield_rect.x > SIDEBAR_W);
+        assert!(l.playfield_rect.width > 844.0 - SIDEBAR_W - 30.0);
     }
 
     #[test]
