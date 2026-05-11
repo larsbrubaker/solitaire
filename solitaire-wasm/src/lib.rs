@@ -84,11 +84,22 @@ async fn init_wgpu_async() -> Result<WgpuInit, String> {
         .await
         .map_err(|err| format!("request_adapter: {err:?}"))?;
 
+    // `downlevel_webgl2_defaults` pins `max_texture_dimension_2d = 2048`,
+    // which any modern phone's `canvas_buffer = viewport × DPR` routinely
+    // overshoots — e.g. a 1024×2217 CSS-px viewport at DPR 3 needs a
+    // 3072×6651 surface and `Surface::configure` panics with a wgpu
+    // validation error. `using_resolution(adapter.limits())` keeps every
+    // other conservative WebGL2 default but raises the texture-dimension
+    // caps to whatever the actual adapter advertises (typically 4096–
+    // 16384 on Pixel-class hardware), so we can render at the real DPR
+    // without the JS shell having to clamp the buffer down.
+    let adapter_limits = adapter.limits();
     let (device, queue) = adapter
         .request_device(&wgpu::DeviceDescriptor {
             label: Some("solitaire-wasm-wgpu"),
             required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::downlevel_webgl2_defaults(),
+            required_limits: wgpu::Limits::downlevel_webgl2_defaults()
+                .using_resolution(adapter_limits),
             memory_hints: wgpu::MemoryHints::Performance,
             experimental_features: wgpu::ExperimentalFeatures::default(),
             trace: wgpu::Trace::Off,
