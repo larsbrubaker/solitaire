@@ -38,8 +38,16 @@ async function main() {
     // The 4:3 playfield is letterboxed INSIDE the Rust app via
     // `playfield_transform`; the chrome (menu / HUD) re-positions
     // itself to a left sidebar on narrow / landscape-mobile screens.
-    const cssWidth = window.innerWidth;
-    const cssHeight = window.innerHeight;
+    //
+    // Read dims from `documentElement.clientWidth/Height` rather than
+    // `window.innerWidth/innerHeight` — the former reflects the actual
+    // laid-out viewport, while the latter races with the address bar
+    // collapse on Android Chrome and reports 0 inside Vite's
+    // preview iframe.
+    const root = document.documentElement;
+    const cssWidth = root.clientWidth;
+    const cssHeight = root.clientHeight;
+    if (cssWidth === 0 || cssHeight === 0) return;
     canvas.style.width = `${cssWidth}px`;
     canvas.style.height = `${cssHeight}px`;
     canvas.width = Math.max(1, Math.floor(cssWidth * dpr));
@@ -109,8 +117,24 @@ async function main() {
     wasm.on_mouse_leave();
   });
 
+  // Drive layout from BOTH the `resize` event (for changes after first
+  // paint) AND a requestAnimationFrame retry loop that runs until the
+  // viewport reports a non-zero size. The retry guards against a race
+  // where wasm finished loading before the host iframe got laid out —
+  // happens reliably in Vite's preview iframe and intermittently on
+  // Android Chrome when the URL bar is mid-collapse. ResizeObserver is
+  // unreliable here (does not fire its initial observation in some
+  // iframe contexts), so we don't depend on it.
   window.addEventListener("resize", resizeCanvas);
-  resizeCanvas();
+  const tryInitialSize = () => {
+    const root = document.documentElement;
+    if (root.clientWidth > 0 && root.clientHeight > 0) {
+      resizeCanvas();
+      return;
+    }
+    requestAnimationFrame(tryInitialSize);
+  };
+  tryInitialSize();
 
   let last = performance.now();
   const frame = (now: number) => {
