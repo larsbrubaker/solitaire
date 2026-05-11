@@ -18,9 +18,13 @@ use crate::games::GameKind;
 
 use super::app_model::{Screen, SharedModel};
 
-const BTN_W: f64 = 280.0;
-const BTN_H: f64 = 70.0;
-const BTN_GAP_Y: f64 = 18.0;
+const BTN_W: f64 = 320.0;
+const BTN_H: f64 = 84.0;
+const BTN_GAP_Y: f64 = 22.0;
+const TITLE_FONT_SIZE: f64 = 72.0;
+/// Clearance between the bottom of the title text and the top of the
+/// first button.
+const TITLE_BUTTONS_GAP: f64 = 42.0;
 
 const BTN_BG: Color = Color::from_rgb8(0x1f, 0x4d, 0x2e);
 const BTN_BG_HOVER: Color = Color::from_rgb8(0x29, 0x68, 0x3e);
@@ -58,9 +62,14 @@ impl TitleWidget {
     }
 
     fn button_rect(&self, idx: usize) -> (f64, f64, f64, f64) {
+        // Vertically center the title+buttons block in the virtual
+        // playfield so the empty space splits evenly above the title
+        // and below the bottom button (instead of clustering all the
+        // empty space above the title as the prior layout did).
         let n = KINDS.len() as f64;
         let total_h = n * BTN_H + (n - 1.0) * BTN_GAP_Y;
-        let start_y_top = (VIRTUAL_H - total_h) / 2.0 - 60.0;
+        let block_h = total_h + TITLE_BUTTONS_GAP + TITLE_FONT_SIZE;
+        let start_y_top = (VIRTUAL_H - block_h) / 2.0;
         // Y-up: top of the FIRST button is at this Y. Each subsequent
         // button is BELOW (smaller numerical Y).
         let top_of_btn = start_y_top + total_h - idx as f64 * (BTN_H + BTN_GAP_Y);
@@ -84,16 +93,20 @@ impl TitleWidget {
     fn paint_title(&self, ctx: &mut dyn DrawCtx) {
         ctx.set_fill_color(TITLE_COLOR);
         ctx.set_font(self.font.clone());
-        ctx.set_font_size(56.0);
+        ctx.set_font_size(TITLE_FONT_SIZE);
         let label = "Solitaire";
         let m = ctx.measure_text(label);
         let w = m.map(|t| t.width).unwrap_or(0.0);
         let x = (VIRTUAL_W - w) / 2.0;
-        // Title sits well above the buttons.
+        // Title baseline sits TITLE_BUTTONS_GAP above the topmost
+        // button (Klondike), inside the same vertically-centered
+        // title+buttons block as `button_rect`.
         let n = KINDS.len() as f64;
         let total_h = n * BTN_H + (n - 1.0) * BTN_GAP_Y;
-        let buttons_top = (VIRTUAL_H - total_h) / 2.0 + total_h - 60.0;
-        let y = buttons_top + 40.0;
+        let block_h = total_h + TITLE_BUTTONS_GAP + TITLE_FONT_SIZE;
+        let start_y_top = (VIRTUAL_H - block_h) / 2.0;
+        let klondike_top = start_y_top + total_h;
+        let y = klondike_top + TITLE_BUTTONS_GAP;
         ctx.fill_text(label, x, y);
     }
 
@@ -239,41 +252,28 @@ impl Widget for TitleWidget {
     }
 }
 
-/// Compute the (translation_x, translation_y, scale) used to position
+/// Compute the (translation_x, translation_y, scale) used to letterbox
 /// the virtual VIRTUAL_W × VIRTUAL_H playfield inside `rect`. The
 /// translation is in the same coordinate space as `rect`'s origin: pass
 /// a viewport-relative `Rect` (e.g. `chrome.playfield_rect`) and the
 /// returned `tx, ty` are also viewport-relative.
 ///
-/// Two strategies, picked by `rect` aspect:
-///
-/// * `rect` close to 4:3 — standard letterbox-fit, cards centered.
-/// * `rect` markedly wider than 4:3 (>~20 %, typical for landscape-
-///   mobile sidebar mode) — scale-to-fill the width and anchor the
-///   virtual playfield's TOP to the rect's top edge. Cards land near
-///   the top of the rect; the unused bottom of the virtual playfield
-///   (where pile_layouts rarely place anything) gets cropped off the
-///   bottom of the playfield rect. This is what makes the cards
-///   actually visible on a phone — letterbox in a 2.2:1 rect would
-///   shrink the cards to a third of the available pixels.
+/// Letterbox-fit on both axes (cards centered). Earlier this function
+/// tried a scale-to-FILL-width path on wide viewports to make cards
+/// larger on landscape mobile, but that cropped the bottom of the
+/// virtual playfield and long Spider tableau fans started running off
+/// the bottom of the screen. Reverting to a pure letterbox keeps the
+/// whole virtual playfield visible at every viewport aspect; we'll
+/// chase larger mobile cards through layout changes (compact pile
+/// placement on narrow viewports) rather than at the transform level.
 pub fn playfield_transform(rect: Rect) -> (f64, f64, f64) {
     let sx = rect.width / VIRTUAL_W;
     let sy = rect.height / VIRTUAL_H;
-    let aspect_rect = rect.width / rect.height.max(1.0);
-    let aspect_virtual = VIRTUAL_W / VIRTUAL_H;
-    let scale_to_fill = aspect_rect > aspect_virtual * 1.2;
-    let scale = if scale_to_fill { sx } else { sx.min(sy) };
+    let scale = sx.min(sy);
     let used_w = VIRTUAL_W * scale;
     let used_h = VIRTUAL_H * scale;
     let tx = rect.x + (rect.width - used_w) / 2.0;
-    let ty = if scale_to_fill {
-        // Anchor virtual_y = VIRTUAL_H (the top of the virtual
-        // playfield) to the TOP edge of `rect` so card content stays
-        // visible and only the empty bottom gets cropped.
-        rect.y + rect.height - used_h
-    } else {
-        rect.y + (rect.height - used_h) / 2.0
-    };
+    let ty = rect.y + (rect.height - used_h) / 2.0;
     (tx, ty, scale)
 }
 
