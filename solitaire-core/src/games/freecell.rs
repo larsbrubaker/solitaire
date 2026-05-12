@@ -6,15 +6,15 @@
 //!
 //! Pile ids:  cells 0..3, foundations 4..7, cascades 8..15.
 
+use agg_gui::geometry::Rect;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 
 use crate::cards::{Card, Rank};
-use crate::consts::{COL_PITCH, TABLEAU_BASE_Y, TOP_ROW_BOTTOM_Y, VIRTUAL_W};
 use crate::piles::{PileId, PileKind, PileLayout, PileSet, PileSlot};
 use crate::session::Move;
 
-use super::GameRules;
+use super::{GameRules, CARD_ASPECT};
 
 const CELL_FIRST: PileId = 0;
 const CELL_LAST: PileId = 3;
@@ -24,55 +24,8 @@ const CASCADE_FIRST: PileId = 8;
 const CASCADE_LAST: PileId = 15;
 
 const N_CASCADES: usize = 8;
-const PLAYFIELD_LEFT_FREECELL: f64 = (VIRTUAL_W - (7.0 * COL_PITCH + crate::consts::CARD_W)) / 2.0;
-
-const fn slot_top(idx: usize) -> PileSlot {
-    let kind = if idx < 4 {
-        PileKind::Cell
-    } else {
-        PileKind::Foundation
-    };
-    PileSlot {
-        id: idx as u8,
-        kind,
-        layout: PileLayout::Stacked,
-        origin_x: PLAYFIELD_LEFT_FREECELL + (idx as f64) * COL_PITCH,
-        origin_y: TOP_ROW_BOTTOM_Y,
-    }
-}
-
-const fn slot_cascade(idx: usize) -> PileSlot {
-    PileSlot {
-        id: CASCADE_FIRST + idx as u8,
-        kind: PileKind::Tableau,
-        layout: PileLayout::FannedDown,
-        origin_x: PLAYFIELD_LEFT_FREECELL + (idx as f64) * COL_PITCH,
-        origin_y: TABLEAU_BASE_Y,
-    }
-}
-
-const fn slots() -> [PileSlot; 16] {
-    [
-        slot_top(0),
-        slot_top(1),
-        slot_top(2),
-        slot_top(3),
-        slot_top(4),
-        slot_top(5),
-        slot_top(6),
-        slot_top(7),
-        slot_cascade(0),
-        slot_cascade(1),
-        slot_cascade(2),
-        slot_cascade(3),
-        slot_cascade(4),
-        slot_cascade(5),
-        slot_cascade(6),
-        slot_cascade(7),
-    ]
-}
-
-static SLOTS: [PileSlot; 16] = slots();
+/// Vertical budget in card-heights (top row + tableau fan).
+const VERT_BUDGET_CARDS: f64 = 5.5;
 
 pub struct FreeCell;
 
@@ -146,8 +99,62 @@ fn max_movable(piles: &PileSet, dest: PileId) -> usize {
 }
 
 impl GameRules for FreeCell {
-    fn pile_layout(&self) -> &'static [PileSlot] {
-        &SLOTS
+    fn pile_layout(&self, rect: Rect) -> Vec<PileSlot> {
+        // 8 columns horizontally (4 free cells + 4 foundations sharing
+        // the top row with the 8 cascades below). Card size picked to
+        // fit both the column count and the worst-case cascade fan.
+        let col_gap = 10.0;
+        let row_gap = 12.0;
+        let card_w_by_width =
+            (rect.width - col_gap * (N_CASCADES as f64 - 1.0)) / N_CASCADES as f64;
+        let card_h_by_height = (rect.height - row_gap) / VERT_BUDGET_CARDS;
+        let card_h = (card_w_by_width * CARD_ASPECT).min(card_h_by_height);
+        let card_w = card_h / CARD_ASPECT;
+        let col_pitch = card_w + col_gap;
+        let used_w = N_CASCADES as f64 * card_w + (N_CASCADES as f64 - 1.0) * col_gap;
+        let left = rect.x + (rect.width - used_w) / 2.0;
+        let top_row_origin_y = rect.y + rect.height - card_h;
+        let tableau_origin_y = top_row_origin_y - (card_h + row_gap);
+        let mk = |id: PileId, kind: PileKind, layout: PileLayout, col: f64, base_y: f64| {
+            PileSlot::new(
+                id,
+                kind,
+                layout,
+                left + col * col_pitch,
+                base_y,
+                card_w,
+                card_h,
+            )
+        };
+        let mut out = Vec::with_capacity(16);
+        for i in 0..4u8 {
+            out.push(mk(
+                CELL_FIRST + i,
+                PileKind::Cell,
+                PileLayout::Stacked,
+                i as f64,
+                top_row_origin_y,
+            ));
+        }
+        for i in 0..4u8 {
+            out.push(mk(
+                FOUND_FIRST + i,
+                PileKind::Foundation,
+                PileLayout::Stacked,
+                (4 + i) as f64,
+                top_row_origin_y,
+            ));
+        }
+        for i in 0..N_CASCADES as u8 {
+            out.push(mk(
+                CASCADE_FIRST + i,
+                PileKind::Tableau,
+                PileLayout::FannedDown,
+                i as f64,
+                tableau_origin_y,
+            ));
+        }
+        out
     }
 
     fn deal(&self, piles: &mut PileSet, rng: &mut StdRng) {
@@ -283,7 +290,8 @@ mod tests {
     #[test]
     fn cell_accepts_single_card() {
         let rules = FreeCell::new();
-        let mut piles = PileSet::from_slots(rules.pile_layout());
+        let mut piles =
+            PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
         piles
             .get_mut(CASCADE_FIRST)
             .cards
@@ -295,7 +303,8 @@ mod tests {
     #[test]
     fn cell_rejects_when_full() {
         let rules = FreeCell::new();
-        let mut piles = PileSet::from_slots(rules.pile_layout());
+        let mut piles =
+            PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
         piles
             .get_mut(CELL_FIRST)
             .cards
@@ -311,7 +320,8 @@ mod tests {
     #[test]
     fn multi_card_move_limited_by_empty_cells() {
         let rules = FreeCell::new();
-        let mut piles = PileSet::from_slots(rules.pile_layout());
+        let mut piles =
+            PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
         // Fill every cell so empty_cells = 0.
         for id in CELL_FIRST..=CELL_LAST {
             piles

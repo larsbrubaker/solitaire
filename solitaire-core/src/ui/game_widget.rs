@@ -15,33 +15,16 @@ use agg_gui::text::Font;
 use agg_gui::widget::Widget;
 
 use crate::cards::Card;
-use crate::consts::{CARD_H, CARD_W};
 use crate::piles::{HitResult, PileId, PileKind};
 use crate::render::{paint_card_at, paint_pile, CardSpriteAtlas};
 use crate::session::Move;
 
 use super::app_model::{Screen, SharedModel};
 use super::layout;
-use super::title_widget::{default_content_rect, playfield_transform, screen_to_virtual};
 
-/// Chrome-aware playfield rect for the current viewport. The playfield
-/// letterboxes 1024×720 inside this rect, leaving room for menu / HUD
-/// according to `layout::compute`.
+/// Chrome-aware playfield rect for the current viewport.
 fn playfield_rect(bounds: Rect) -> Rect {
     layout::compute(Size::new(bounds.width, bounds.height)).playfield_rect
-}
-
-/// Content rect for the active session, falling back to the default
-/// (full virtual playfield) when no game is loaded. Mom's overrides
-/// this to a tight 13×4 envelope so the letterbox scales cards up to
-/// fill the screen.
-fn session_content_rect(model: &SharedModel) -> Rect {
-    model
-        .borrow()
-        .session
-        .as_ref()
-        .map(|s| s.content_bounds())
-        .unwrap_or_else(default_content_rect)
 }
 
 #[derive(Clone, Debug)]
@@ -162,35 +145,33 @@ impl GameWidget {
         false
     }
 
-    /// Rebuild the sprite atlas at the current effective render scale
-    /// (playfield scale × device DPR) AND the active variant's per-
-    /// pile card dimensions so each sprite's pixel count matches its
-    /// on-screen physical size 1:1. Rebuilds on either change.
-    fn ensure_atlas_for(&mut self, playfield_scale: f64) {
-        let target = (playfield_scale * agg_gui::device_scale()).max(0.5);
-        // Active variant's card size — Mom's Solitaire shrinks every
-        // pile to 70×98; the others use the standard 90×126. Read
-        // from any pile in the current session (they all match).
+    /// Rebuild the sprite atlas when the current card dimensions
+    /// change (window resize → game's `pile_layout` returned a
+    /// different `card_w/card_h`) or the device pixel ratio changes.
+    /// Atlas pixel resolution = `card_w * DPR` so each sprite blits
+    /// 1:1 with the physical pixels at draw time.
+    fn ensure_atlas_for_session(&mut self) {
+        let dpr = agg_gui::device_scale().max(0.5);
         let (card_w, card_h) = self
             .model
             .borrow()
             .session
             .as_ref()
             .and_then(|s| s.piles().iter().next().map(|p| (p.card_w, p.card_h)))
-            .unwrap_or((CARD_W, CARD_H));
-        let scale_unchanged = (target - self.atlas.render_scale).abs() < 0.02;
+            .unwrap_or((90.0, 126.0));
+        let scale_unchanged = (dpr - self.atlas.render_scale).abs() < 0.02;
         let dims_unchanged = (card_w - self.atlas.card_w_logical).abs() < 0.5
             && (card_h - self.atlas.card_h_logical).abs() < 0.5;
         if scale_unchanged && dims_unchanged {
             return;
         }
         let t0 = web_time::Instant::now();
-        self.atlas = CardSpriteAtlas::build(&self.font, card_w, card_h, target);
+        self.atlas = CardSpriteAtlas::build(&self.font, card_w, card_h, dpr);
         eprintln!(
-            "solitaire: rebuilt atlas at scale {:.3} for {}×{} cards ({}×{} px) in {:.1} ms",
-            target,
+            "solitaire: rebuilt atlas for {}×{} cards at DPR {:.2} ({}×{} px) in {:.1} ms",
             card_w,
             card_h,
+            dpr,
             self.atlas.px_w,
             self.atlas.px_h,
             t0.elapsed().as_secs_f64() * 1000.0
@@ -340,11 +321,16 @@ impl GameWidget {
         };
         // Find the destination pile under the cursor (use the hit_test on
         // the dragged-card position rather than raw cursor — we anchor
-        // off the dragged card[0]'s would-be origin).
+        // off the dragged card[0]'s would-be origin). Card size comes
+        // from the source pile (Mom's uses a different size than the
+        // others).
+        let src_pile = session.piles().get(drag.source_pile);
+        let card_w = src_pile.card_w;
+        let card_h = src_pile.card_h;
         let drag_card_x = vx - drag.grab_dx;
         let drag_card_y = vy - drag.grab_dy;
-        let probe_x = drag_card_x + CARD_W / 2.0;
-        let probe_y = drag_card_y + CARD_H / 2.0;
+        let probe_x = drag_card_x + card_w / 2.0;
+        let probe_y = drag_card_y + card_h / 2.0;
         let target = session.piles().hit_test(probe_x, probe_y);
         let target_pile: Option<PileId> = match target {
             Some(HitResult::Card { pile, .. }) => Some(pile),
@@ -394,10 +380,13 @@ impl GameWidget {
                 let p = s.piles().get(drag.source_pile);
                 (p.card_w, p.card_h)
             })
-            .unwrap_or((CARD_W, CARD_H));
+            .unwrap_or((90.0, 126.0));
         drop(model);
+        // Fan offset for the dragged stack matches the face-up
+        // tableau step (22 % of card height).
+        let fan = card_h * 0.22;
         for (i, card) in drag.cards.iter().enumerate() {
-            let y = by - i as f64 * crate::consts::TABLEAU_FAN_DOWN;
+            let y = by - i as f64 * fan;
             paint_card_at(ctx, card, bx, y, card_w, card_h, &self.atlas);
         }
     }
@@ -412,6 +401,14 @@ impl Widget for GameWidget {
     }
     fn set_bounds(&mut self, bounds: Rect) {
         self.bounds = bounds;
+        // Re-layout the active session's piles to the new playfield
+        // rect — every pile's origin/size is in SCREEN coordinates and
+        // depends on `bounds`, so a window resize that doesn't go
+        // through here would leave stale positions.
+        let rect = playfield_rect(bounds);
+        if let Some(s) = self.model.borrow_mut().session.as_mut() {
+            s.relayout(rect);
+        }
     }
     fn children(&self) -> &[Box<dyn Widget>] {
         &self.children
@@ -430,15 +427,12 @@ impl Widget for GameWidget {
 
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
         let t0 = web_time::Instant::now();
-        let content = session_content_rect(&self.model);
-        let (tx, ty, scale) = playfield_transform(playfield_rect(self.bounds), content);
-        self.ensure_atlas_for(scale);
-        ctx.save();
-        ctx.translate(tx, ty);
-        ctx.scale(scale, scale);
+        self.ensure_atlas_for_session();
 
-        // Paint piles.
+        // Paint piles directly — pile origins are already in screen
+        // coordinates (set by `set_bounds` → `relayout`).
         let model = self.model.borrow();
+        let pf = playfield_rect(self.bounds);
         if let Some(session) = model.session.as_ref() {
             let piles = session.piles();
             for pile in piles.iter() {
@@ -457,18 +451,13 @@ impl Widget for GameWidget {
             self.paint_dragged(ctx, &drag);
         }
 
-        // Win banner.
+        // Banners (win / Mom's king-pickup prompt).
         if self.model.borrow().screen == Screen::Won {
-            paint_win_banner(ctx, &self.font);
+            paint_win_banner(ctx, &self.font, pf);
         }
-
-        // Mom's Solitaire: while a col-0 gap is armed, prompt the
-        // user to pick a King.
         if self.model.borrow().moms_waiting_king_at.is_some() {
-            paint_moms_prompt(ctx, &self.font, "Select a King for the empty slot");
+            paint_moms_prompt(ctx, &self.font, pf, "Select a King for the empty slot");
         }
-
-        ctx.restore();
 
         let ms = t0.elapsed().as_secs_f64() * 1000.0;
         if ms > 30.0 {
@@ -480,23 +469,18 @@ impl Widget for GameWidget {
         if !self.is_visible() {
             return EventResult::Ignored;
         }
-        let bounds = self.bounds;
-        let content = session_content_rect(&self.model);
         match event {
             Event::MouseDown {
                 pos,
                 button: MouseButton::Left,
                 ..
             } => {
-                let (vx, vy) = screen_to_virtual(playfield_rect(bounds), content, pos.x, pos.y);
-                // Detect double-click against the previous MouseDown
-                // BEFORE updating the timestamp.
+                // Coordinates are already in screen space; pile
+                // origins live there too after `relayout`.
+                let (vx, vy) = (pos.x, pos.y);
                 let is_double = self.is_double_click(vx, vy);
                 self.last_click = Some((web_time::Instant::now(), vx, vy));
 
-                // Mom's Solitaire is click-only — the player clicks a
-                // gap and the engine finds the matching card. No
-                // drag, no double-click-to-foundation (no foundation).
                 if self.is_moms() {
                     if self.try_moms_click(vx, vy) {
                         return EventResult::Consumed;
@@ -507,7 +491,6 @@ impl Widget for GameWidget {
                     self.last_click = None;
                     return EventResult::Consumed;
                 }
-                // Pile-click handler first (stock dispense / recycle).
                 if self.try_pile_click(vx, vy) {
                     return EventResult::Consumed;
                 }
@@ -518,9 +501,8 @@ impl Widget for GameWidget {
             }
             Event::MouseMove { pos } => {
                 if let Some(drag) = self.drag.as_mut() {
-                    let (vx, vy) = screen_to_virtual(playfield_rect(bounds), content, pos.x, pos.y);
-                    drag.cur_x = vx;
-                    drag.cur_y = vy;
+                    drag.cur_x = pos.x;
+                    drag.cur_y = pos.y;
                     agg_gui::animation::request_draw();
                 }
                 EventResult::Ignored
@@ -531,8 +513,7 @@ impl Widget for GameWidget {
                 ..
             } => {
                 if self.drag.is_some() {
-                    let (vx, vy) = screen_to_virtual(playfield_rect(bounds), content, pos.x, pos.y);
-                    self.finish_drag(vx, vy);
+                    self.finish_drag(pos.x, pos.y);
                     return EventResult::Consumed;
                 }
                 EventResult::Ignored
@@ -546,8 +527,7 @@ impl Widget for GameWidget {
     }
 }
 
-fn paint_win_banner(ctx: &mut dyn DrawCtx, font: &Arc<Font>) {
-    use crate::consts::{VIRTUAL_H, VIRTUAL_W};
+fn paint_win_banner(ctx: &mut dyn DrawCtx, font: &Arc<Font>, rect: Rect) {
     use agg_gui::color::Color;
     let bg = Color::from_rgba8(0x10, 0x10, 0x10, 0xc8);
     let fg = Color::from_rgb8(0xff, 0xd7, 0x00);
@@ -559,8 +539,8 @@ fn paint_win_banner(ctx: &mut dyn DrawCtx, font: &Arc<Font>) {
     let lw = m.map(|t| t.width).unwrap_or(280.0);
     let bw = lw + pad * 2.0;
     let bh = 100.0;
-    let bx = (VIRTUAL_W - bw) / 2.0;
-    let by = (VIRTUAL_H - bh) / 2.0;
+    let bx = rect.x + (rect.width - bw) / 2.0;
+    let by = rect.y + (rect.height - bh) / 2.0;
     ctx.begin_path();
     ctx.rounded_rect(bx, by, bw, bh, 14.0);
     ctx.set_fill_color(bg);
@@ -572,12 +552,8 @@ fn paint_win_banner(ctx: &mut dyn DrawCtx, font: &Arc<Font>) {
 /// Status banner for Mom's Solitaire's "select a King for the empty
 /// slot" prompt. Painted near the top of the playfield, similar in
 /// style to the C# original's instruction banner.
-fn paint_moms_prompt(ctx: &mut dyn DrawCtx, font: &Arc<Font>, label: &str) {
-    use crate::consts::{VIRTUAL_H, VIRTUAL_W};
+fn paint_moms_prompt(ctx: &mut dyn DrawCtx, font: &Arc<Font>, rect: Rect, label: &str) {
     use agg_gui::color::Color;
-    // Soft warm-pink fill matching the C# original's "needs a King"
-    // banner (`new Color(0xf8, 0x89, 0x78)`), with a dark outline so it
-    // stays readable on top of the green felt and the gap cells.
     let bg = Color::from_rgba8(0xf8, 0x89, 0x78, 0xf0);
     let border = Color::from_rgb8(0x20, 0x20, 0x20);
     let fg = Color::from_rgb8(0x10, 0x10, 0x10);
@@ -589,10 +565,9 @@ fn paint_moms_prompt(ctx: &mut dyn DrawCtx, font: &Arc<Font>, label: &str) {
     let m = ctx.measure_text(label);
     let lw = m.map(|t| t.width).unwrap_or(240.0);
     let bw = lw + pad_x * 2.0;
-    let bx = (VIRTUAL_W - bw) / 2.0;
-    // Y-up: place the banner near the TOP of the playfield, just
-    // below where the menu bar lands in window space.
-    let by = VIRTUAL_H - bh - 8.0;
+    let bx = rect.x + (rect.width - bw) / 2.0;
+    // Y-up: place the banner near the TOP of the playfield rect.
+    let by = rect.y + rect.height - bh - 8.0;
     ctx.begin_path();
     ctx.rounded_rect(bx, by, bw, bh, 6.0);
     ctx.set_fill_color(bg);

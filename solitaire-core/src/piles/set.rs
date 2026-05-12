@@ -11,16 +11,24 @@ pub struct PileSet {
 
 impl PileSet {
     pub fn from_slots(slots: &[PileSlot]) -> Self {
-        let mut piles = Vec::with_capacity(slots.len());
-        for s in slots {
-            piles.push(Pile::new(s.id, s.kind, s.layout, s.origin_x, s.origin_y));
-        }
+        let mut piles: Vec<Pile> = slots.iter().map(Pile::from_slot).collect();
         // Sanity: ids should be 0..n in declaration order so we can index
         // directly without a hashmap. Game rules build slot tables this way.
-        for (i, p) in piles.iter().enumerate() {
+        for (i, p) in piles.iter_mut().enumerate() {
             debug_assert_eq!(p.id as usize, i, "PileSlot ids must be contiguous 0..n");
         }
         Self { piles }
+    }
+
+    /// Re-apply a fresh slot table to the existing piles WITHOUT
+    /// resetting their card stacks. `slots` must match the piles by
+    /// id (same length, same id order — guaranteed by the
+    /// `GameRules::pile_layout` contract).
+    pub fn update_layout(&mut self, slots: &[PileSlot]) {
+        debug_assert_eq!(self.piles.len(), slots.len());
+        for (pile, slot) in self.piles.iter_mut().zip(slots) {
+            pile.apply_slot(slot);
+        }
     }
 
     pub fn len(&self) -> usize {

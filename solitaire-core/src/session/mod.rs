@@ -9,8 +9,17 @@ mod tests;
 pub use moves::{apply_move, revert_move, Move};
 pub use undo::UndoStack;
 
+use agg_gui::geometry::Rect;
+
 use crate::games::GameRules;
 use crate::piles::PileSet;
+
+/// Reference playfield rect used by `GameSession::new` when there's no
+/// real viewport yet (headless tests, app startup before first paint).
+/// `GameWidget` immediately re-applies `rules.pile_layout(real_rect)`
+/// via [`GameSession::relayout`] on the first paint, so this only
+/// affects test setups.
+pub const DEFAULT_PLAYFIELD_RECT: Rect = Rect::new(0.0, 0.0, 1024.0, 720.0);
 
 /// One play session: the rules, the live pile state, and an undo stack.
 pub struct GameSession<R: GameRules> {
@@ -22,8 +31,8 @@ pub struct GameSession<R: GameRules> {
 
 impl<R: GameRules> GameSession<R> {
     pub fn new(rules: R, seed: u64) -> Self {
-        let slots = rules.pile_layout();
-        let mut piles = PileSet::from_slots(slots);
+        let slots = rules.pile_layout(DEFAULT_PLAYFIELD_RECT);
+        let mut piles = PileSet::from_slots(&slots);
         let mut rng = StdRngFromSeed::from_seed_u64(seed);
         rules.deal(&mut piles, &mut rng);
         Self {
@@ -32,6 +41,15 @@ impl<R: GameRules> GameSession<R> {
             undo: UndoStack::default(),
             seed,
         }
+    }
+
+    /// Re-apply the rules' pile layout for a new playfield rect (window
+    /// resize, sidebar/standard chrome flip). Pile card stacks are
+    /// preserved; only positions, sizes, fan config, and per-pile
+    /// rendering flags update.
+    pub fn relayout(&mut self, rect: Rect) {
+        let slots = self.rules.pile_layout(rect);
+        self.piles.update_layout(&slots);
     }
 
     /// Try to apply a player-initiated move. After success, runs the

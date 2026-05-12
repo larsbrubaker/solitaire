@@ -5,15 +5,15 @@
 //! descending tail. Complete K→A suited runs at the top of any cascade
 //! auto-collapse to a foundation via `after_move`.
 
+use agg_gui::geometry::Rect;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 
 use crate::cards::{spider_deck, Card, Rank, Suit};
-use crate::consts::{CARD_W, TABLEAU_BASE_Y, TOP_ROW_BOTTOM_Y, VIRTUAL_W};
 use crate::piles::{PileId, PileKind, PileLayout, PileSet, PileSlot};
 use crate::session::Move;
 
-use super::GameRules;
+use super::{GameRules, CARD_ASPECT};
 
 const FOUND_FIRST: PileId = 0;
 const FOUND_LAST: PileId = 7;
@@ -22,62 +22,12 @@ const CASCADE_FIRST: PileId = 9;
 const CASCADE_LAST: PileId = 18;
 const N_CASCADES: usize = 10;
 
-const SPIDER_GAP: f64 = 12.0;
-const SPIDER_PITCH: f64 = CARD_W + SPIDER_GAP;
-const SPIDER_LEFT: f64 = (VIRTUAL_W - ((N_CASCADES as f64 - 1.0) * SPIDER_PITCH + CARD_W)) / 2.0;
-
-const fn slot_top(id: PileId, col: usize, kind: PileKind) -> PileSlot {
-    PileSlot {
-        id,
-        kind,
-        layout: PileLayout::Stacked,
-        origin_x: SPIDER_LEFT + (col as f64) * SPIDER_PITCH,
-        origin_y: TOP_ROW_BOTTOM_Y,
-    }
-}
-
-const fn slot_cascade(idx: usize) -> PileSlot {
-    PileSlot {
-        id: CASCADE_FIRST + idx as u8,
-        kind: PileKind::Tableau,
-        // Suited descending runs compact tightly so long Spider
-        // sequences (e.g. K-down-to-A spades) don't fill the playfield
-        // vertically. Cards that aren't part of a suited descending
-        // run still get the standard face-up fan offset.
-        layout: PileLayout::FannedDownCompactSuited,
-        origin_x: SPIDER_LEFT + (idx as f64) * SPIDER_PITCH,
-        origin_y: TABLEAU_BASE_Y,
-    }
-}
-
-const fn slots() -> [PileSlot; 19] {
-    [
-        // 8 foundations along the top row, columns 0..7.
-        slot_top(0, 0, PileKind::Foundation),
-        slot_top(1, 1, PileKind::Foundation),
-        slot_top(2, 2, PileKind::Foundation),
-        slot_top(3, 3, PileKind::Foundation),
-        slot_top(4, 4, PileKind::Foundation),
-        slot_top(5, 5, PileKind::Foundation),
-        slot_top(6, 6, PileKind::Foundation),
-        slot_top(7, 7, PileKind::Foundation),
-        // Stock at column 9 (column 8 left as a visual gap), id=8.
-        slot_top(STOCK, 9, PileKind::Stock),
-        // 10 cascades on the row below.
-        slot_cascade(0),
-        slot_cascade(1),
-        slot_cascade(2),
-        slot_cascade(3),
-        slot_cascade(4),
-        slot_cascade(5),
-        slot_cascade(6),
-        slot_cascade(7),
-        slot_cascade(8),
-        slot_cascade(9),
-    ]
-}
-
-static SLOTS: [PileSlot; 19] = slots();
+/// Top row has 8 foundations + a 1-column gap + stock = 10 columns.
+const TOP_COLS: usize = 10;
+/// Vertical budget in card-heights — top row + tableau fan. Spider
+/// runs compact via `FannedDownCompactSuited`, so even long descending
+/// runs rarely exceed ~5 card-heights of total fan extent.
+const VERT_BUDGET_CARDS: f64 = 5.0;
 
 pub struct Spider {
     pub suit_count: u8,
@@ -167,8 +117,61 @@ fn has_complete_run_on_top(pile: &crate::piles::Pile) -> bool {
 }
 
 impl GameRules for Spider {
-    fn pile_layout(&self) -> &'static [PileSlot] {
-        &SLOTS
+    fn pile_layout(&self, rect: Rect) -> Vec<PileSlot> {
+        // 10 columns horizontally (max of top-row count and cascade
+        // count, both = 10 once the foundation gap is included).
+        let col_gap = 10.0;
+        let row_gap = 12.0;
+        let card_w_by_width = (rect.width - col_gap * (TOP_COLS as f64 - 1.0)) / TOP_COLS as f64;
+        let card_h_by_height = (rect.height - row_gap) / VERT_BUDGET_CARDS;
+        let card_h = (card_w_by_width * CARD_ASPECT).min(card_h_by_height);
+        let card_w = card_h / CARD_ASPECT;
+        let col_pitch = card_w + col_gap;
+        let used_w = TOP_COLS as f64 * card_w + (TOP_COLS as f64 - 1.0) * col_gap;
+        let left = rect.x + (rect.width - used_w) / 2.0;
+        let top_row_origin_y = rect.y + rect.height - card_h;
+        let tableau_origin_y = top_row_origin_y - (card_h + row_gap);
+        let mk = |id: PileId, kind: PileKind, layout: PileLayout, col: f64, base_y: f64| {
+            PileSlot::new(
+                id,
+                kind,
+                layout,
+                left + col * col_pitch,
+                base_y,
+                card_w,
+                card_h,
+            )
+        };
+        let mut out = Vec::with_capacity(19);
+        // 8 foundations across columns 0..7.
+        for i in 0..8u8 {
+            out.push(mk(
+                FOUND_FIRST + i,
+                PileKind::Foundation,
+                PileLayout::Stacked,
+                i as f64,
+                top_row_origin_y,
+            ));
+        }
+        // Stock at column 9 (column 8 left as a visual gap).
+        out.push(mk(
+            STOCK,
+            PileKind::Stock,
+            PileLayout::Stacked,
+            9.0,
+            top_row_origin_y,
+        ));
+        // 10 cascades on the row below, with compact-suited-run fan.
+        for i in 0..N_CASCADES as u8 {
+            out.push(mk(
+                CASCADE_FIRST + i,
+                PileKind::Tableau,
+                PileLayout::FannedDownCompactSuited,
+                i as f64,
+                tableau_origin_y,
+            ));
+        }
+        out
     }
 
     fn deal(&self, piles: &mut PileSet, rng: &mut StdRng) {
@@ -337,7 +340,8 @@ mod tests {
     #[test]
     fn descending_any_suit_legal_single_card_to_cascade() {
         let rules = Spider::four_suit();
-        let mut piles = PileSet::from_slots(rules.pile_layout());
+        let mut piles =
+            PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
         piles
             .get_mut(CASCADE_FIRST)
             .cards
@@ -354,7 +358,8 @@ mod tests {
     #[test]
     fn multi_card_move_requires_suited_tail() {
         let rules = Spider::four_suit();
-        let mut piles = PileSet::from_slots(rules.pile_layout());
+        let mut piles =
+            PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
         let src = CASCADE_FIRST;
         // 7♠ 6♥ — descending but mixed suit → multi-card move illegal.
         piles
@@ -377,7 +382,8 @@ mod tests {
     #[test]
     fn complete_run_auto_collapses_to_foundation() {
         let rules = Spider::four_suit();
-        let mut piles = PileSet::from_slots(rules.pile_layout());
+        let mut piles =
+            PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
         // Build a K→A suited spades run on cascade 0.
         let cid = CASCADE_FIRST;
         for r in [
@@ -412,7 +418,8 @@ mod tests {
         // EMPTY cascade should land. (Reported as "I can't move a group
         // of cards to a new pile" — the rule allows it; verifying.)
         let rules = Spider::four_suit();
-        let mut piles = PileSet::from_slots(rules.pile_layout());
+        let mut piles =
+            PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
         let src = CASCADE_FIRST;
         for r in [Rank::Eight, Rank::Seven, Rank::Six] {
             piles
@@ -431,7 +438,8 @@ mod tests {
     fn suited_multi_card_move_onto_higher_card_is_legal() {
         // Same suited tail (8♠ 7♠ 6♠) onto a 9 of any suit lands.
         let rules = Spider::four_suit();
-        let mut piles = PileSet::from_slots(rules.pile_layout());
+        let mut piles =
+            PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
         let src = CASCADE_FIRST;
         for r in [Rank::Eight, Rank::Seven, Rank::Six] {
             piles
@@ -457,7 +465,8 @@ mod tests {
         // re-organises an already-suited tail under a higher card. The
         // resulting cascade 1 becomes a clean 8→A suited run.
         let rules = Spider::one_suit();
-        let mut piles = PileSet::from_slots(rules.pile_layout());
+        let mut piles =
+            PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
         let src = CASCADE_FIRST;
         for r in [
             Rank::Six,
@@ -490,7 +499,9 @@ mod tests {
         // face-down card face-down, leaving the cascade visually stuck
         // until the player did something else to trigger another move.
         let mut s = GameSession::new(Spider::four_suit(), 1);
-        s.piles = PileSet::from_slots(Spider::four_suit().pile_layout());
+        s.piles = PileSet::from_slots(
+            &Spider::four_suit().pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT),
+        );
         let cid = CASCADE_FIRST;
         // Bottom of cascade: a face-down "buried" card.
         s.piles
@@ -545,7 +556,9 @@ mod tests {
         // Expected: after_move detects the K→A run and auto-collapses.
         let mut s = GameSession::new(Spider::four_suit(), 1);
         // Replace the dealt state with a curated cascade.
-        s.piles = PileSet::from_slots(Spider::four_suit().pile_layout());
+        s.piles = PileSet::from_slots(
+            &Spider::four_suit().pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT),
+        );
         let cid = CASCADE_FIRST;
         // Push K..2 (face-up).
         for r in [
@@ -585,7 +598,8 @@ mod tests {
     #[test]
     fn stock_click_blocked_when_any_cascade_empty() {
         let rules = Spider::four_suit();
-        let mut piles = PileSet::from_slots(rules.pile_layout());
+        let mut piles =
+            PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
         for _ in 0..50 {
             piles
                 .get_mut(STOCK)

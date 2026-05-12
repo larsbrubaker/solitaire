@@ -22,11 +22,10 @@ pub trait DynGameSession {
     fn is_won(&self) -> bool;
     fn game_slug(&self) -> &'static str;
     fn seed(&self) -> u64;
-    /// Virtual-coord rect that bounds visible content. The playfield
-    /// letterbox uses this rather than the full 1024×720 so a variant
-    /// like Mom's (fixed 13×4 grid) can scale cards up to fill the
-    /// available screen space.
-    fn content_bounds(&self) -> Rect;
+    /// Re-run the active rules' `pile_layout` for `rect` and apply
+    /// the resulting positions / sizes to the existing piles. Card
+    /// stacks are preserved.
+    fn relayout(&mut self, rect: Rect);
 }
 
 impl<R: GameRules> DynGameSession for GameSession<R> {
@@ -60,7 +59,7 @@ impl<R: GameRules> DynGameSession for GameSession<R> {
     fn seed(&self) -> u64 {
         self.seed
     }
-    fn content_bounds(&self) -> Rect {
-        self.rules.content_bounds()
+    fn relayout(&mut self, rect: Rect) {
+        GameSession::relayout(self, rect);
     }
 }

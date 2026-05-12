@@ -5,8 +5,11 @@ use super::layout::PileLayout;
 use super::pile::{Pile, PileKind};
 use super::PileId;
 
-/// Static layout slot used by `GameRules::pile_layout` to declare which
-/// piles a variant has and where they live.
+/// Layout slot used by `GameRules::pile_layout` to describe one pile's
+/// position, size, and rendering config. Origin/size are in SCREEN
+/// coordinates (Y-up, viewport-relative); a variant computes them on
+/// demand for the playfield rect that `GameWidget` hands it, so cards
+/// scale to fill whatever window the user gave us.
 #[derive(Clone, Copy, Debug)]
 pub struct PileSlot {
     pub id: PileId,
@@ -14,6 +17,54 @@ pub struct PileSlot {
     pub layout: PileLayout,
     pub origin_x: f64,
     pub origin_y: f64,
+    pub card_w: f64,
+    pub card_h: f64,
+    /// Up to this many of the topmost cards fan right by `fan_dx`
+    /// (Klondike 3-draw waste). `0` means no horizontal fan.
+    pub fan_top_n: u8,
+    pub fan_dx: f64,
+    /// `true` for Mom's tableau cells — an Ace top-card paints as a
+    /// "gap" placeholder rather than as a face-up Ace.
+    pub render_ace_as_gap: bool,
+}
+
+impl PileSlot {
+    /// Minimal-config slot for the common "stacked / fanned-down,
+    /// default card size, no waste-fan, paint Aces normally" case.
+    /// Callers customise via the field setters below.
+    pub fn new(
+        id: PileId,
+        kind: PileKind,
+        layout: PileLayout,
+        origin_x: f64,
+        origin_y: f64,
+        card_w: f64,
+        card_h: f64,
+    ) -> Self {
+        Self {
+            id,
+            kind,
+            layout,
+            origin_x,
+            origin_y,
+            card_w,
+            card_h,
+            fan_top_n: 0,
+            fan_dx: 0.0,
+            render_ace_as_gap: false,
+        }
+    }
+
+    pub fn with_waste_fan(mut self, top_n: u8, dx: f64) -> Self {
+        self.fan_top_n = top_n;
+        self.fan_dx = dx;
+        self
+    }
+
+    pub fn with_ace_as_gap(mut self) -> Self {
+        self.render_ace_as_gap = true;
+        self
+    }
 }
 
 /// What was under the mouse: a specific card index in a pile, the empty

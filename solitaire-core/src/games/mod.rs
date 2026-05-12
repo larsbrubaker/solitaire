@@ -10,7 +10,6 @@ pub mod spider;
 use agg_gui::geometry::Rect;
 use rand::rngs::StdRng;
 
-use crate::consts::{VIRTUAL_H, VIRTUAL_W};
 use crate::piles::{PileId, PileSet, PileSlot};
 use crate::session::Move;
 
@@ -42,8 +41,20 @@ impl GameKind {
     }
 }
 
+/// Standard playing-card aspect ratio (height / width). Every variant
+/// picks `card_h = card_w * CARD_ASPECT` so the on-screen cards keep a
+/// recognisable shape regardless of available pixels.
+pub const CARD_ASPECT: f64 = 7.0 / 5.0;
+
 pub trait GameRules: 'static {
-    fn pile_layout(&self) -> &'static [PileSlot];
+    /// Compute pile positions, sizes, and rendering config for the
+    /// given playfield rect in SCREEN coordinates. The game picks a
+    /// card size that fits its column count + worst-case fan within
+    /// `rect`, then places each pile's bottom-left card origin.
+    /// `GameWidget` calls this on every viewport change and re-
+    /// applies the result via `PileSet::update_layout` (card state
+    /// is preserved).
+    fn pile_layout(&self, rect: Rect) -> Vec<PileSlot>;
     fn deal(&self, piles: &mut PileSet, rng: &mut StdRng);
     fn legal_move(&self, piles: &PileSet, m: &Move) -> bool;
     fn auto_complete_step(&self, piles: &PileSet) -> Option<Move>;
@@ -64,17 +75,5 @@ pub trait GameRules: 'static {
     /// applies.
     fn after_move(&self, _piles: &PileSet) -> Option<Move> {
         None
-    }
-
-    /// Virtual-coord rect that bounds the game's visible content. The
-    /// playfield letterbox letterboxes THIS rect (rather than the full
-    /// 1024×720 virtual playfield) into the screen-space playfield
-    /// rect, so a variant that doesn't reach the full virtual height
-    /// (Mom's Solitaire's 13×4 grid never grows down) can claim the
-    /// freed pixels for larger cards. Default: the full virtual
-    /// playfield, which matches the historical behaviour for variants
-    /// whose tableau fans CAN extend across the whole virtual area.
-    fn content_bounds(&self) -> Rect {
-        Rect::new(0.0, 0.0, VIRTUAL_W, VIRTUAL_H)
     }
 }

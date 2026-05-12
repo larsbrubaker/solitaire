@@ -25,30 +25,18 @@
 //! - **Win condition:** every row's columns 0..11 are a same-suit
 //!   K-down-to-2 run.
 
+use agg_gui::geometry::Rect;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 
 use crate::cards::{Card, Rank, Suit};
-use crate::consts::{CARD_H, TOP_ROW_BOTTOM_Y, VIRTUAL_W};
 use crate::piles::{PileId, PileKind, PileLayout, PileSet, PileSlot};
 use crate::session::Move;
 
-use super::GameRules;
+use super::{GameRules, CARD_ASPECT};
 
 pub const COLS: u8 = 13;
 pub const ROWS: u8 = 4;
-
-/// Logical card width for a Mom's cell. The standard 90 px wide card
-/// would put 13 columns at 1170 px — wider than `VIRTUAL_W=1024` —
-/// so we shrink it to fit. Other variants are unaffected (per-pile
-/// `card_w` / `card_h` fields on `Pile`).
-pub const MOMS_CARD_W: f64 = 70.0;
-pub const MOMS_CARD_H: f64 = 98.0;
-
-const COL_GAP: f64 = 6.0;
-const ROW_GAP: f64 = 8.0;
-const PITCH_X: f64 = MOMS_CARD_W + COL_GAP;
-const PITCH_Y: f64 = MOMS_CARD_H + ROW_GAP;
 
 /// `(X, Y)` → linear `PileId`. Y=0 is the TOP row in Y-up screen
 /// coordinates (the row with the highest pile origin Y), so the
@@ -63,50 +51,6 @@ pub const fn cell_x(id: PileId) -> u8 {
 pub const fn cell_y(id: PileId) -> u8 {
     id / COLS
 }
-
-/// Y-up origin (bottom-left of the cell) for `(x, y)`. Row 0 is the
-/// TOP row visually; subsequent rows step DOWN by `PITCH_Y`.
-const fn origin(x: u8, y: u8) -> (f64, f64) {
-    let total_w = COLS as f64 * MOMS_CARD_W + (COLS as f64 - 1.0) * COL_GAP;
-    let left = (VIRTUAL_W - total_w) / 2.0;
-    let ox = left + x as f64 * PITCH_X;
-    // CARD_H ≠ MOMS_CARD_H, but we anchor the top row at
-    // `TOP_ROW_BOTTOM_Y` so the grid starts where Klondike's stock
-    // would. Subsequent rows step downward (smaller Y in Y-up).
-    let oy = TOP_ROW_BOTTOM_Y - (CARD_H - MOMS_CARD_H) - y as f64 * PITCH_Y;
-    (ox, oy)
-}
-
-/// Generate the 52-cell slot table at compile time.
-const fn slots() -> [PileSlot; 52] {
-    let mut out = [PileSlot {
-        id: 0,
-        kind: PileKind::Tableau,
-        layout: PileLayout::Stacked,
-        origin_x: 0.0,
-        origin_y: 0.0,
-    }; 52];
-    let mut y = 0u8;
-    while y < ROWS {
-        let mut x = 0u8;
-        while x < COLS {
-            let (ox, oy) = origin(x, y);
-            let id = cell_id(x, y);
-            out[id as usize] = PileSlot {
-                id,
-                kind: PileKind::Tableau,
-                layout: PileLayout::Stacked,
-                origin_x: ox,
-                origin_y: oy,
-            };
-            x += 1;
-        }
-        y += 1;
-    }
-    out
-}
-
-static SLOTS: [PileSlot; 52] = slots();
 
 #[derive(Default)]
 pub struct MomsSolitaire;
@@ -132,21 +76,48 @@ fn one_rank_lower_same_suit(c: &Card) -> Option<(Suit, Rank)> {
 }
 
 impl GameRules for MomsSolitaire {
-    fn pile_layout(&self) -> &'static [PileSlot] {
-        &SLOTS
+    fn pile_layout(&self, rect: Rect) -> Vec<PileSlot> {
+        // 13 cols × 4 rows of cards. Pick card size that fits both
+        // dimensions; Mom's never expands further so this is the
+        // ENTIRE board geometry.
+        let col_gap = 6.0;
+        let row_gap = 8.0;
+        let card_w_by_width = (rect.width - col_gap * (COLS as f64 - 1.0)) / COLS as f64;
+        let card_h_by_height = (rect.height - row_gap * (ROWS as f64 - 1.0)) / ROWS as f64;
+        let card_h = (card_w_by_width * CARD_ASPECT).min(card_h_by_height);
+        let card_w = card_h / CARD_ASPECT;
+        let col_pitch = card_w + col_gap;
+        let row_pitch = card_h + row_gap;
+        let used_w = COLS as f64 * card_w + (COLS as f64 - 1.0) * col_gap;
+        let used_h = ROWS as f64 * card_h + (ROWS as f64 - 1.0) * row_gap;
+        let left = rect.x + (rect.width - used_w) / 2.0;
+        // Y-up: top row sits at the TOP of `rect`, then rows step
+        // downward (smaller Y). Center the full grid vertically inside
+        // the available height.
+        let top_row_origin_y = rect.y + rect.height - (rect.height - used_h) / 2.0 - card_h;
+        let mut out = Vec::with_capacity((COLS * ROWS) as usize);
+        for y in 0..ROWS {
+            for x in 0..COLS {
+                let ox = left + x as f64 * col_pitch;
+                let oy = top_row_origin_y - y as f64 * row_pitch;
+                out.push(
+                    PileSlot::new(
+                        cell_id(x, y),
+                        PileKind::Tableau,
+                        PileLayout::Stacked,
+                        ox,
+                        oy,
+                        card_w,
+                        card_h,
+                    )
+                    .with_ace_as_gap(),
+                );
+            }
+        }
+        out
     }
 
     fn deal(&self, piles: &mut PileSet, rng: &mut StdRng) {
-        // Resize every cell to Mom's smaller card geometry first; the
-        // generic `PileSet::from_slots` initialised them with
-        // `consts::CARD_W / CARD_H`, which would draw 90-px cards into
-        // 70-px-wide cells. Also flag each cell so an Ace top-card
-        // renders as a gap (drop target) instead of as a playing card.
-        for p in piles.iter_mut() {
-            p.card_w = MOMS_CARD_W;
-            p.card_h = MOMS_CARD_H;
-            p.render_ace_as_gap = true;
-        }
         let mut deck = fresh_deck();
         deck.shuffle(rng);
         let mut iter = deck.into_iter();
@@ -232,21 +203,6 @@ impl GameRules for MomsSolitaire {
 
     fn game_slug(&self) -> &'static str {
         "moms"
-    }
-
-    fn content_bounds(&self) -> agg_gui::geometry::Rect {
-        // The 13×4 grid never grows — every card stays in its dealt
-        // cell. So we can letterbox the actual grid envelope rather
-        // than the full 1024×720 virtual playfield, scaling cards up
-        // by a factor that's a meaningful fraction over the default.
-        // A small vertical pad on each side keeps the cards from
-        // hugging the chrome edges.
-        const PAD_Y: f64 = 8.0;
-        let total_h = ROWS as f64 * MOMS_CARD_H + (ROWS as f64 - 1.0) * ROW_GAP;
-        let top_card_top = TOP_ROW_BOTTOM_Y - (CARD_H - MOMS_CARD_H) + MOMS_CARD_H;
-        let content_top = top_card_top + PAD_Y;
-        let content_bottom = content_top - total_h - PAD_Y * 2.0;
-        agg_gui::geometry::Rect::new(0.0, content_bottom, VIRTUAL_W, content_top - content_bottom)
     }
 }
 
@@ -433,11 +389,8 @@ mod tests {
     #[test]
     fn swap_into_gap_must_match_left_neighbour() {
         let rules = MomsSolitaire::new();
-        let mut piles = PileSet::from_slots(rules.pile_layout());
-        for p in piles.iter_mut() {
-            p.card_w = MOMS_CARD_W;
-            p.card_h = MOMS_CARD_H;
-        }
+        let mut piles =
+            PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
         // Place 5♥ at (3, 0) and an Ace gap at (4, 0).
         piles
             .get_mut(cell_id(3, 0))
@@ -470,11 +423,8 @@ mod tests {
     #[test]
     fn col_zero_only_accepts_kings() {
         let rules = MomsSolitaire::new();
-        let mut piles = PileSet::from_slots(rules.pile_layout());
-        for p in piles.iter_mut() {
-            p.card_w = MOMS_CARD_W;
-            p.card_h = MOMS_CARD_H;
-        }
+        let mut piles =
+            PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
         piles
             .get_mut(cell_id(0, 0))
             .cards
@@ -498,11 +448,8 @@ mod tests {
     #[test]
     fn ace_is_never_legal_as_a_source() {
         let rules = MomsSolitaire::new();
-        let mut piles = PileSet::from_slots(rules.pile_layout());
-        for p in piles.iter_mut() {
-            p.card_w = MOMS_CARD_W;
-            p.card_h = MOMS_CARD_H;
-        }
+        let mut piles =
+            PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
         piles
             .get_mut(cell_id(0, 0))
             .cards

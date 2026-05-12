@@ -5,20 +5,24 @@ use crate::piles::{PileKind, PileLayout, PileSet};
 fn two_pile_set() -> PileSet {
     use crate::piles::PileSlot;
     PileSet::from_slots(&[
-        PileSlot {
-            id: 0,
-            kind: PileKind::Tableau,
-            layout: PileLayout::FannedDown,
-            origin_x: 0.0,
-            origin_y: 0.0,
-        },
-        PileSlot {
-            id: 1,
-            kind: PileKind::Foundation,
-            layout: PileLayout::Stacked,
-            origin_x: 200.0,
-            origin_y: 0.0,
-        },
+        PileSlot::new(
+            0,
+            PileKind::Tableau,
+            PileLayout::FannedDown,
+            0.0,
+            0.0,
+            90.0,
+            126.0,
+        ),
+        PileSlot::new(
+            1,
+            PileKind::Foundation,
+            PileLayout::Stacked,
+            200.0,
+            0.0,
+            90.0,
+            126.0,
+        ),
     ])
 }
 

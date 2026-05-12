@@ -1,8 +1,8 @@
 //! `Pile` — a stack of cards with a kind, a layout, and an origin.
 
 use crate::cards::Card;
-use crate::consts::{CARD_H, CARD_W};
 
+use super::hit::PileSlot;
 use super::layout::PileLayout;
 use super::PileId;
 
@@ -21,16 +21,19 @@ pub struct Pile {
     pub id: PileId,
     pub kind: PileKind,
     pub layout: PileLayout,
-    /// Y-up bottom-left of card[0] in virtual playfield coordinates.
+    /// Y-up bottom-left of card[0] in SCREEN coordinates. Updated by
+    /// `PileSet::update_layout` whenever the playfield rect changes
+    /// (window resize, sidebar→standard chrome flip).
     pub origin_x: f64,
     pub origin_y: f64,
     pub cards: Vec<Card>,
-    /// Logical card width to render at this pile (defaults to
-    /// `consts::CARD_W`). Mom's Solitaire shrinks every cell to fit a
-    /// 13-column board inside the virtual playfield; other variants
-    /// use the standard size.
+    /// Card width in SCREEN pixels — chosen by the game's
+    /// `pile_layout` based on available playfield width and number of
+    /// columns.
     pub card_w: f64,
-    /// Logical card height — companion to `card_w`.
+    /// Card height in SCREEN pixels. Variants pick the 5:7 ratio (
+    /// `card_h = card_w * 1.4`) to match the standard playing-card
+    /// aspect.
     pub card_h: f64,
     /// Up to this many of the topmost cards are fanned right by `fan_dx`;
     /// the rest stack at the origin. Used for the Klondike waste pile in
@@ -45,26 +48,38 @@ pub struct Pile {
 }
 
 impl Pile {
-    pub fn new(
-        id: PileId,
-        kind: PileKind,
-        layout: PileLayout,
-        origin_x: f64,
-        origin_y: f64,
-    ) -> Self {
+    /// Initialise from a `PileSlot`. The pile starts empty; cards are
+    /// pushed by `GameRules::deal`.
+    pub fn from_slot(slot: &PileSlot) -> Self {
         Self {
-            id,
-            kind,
-            layout,
-            origin_x,
-            origin_y,
+            id: slot.id,
+            kind: slot.kind,
+            layout: slot.layout,
+            origin_x: slot.origin_x,
+            origin_y: slot.origin_y,
             cards: Vec::new(),
-            card_w: CARD_W,
-            card_h: CARD_H,
-            fan_top_n: 0,
-            fan_dx: 0.0,
-            render_ace_as_gap: false,
+            card_w: slot.card_w,
+            card_h: slot.card_h,
+            fan_top_n: slot.fan_top_n,
+            fan_dx: slot.fan_dx,
+            render_ace_as_gap: slot.render_ace_as_gap,
         }
+    }
+
+    /// Re-apply a slot's layout to an existing pile WITHOUT touching
+    /// its card stack. Used by `PileSet::update_layout` when the
+    /// playfield rect changes (resize, chrome-mode flip).
+    pub fn apply_slot(&mut self, slot: &PileSlot) {
+        debug_assert_eq!(self.id, slot.id);
+        self.kind = slot.kind;
+        self.layout = slot.layout;
+        self.origin_x = slot.origin_x;
+        self.origin_y = slot.origin_y;
+        self.card_w = slot.card_w;
+        self.card_h = slot.card_h;
+        self.fan_top_n = slot.fan_top_n;
+        self.fan_dx = slot.fan_dx;
+        self.render_ace_as_gap = slot.render_ace_as_gap;
     }
 
     pub fn top(&self) -> Option<&Card> {
@@ -89,7 +104,7 @@ impl Pile {
         for i in 1..=idx {
             let prev = self.cards.get(i - 1);
             let curr = self.cards.get(i);
-            y += self.layout.dy_for(prev, curr);
+            y += self.layout.dy_for(self.card_h, prev, curr);
         }
         let x = self.origin_x + self.fan_x_offset(idx);
         (x, y)

@@ -2,14 +2,14 @@
 //! Draw count is configurable (1 by default, 3 for the Microsoft "Classic"
 //! 3-card-draw variant). Both modes share slug `klondike`.
 
+use agg_gui::geometry::Rect;
 use rand::rngs::StdRng;
 
 use crate::cards::{Card, Rank};
-use crate::consts::{COL_PITCH, PLAYFIELD_LEFT, TABLEAU_BASE_Y, TOP_ROW_BOTTOM_Y, WASTE_FAN_DX};
 use crate::piles::{PileId, PileKind, PileLayout, PileSet, PileSlot};
 use crate::session::Move;
 
-use super::GameRules;
+use super::{GameRules, CARD_ASPECT};
 
 // Pile ids:
 const STOCK: PileId = 0;
@@ -19,105 +19,13 @@ const FOUND_LAST: PileId = 5;
 const TABLEAU_FIRST: PileId = 6;
 const TABLEAU_LAST: PileId = 12;
 
-const fn slots() -> [PileSlot; 13] {
-    [
-        PileSlot {
-            id: STOCK,
-            kind: PileKind::Stock,
-            layout: PileLayout::Stacked,
-            origin_x: PLAYFIELD_LEFT,
-            origin_y: TOP_ROW_BOTTOM_Y,
-        },
-        PileSlot {
-            id: WASTE,
-            kind: PileKind::Waste,
-            layout: PileLayout::Stacked,
-            origin_x: PLAYFIELD_LEFT + COL_PITCH,
-            origin_y: TOP_ROW_BOTTOM_Y,
-        },
-        // Foundations occupy columns 3..6 of the top row.
-        PileSlot {
-            id: 2,
-            kind: PileKind::Foundation,
-            layout: PileLayout::Stacked,
-            origin_x: PLAYFIELD_LEFT + 3.0 * COL_PITCH,
-            origin_y: TOP_ROW_BOTTOM_Y,
-        },
-        PileSlot {
-            id: 3,
-            kind: PileKind::Foundation,
-            layout: PileLayout::Stacked,
-            origin_x: PLAYFIELD_LEFT + 4.0 * COL_PITCH,
-            origin_y: TOP_ROW_BOTTOM_Y,
-        },
-        PileSlot {
-            id: 4,
-            kind: PileKind::Foundation,
-            layout: PileLayout::Stacked,
-            origin_x: PLAYFIELD_LEFT + 5.0 * COL_PITCH,
-            origin_y: TOP_ROW_BOTTOM_Y,
-        },
-        PileSlot {
-            id: 5,
-            kind: PileKind::Foundation,
-            layout: PileLayout::Stacked,
-            origin_x: PLAYFIELD_LEFT + 6.0 * COL_PITCH,
-            origin_y: TOP_ROW_BOTTOM_Y,
-        },
-        // Tableau columns 0..6.
-        PileSlot {
-            id: 6,
-            kind: PileKind::Tableau,
-            layout: PileLayout::FannedDown,
-            origin_x: PLAYFIELD_LEFT,
-            origin_y: TABLEAU_BASE_Y,
-        },
-        PileSlot {
-            id: 7,
-            kind: PileKind::Tableau,
-            layout: PileLayout::FannedDown,
-            origin_x: PLAYFIELD_LEFT + COL_PITCH,
-            origin_y: TABLEAU_BASE_Y,
-        },
-        PileSlot {
-            id: 8,
-            kind: PileKind::Tableau,
-            layout: PileLayout::FannedDown,
-            origin_x: PLAYFIELD_LEFT + 2.0 * COL_PITCH,
-            origin_y: TABLEAU_BASE_Y,
-        },
-        PileSlot {
-            id: 9,
-            kind: PileKind::Tableau,
-            layout: PileLayout::FannedDown,
-            origin_x: PLAYFIELD_LEFT + 3.0 * COL_PITCH,
-            origin_y: TABLEAU_BASE_Y,
-        },
-        PileSlot {
-            id: 10,
-            kind: PileKind::Tableau,
-            layout: PileLayout::FannedDown,
-            origin_x: PLAYFIELD_LEFT + 4.0 * COL_PITCH,
-            origin_y: TABLEAU_BASE_Y,
-        },
-        PileSlot {
-            id: 11,
-            kind: PileKind::Tableau,
-            layout: PileLayout::FannedDown,
-            origin_x: PLAYFIELD_LEFT + 5.0 * COL_PITCH,
-            origin_y: TABLEAU_BASE_Y,
-        },
-        PileSlot {
-            id: 12,
-            kind: PileKind::Tableau,
-            layout: PileLayout::FannedDown,
-            origin_x: PLAYFIELD_LEFT + 6.0 * COL_PITCH,
-            origin_y: TABLEAU_BASE_Y,
-        },
-    ]
-}
-
-static SLOTS: [PileSlot; 13] = slots();
+/// Number of tableau columns (= horizontal layout width budget).
+const COLS: usize = 7;
+/// Vertical budget in card-heights. Klondike's tableau starts with up
+/// to 7 cards in column 6 and grows from there, but face-down rows
+/// fan with the smaller offset and players rarely accumulate beyond
+/// ~10 card-positions of total vertical extent (top row + tableau).
+const VERT_BUDGET_CARDS: f64 = 4.5;
 
 pub struct Klondike {
     pub draw_count: u8,
@@ -180,8 +88,75 @@ fn is_valid_run(cards: &[Card]) -> bool {
 }
 
 impl GameRules for Klondike {
-    fn pile_layout(&self) -> &'static [PileSlot] {
-        &SLOTS
+    fn pile_layout(&self, rect: Rect) -> Vec<PileSlot> {
+        // 7 columns horizontally, with a small gutter between cards.
+        // Vertical budget covers stock/waste/foundations row plus the
+        // tableau fan; mid-game fans rarely exceed VERT_BUDGET_CARDS.
+        let col_gap = 12.0;
+        let row_gap = 12.0;
+        let card_w_by_width = (rect.width - col_gap * (COLS as f64 - 1.0)) / COLS as f64;
+        let card_h_by_height = (rect.height - row_gap) / VERT_BUDGET_CARDS;
+        let card_h = (card_w_by_width * CARD_ASPECT).min(card_h_by_height);
+        let card_w = card_h / CARD_ASPECT;
+        let col_pitch = card_w + col_gap;
+        let row_pitch = card_h + row_gap;
+        // Center horizontally inside `rect`.
+        let used_w = COLS as f64 * card_w + (COLS as f64 - 1.0) * col_gap;
+        let left = rect.x + (rect.width - used_w) / 2.0;
+        // Y-up: top row sits near the top of the playfield rect.
+        let top_row_origin_y = rect.y + rect.height - card_h;
+        let tableau_origin_y = top_row_origin_y - row_pitch;
+        let mk = |id: PileId, kind: PileKind, layout: PileLayout, col: f64, base_y: f64| {
+            PileSlot::new(
+                id,
+                kind,
+                layout,
+                left + col * col_pitch,
+                base_y,
+                card_w,
+                card_h,
+            )
+        };
+        let mut out = Vec::with_capacity(13);
+        out.push(mk(
+            STOCK,
+            PileKind::Stock,
+            PileLayout::Stacked,
+            0.0,
+            top_row_origin_y,
+        ));
+        let mut waste = mk(
+            WASTE,
+            PileKind::Waste,
+            PileLayout::Stacked,
+            1.0,
+            top_row_origin_y,
+        );
+        if self.draw_count > 1 {
+            // Waste fan width is ~27 % of card width — matches the
+            // historical 24 px against 90 px cards.
+            waste = waste.with_waste_fan(self.draw_count, card_w * 0.27);
+        }
+        out.push(waste);
+        for i in 0..4u8 {
+            out.push(mk(
+                FOUND_FIRST + i,
+                PileKind::Foundation,
+                PileLayout::Stacked,
+                (3 + i) as f64,
+                top_row_origin_y,
+            ));
+        }
+        for i in 0..COLS as u8 {
+            out.push(mk(
+                TABLEAU_FIRST + i,
+                PileKind::Tableau,
+                PileLayout::FannedDown,
+                i as f64,
+                tableau_origin_y,
+            ));
+        }
+        out
     }
 
     fn deal(&self, piles: &mut PileSet, rng: &mut StdRng) {
@@ -204,14 +179,6 @@ impl GameRules for Klondike {
         }
         for card in iter {
             piles.get_mut(STOCK).cards.push(card);
-        }
-
-        // 3-card-draw mode: keep the most-recent draw_count cards visible
-        // as a fan on the waste, like the Microsoft "Classic" UX.
-        if self.draw_count > 1 {
-            let waste = piles.get_mut(WASTE);
-            waste.fan_top_n = self.draw_count;
-            waste.fan_dx = WASTE_FAN_DX;
         }
     }
 
@@ -374,7 +341,8 @@ mod tests {
     #[test]
     fn ace_to_empty_foundation_is_legal() {
         let rules = Klondike::new();
-        let mut piles = PileSet::from_slots(rules.pile_layout());
+        let mut piles =
+            PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
         piles
             .get_mut(TABLEAU_FIRST)
             .cards
@@ -386,7 +354,8 @@ mod tests {
     #[test]
     fn two_to_empty_foundation_is_illegal() {
         let rules = Klondike::new();
-        let mut piles = PileSet::from_slots(rules.pile_layout());
+        let mut piles =
+            PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
         piles
             .get_mut(TABLEAU_FIRST)
             .cards
@@ -398,7 +367,8 @@ mod tests {
     #[test]
     fn alternating_descending_run_to_tableau_is_legal() {
         let rules = Klondike::new();
-        let mut piles = PileSet::from_slots(rules.pile_layout());
+        let mut piles =
+            PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
         // src tableau has [10♣ face-up], dest tableau has [J♥ face-up].
         piles
             .get_mut(TABLEAU_FIRST)
@@ -415,7 +385,8 @@ mod tests {
     #[test]
     fn same_color_to_tableau_is_illegal() {
         let rules = Klondike::new();
-        let mut piles = PileSet::from_slots(rules.pile_layout());
+        let mut piles =
+            PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
         piles
             .get_mut(TABLEAU_FIRST)
             .cards
@@ -431,7 +402,8 @@ mod tests {
     #[test]
     fn king_to_empty_tableau_is_legal() {
         let rules = Klondike::new();
-        let mut piles = PileSet::from_slots(rules.pile_layout());
+        let mut piles =
+            PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
         piles
             .get_mut(WASTE)
             .cards
@@ -443,7 +415,8 @@ mod tests {
     #[test]
     fn stock_click_when_nonempty_dispenses_one_to_waste() {
         let rules = Klondike::new();
-        let mut piles = PileSet::from_slots(rules.pile_layout());
+        let mut piles =
+            PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
         piles
             .get_mut(STOCK)
             .cards
@@ -460,7 +433,8 @@ mod tests {
     #[test]
     fn stock_click_when_empty_recycles_waste() {
         let rules = Klondike::new();
-        let mut piles = PileSet::from_slots(rules.pile_layout());
+        let mut piles =
+            PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
         for r in [Rank::Two, Rank::Three, Rank::Four] {
             piles
                 .get_mut(WASTE)

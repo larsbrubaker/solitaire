@@ -1,8 +1,9 @@
 //! Title screen — four buttons (Klondike, FreeCell, Spider, Mom's
-//! Solitaire) + the toast for "coming soon" responses on
-//! unimplemented variants.
+//! Solitaire) + the toast for transient status messages.
 //!
-//! Visible only while `model.screen == Screen::Title`.
+//! Visible only while `model.screen == Screen::Title`. Lays out the
+//! title heading + buttons directly in screen coordinates; the chrome
+//! layout module decides what rect we get and we center inside it.
 
 use std::sync::Arc;
 
@@ -13,7 +14,6 @@ use agg_gui::geometry::{Rect, Size};
 use agg_gui::text::Font;
 use agg_gui::widget::Widget;
 
-use crate::consts::{VIRTUAL_H, VIRTUAL_W};
 use crate::games::GameKind;
 
 use super::app_model::{Screen, SharedModel};
@@ -22,8 +22,6 @@ const BTN_W: f64 = 320.0;
 const BTN_H: f64 = 84.0;
 const BTN_GAP_Y: f64 = 22.0;
 const TITLE_FONT_SIZE: f64 = 72.0;
-/// Clearance between the bottom of the title text and the top of the
-/// first button.
 const TITLE_BUTTONS_GAP: f64 = 42.0;
 
 const BTN_BG: Color = Color::from_rgb8(0x1f, 0x4d, 0x2e);
@@ -61,20 +59,25 @@ impl TitleWidget {
         }
     }
 
-    fn button_rect(&self, idx: usize) -> (f64, f64, f64, f64) {
-        // Vertically center the title+buttons block in the virtual
-        // playfield so the empty space splits evenly above the title
-        // and below the bottom button (instead of clustering all the
-        // empty space above the title as the prior layout did).
+    /// Y-up screen-space rect for the title+buttons block, centered
+    /// inside `self.bounds`.
+    fn block_origin_y(&self) -> f64 {
         let n = KINDS.len() as f64;
         let total_h = n * BTN_H + (n - 1.0) * BTN_GAP_Y;
         let block_h = total_h + TITLE_BUTTONS_GAP + TITLE_FONT_SIZE;
-        let start_y_top = (VIRTUAL_H - block_h) / 2.0;
-        // Y-up: top of the FIRST button is at this Y. Each subsequent
-        // button is BELOW (smaller numerical Y).
+        self.bounds.y + (self.bounds.height - block_h) / 2.0
+    }
+
+    fn button_rect(&self, idx: usize) -> (f64, f64, f64, f64) {
+        let start_y_top = self.block_origin_y();
+        let n = KINDS.len() as f64;
+        let total_h = n * BTN_H + (n - 1.0) * BTN_GAP_Y;
+        // Y-up: top of the FIRST button (Klondike) sits at the top of
+        // the buttons portion of the block; subsequent buttons drop
+        // by (BTN_H + BTN_GAP_Y).
         let top_of_btn = start_y_top + total_h - idx as f64 * (BTN_H + BTN_GAP_Y);
         let y = top_of_btn - BTN_H;
-        let x = (VIRTUAL_W - BTN_W) / 2.0;
+        let x = self.bounds.x + (self.bounds.width - BTN_W) / 2.0;
         (x, y, BTN_W, BTN_H)
     }
 
@@ -97,14 +100,12 @@ impl TitleWidget {
         let label = "Solitaire";
         let m = ctx.measure_text(label);
         let w = m.map(|t| t.width).unwrap_or(0.0);
-        let x = (VIRTUAL_W - w) / 2.0;
+        let x = self.bounds.x + (self.bounds.width - w) / 2.0;
         // Title baseline sits TITLE_BUTTONS_GAP above the topmost
-        // button (Klondike), inside the same vertically-centered
-        // title+buttons block as `button_rect`.
+        // button (Klondike).
         let n = KINDS.len() as f64;
         let total_h = n * BTN_H + (n - 1.0) * BTN_GAP_Y;
-        let block_h = total_h + TITLE_BUTTONS_GAP + TITLE_FONT_SIZE;
-        let start_y_top = (VIRTUAL_H - block_h) / 2.0;
+        let start_y_top = self.block_origin_y();
         let klondike_top = start_y_top + total_h;
         let y = klondike_top + TITLE_BUTTONS_GAP;
         ctx.fill_text(label, x, y);
@@ -150,8 +151,8 @@ impl TitleWidget {
         let m = ctx.measure_text(&msg);
         let tw = m.map(|t| t.width).unwrap_or(220.0) + pad * 2.0;
         let th = 40.0;
-        let x = (VIRTUAL_W - tw) / 2.0;
-        let y = 80.0;
+        let x = self.bounds.x + (self.bounds.width - tw) / 2.0;
+        let y = self.bounds.y + 80.0;
         ctx.begin_path();
         ctx.rounded_rect(x, y, tw, th, 8.0);
         ctx.set_fill_color(TOAST_BG);
@@ -186,51 +187,35 @@ impl Widget for TitleWidget {
     }
 
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
-        // Allow toast time-out.
         self.model.borrow_mut().tick_toast();
-        // Center the playfield horizontally inside whatever the OS gave us.
-        // Buttons coordinate space is the virtual playfield (1024x720). We
-        // letterbox-fit by translating so the playfield is centered in
-        // self.bounds; coordinates inside paint_* helpers stay in virtual
-        // space.
-        let (tx, ty, scale) = playfield_transform(self.bounds, default_content_rect());
-        ctx.save();
-        ctx.translate(tx, ty);
-        ctx.scale(scale, scale);
-
         self.paint_title(ctx);
         for (i, kind) in KINDS.iter().enumerate() {
             self.paint_button(ctx, i, *kind, true);
         }
         self.paint_toast(ctx);
-
-        ctx.restore();
     }
 
     fn on_event(&mut self, event: &Event) -> EventResult {
         if !self.is_visible() {
             return EventResult::Ignored;
         }
-        let bounds = self.bounds;
         match event {
             Event::MouseDown {
                 pos,
                 button: MouseButton::Left,
                 ..
             } => {
-                let (vx, vy) = screen_to_virtual(bounds, default_content_rect(), pos.x, pos.y);
-                if self.click_at(vx, vy) {
+                if self.click_at(pos.x, pos.y) {
                     agg_gui::animation::request_draw();
                     return EventResult::Consumed;
                 }
                 EventResult::Ignored
             }
             Event::MouseMove { pos } => {
-                let (vx, vy) = screen_to_virtual(bounds, default_content_rect(), pos.x, pos.y);
                 let mut new_hover = None;
                 for (i, _) in KINDS.iter().enumerate() {
                     let (bx, by, bw, bh) = self.button_rect(i);
-                    if vx >= bx && vx <= bx + bw && vy >= by && vy <= by + bh {
+                    if pos.x >= bx && pos.x <= bx + bw && pos.y >= by && pos.y <= by + bh {
                         new_hover = Some(i);
                         break;
                     }
@@ -246,49 +231,6 @@ impl Widget for TitleWidget {
     }
 
     fn needs_draw(&self) -> bool {
-        // While a toast is showing we want regular redraws so it can fade
-        // out on its own schedule. Cheap to always say true here.
         self.model.borrow().toast.is_some()
     }
-}
-
-/// Default content rect: the full 1024×720 virtual playfield, used by
-/// callers (Title screen) that don't have a specific game's content
-/// envelope to letterbox.
-pub fn default_content_rect() -> Rect {
-    Rect::new(0.0, 0.0, VIRTUAL_W, VIRTUAL_H)
-}
-
-/// Compute the (translation_x, translation_y, scale) used to letterbox
-/// the virtual `content` rect inside the screen-space `rect`. The
-/// translation is in the same coordinate space as `rect`'s origin:
-/// pass a viewport-relative `rect` (e.g. `chrome.playfield_rect`) and
-/// the returned `tx, ty` are also viewport-relative.
-///
-/// `content` is the rectangle in virtual coordinates that should fit
-/// inside `rect`. For most variants this is `default_content_rect()`
-/// (the full 1024×720 playfield, since tableau fans can extend
-/// anywhere). Variants whose content is bounded — Mom's 13×4 grid —
-/// pass a tighter `content` so cards scale up to fill freed pixels.
-pub fn playfield_transform(rect: Rect, content: Rect) -> (f64, f64, f64) {
-    let sx = rect.width / content.width;
-    let sy = rect.height / content.height;
-    let scale = sx.min(sy);
-    let used_w = content.width * scale;
-    let used_h = content.height * scale;
-    // Letterbox-center the content inside `rect`; subtract the
-    // content origin so virtual (content.x, content.y) maps to the
-    // letterboxed top-left.
-    let tx = rect.x + (rect.width - used_w) / 2.0 - content.x * scale;
-    let ty = rect.y + (rect.height - used_h) / 2.0 - content.y * scale;
-    (tx, ty, scale)
-}
-
-/// Inverse of `playfield_transform` — convert a pointer position (in
-/// the same coordinate space as `rect`) to virtual playfield
-/// coordinates. Must be called with the same `content` rect that was
-/// passed to `playfield_transform`.
-pub fn screen_to_virtual(rect: Rect, content: Rect, px: f64, py: f64) -> (f64, f64) {
-    let (tx, ty, scale) = playfield_transform(rect, content);
-    ((px - tx) / scale, (py - ty) / scale)
 }
