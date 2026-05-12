@@ -19,7 +19,10 @@ use crate::piles::{HitResult, PileId, PileKind};
 use crate::render::{paint_card_at, paint_pile, CardSpriteAtlas};
 use crate::session::Move;
 
-use super::animation::{animated_quad, CardAnim};
+use super::animation::{
+    animated_deck_faces, animated_quad, build_stripe_texture, deck_thickness_for, CardAnim,
+    DeckFace, DeckFlipAnim,
+};
 use super::app_model::{Screen, SharedModel};
 use super::layout;
 
@@ -65,6 +68,10 @@ pub struct GameWidget {
     /// In-flight card animations (stock dispense, etc.). Painted on
     /// top of static piles each frame; cleared as entries complete.
     animations: Vec<CardAnim>,
+    /// In-flight DECK animations — currently driving Klondike's
+    /// waste→stock recycle, where the entire waste pile flips back
+    /// onto the stock as one 3-D thick box.
+    deck_animations: Vec<DeckFlipAnim>,
 }
 
 impl GameWidget {
@@ -78,6 +85,7 @@ impl GameWidget {
             drag: None,
             last_click: None,
             animations: Vec::new(),
+            deck_animations: Vec::new(),
         }
     }
 
@@ -86,11 +94,22 @@ impl GameWidget {
     /// animations targeting the same pile collapse to the lowest
     /// `dst_hide_from` so all of them are correctly suppressed.
     fn hide_from_for(&self, pile_id: PileId) -> Option<usize> {
-        self.animations
+        let card_min = self
+            .animations
             .iter()
             .filter(|a| a.dst_pile == pile_id)
             .map(|a| a.dst_hide_from)
-            .min()
+            .min();
+        let deck_min = self
+            .deck_animations
+            .iter()
+            .filter(|a| a.dst_pile == pile_id)
+            .map(|a| a.dst_hide_from)
+            .min();
+        match (card_min, deck_min) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
     }
 
     fn is_double_click(&self, vx: f64, vy: f64) -> bool {
@@ -316,51 +335,114 @@ impl GameWidget {
         if moves.is_empty() {
             return false;
         }
+        // Detect Klondike's waste→stock recycle: a single move whose
+        // SOURCE is a different pile from the one we clicked, that
+        // takes the whole pile and reverses it. That's our cue to
+        // animate the ENTIRE waste flipping as one 3-D deck box,
+        // rather than as N per-card flights.
+        let is_recycle = moves.len() == 1
+            && moves[0].from != pile_id
+            && moves[0].reverse_order
+            && moves[0].flip_moved;
+
         // Capture the source origin (top of the clicked pile) BEFORE
         // applying the batch — once we apply, the stock's top card
         // has moved and we can't read its pre-move position.
         let src_pile = piles.get(pile_id);
         let src_x = src_pile.origin_x;
         let src_y = src_pile.origin_y;
-        // Snapshot destinations before applying so we know how many
-        // animations to enqueue. (`moves` may legitimately fan-out to
-        // multiple piles — Spider stock click does 10.)
         let dst_pile_ids: Vec<PileId> = moves.iter().map(|m| m.to).collect();
+
+        // Recycle path: snapshot the waste's pre-move state so the
+        // animation knows the card count + top card before the
+        // session mutates them away.
+        let recycle_setup = if is_recycle {
+            let from_id = moves[0].from;
+            let waste = piles.get(from_id);
+            let top = waste.top().copied();
+            let count = waste.cards.len() as u32;
+            // Top of waste = visible center of waste pile.
+            let (wx, wy) = if !waste.cards.is_empty() {
+                waste.position_for(waste.cards.len() - 1)
+            } else {
+                (waste.origin_x, waste.origin_y)
+            };
+            top.map(|t| (from_id, t, count, wx, wy, waste.card_w, waste.card_h))
+        } else {
+            None
+        };
 
         let applied = session.try_apply_batch(moves);
         if !applied {
             return false;
         }
 
-        // After-apply: queue a fly-and-flip animation per dispensed
-        // card. The card is already on its destination pile; we hide
-        // the newly-added top during the animation and paint the
-        // in-flight version over it.
         let now = web_time::Instant::now();
-        let per_card_dur = std::time::Duration::from_millis(220);
-        let stagger = std::time::Duration::from_millis(40);
-        for (i, dst_id) in dst_pile_ids.iter().enumerate() {
-            let dst_pile = session.piles().get(*dst_id);
-            if dst_pile.cards.is_empty() {
-                continue;
-            }
-            let new_idx = dst_pile.cards.len() - 1;
-            let card = dst_pile.cards[new_idx];
-            let (dx, dy) = dst_pile.position_for(new_idx);
-            self.animations.push(CardAnim {
-                card,
-                src_x,
-                src_y,
-                dst_x: dx,
-                dst_y: dy,
-                card_w: dst_pile.card_w,
-                card_h: dst_pile.card_h,
-                start_at: now + stagger * i as u32,
-                duration: per_card_dur,
-                dst_pile: *dst_id,
-                dst_hide_from: new_idx,
-                flip: true,
+        if let Some((_from_id, top_card, card_count, wx, wy, card_w, card_h)) = recycle_setup {
+            // Deck-flip animation: thickness scales with card count,
+            // side stripes generated procedurally. Source center =
+            // waste's top-card center, destination center = stock's
+            // top-card center.
+            let dst_pile = session.piles().get(dst_pile_ids[0]);
+            let (sx, sy) = if !dst_pile.cards.is_empty() {
+                dst_pile.position_for(dst_pile.cards.len() - 1)
+            } else {
+                (dst_pile.origin_x, dst_pile.origin_y)
+            };
+            let thickness = deck_thickness_for(card_count, card_w);
+            let (side_tex, side_w, side_h) = build_stripe_texture(card_count);
+            let dst_hide_from = if dst_pile.cards.is_empty() {
+                0
+            } else {
+                dst_pile.cards.len() - card_count.min(dst_pile.cards.len() as u32) as usize
+            };
+            // Convert pile-origin (bottom-left) to card-center for
+            // both source and destination.
+            self.deck_animations.push(DeckFlipAnim {
+                top_card,
+                card_count,
+                card_w,
+                card_h,
+                thickness,
+                src_center_x: wx + card_w / 2.0,
+                src_center_y: wy + card_h / 2.0,
+                dst_center_x: sx + card_w / 2.0,
+                dst_center_y: sy + card_h / 2.0,
+                start_at: now,
+                duration: std::time::Duration::from_millis(450),
+                dst_pile: dst_pile_ids[0],
+                dst_hide_from,
+                side_texture: side_tex,
+                side_tex_w: side_w,
+                side_tex_h: side_h,
             });
+        } else {
+            // Regular fly-and-flip per dispensed card.
+            let per_card_dur = std::time::Duration::from_millis(220);
+            let stagger = std::time::Duration::from_millis(40);
+            for (i, dst_id) in dst_pile_ids.iter().enumerate() {
+                let dst_pile = session.piles().get(*dst_id);
+                if dst_pile.cards.is_empty() {
+                    continue;
+                }
+                let new_idx = dst_pile.cards.len() - 1;
+                let card = dst_pile.cards[new_idx];
+                let (dx, dy) = dst_pile.position_for(new_idx);
+                self.animations.push(CardAnim {
+                    card,
+                    src_x,
+                    src_y,
+                    dst_x: dx,
+                    dst_y: dy,
+                    card_w: dst_pile.card_w,
+                    card_h: dst_pile.card_h,
+                    start_at: now + stagger * i as u32,
+                    duration: per_card_dur,
+                    dst_pile: *dst_id,
+                    dst_hide_from: new_idx,
+                    flip: true,
+                });
+            }
         }
         agg_gui::animation::request_draw();
         true
@@ -485,6 +567,7 @@ impl Widget for GameWidget {
         // landed card lights up in the same frame the in-flight one
         // would otherwise still draw.
         self.animations.retain(|a| !a.done());
+        self.deck_animations.retain(|a| !a.done());
 
         // Paint piles directly — pile origins are already in screen
         // coordinates (set by `set_bounds` → `relayout`).
@@ -526,6 +609,47 @@ impl Widget for GameWidget {
                 self.atlas.back()
             };
             ctx.draw_image_rgba_corners(&sprite, self.atlas.px_w, self.atlas.px_h, q.corners);
+        }
+
+        // Deck-flip animations: render each in-flight DeckFlipAnim
+        // as a 3-D box. Faces paint back-to-front (painter's
+        // algorithm) and each face binds the appropriate texture —
+        // top face = waste's top card, bottom face = card back, side
+        // faces = procedural stripe texture.
+        for anim in &self.deck_animations {
+            if !anim.has_started() {
+                continue;
+            }
+            for face in animated_deck_faces(anim) {
+                match face.face {
+                    DeckFace::Top => {
+                        let sprite = self.atlas.face(anim.top_card.suit, anim.top_card.rank);
+                        ctx.draw_image_rgba_corners(
+                            &sprite,
+                            self.atlas.px_w,
+                            self.atlas.px_h,
+                            face.corners,
+                        );
+                    }
+                    DeckFace::Bottom => {
+                        let sprite = self.atlas.back();
+                        ctx.draw_image_rgba_corners(
+                            &sprite,
+                            self.atlas.px_w,
+                            self.atlas.px_h,
+                            face.corners,
+                        );
+                    }
+                    DeckFace::LeftSide | DeckFace::RightSide => {
+                        ctx.draw_image_rgba_corners(
+                            &anim.side_texture,
+                            anim.side_tex_w,
+                            anim.side_tex_h,
+                            face.corners,
+                        );
+                    }
+                }
+            }
         }
 
         // Paint dragged cards on top.
@@ -605,7 +729,7 @@ impl Widget for GameWidget {
     }
 
     fn needs_draw(&self) -> bool {
-        self.drag.is_some() || !self.animations.is_empty()
+        self.drag.is_some() || !self.animations.is_empty() || !self.deck_animations.is_empty()
     }
 }
 
