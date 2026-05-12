@@ -19,7 +19,7 @@ use crate::piles::{HitResult, PileId, PileKind};
 use crate::render::{paint_card_at, paint_pile, CardSpriteAtlas};
 use crate::session::Move;
 
-use super::animation::{animated_transform, CardAnim};
+use super::animation::{animated_quad, CardAnim};
 use super::app_model::{Screen, SharedModel};
 use super::layout;
 
@@ -509,34 +509,23 @@ impl Widget for GameWidget {
         drop(model);
 
         // Paint in-flight card animations on top of the static
-        // piles. 3D-flip uses a horizontal scale around the card's
-        // center; the face shown swaps at the halfway point so the
-        // texture is never mirrored.
+        // piles. Each animation projects a 3-D Y-axis-rotated card
+        // through a short-focal-length perspective and renders the
+        // resulting trapezoidal quad via `draw_image_rgba_corners`
+        // — a real wgpu textured quad, NOT a 2-D horizontal squash.
+        // The face shown swaps at the halfway point so the texture
+        // never paints mirrored.
         for anim in &self.animations {
             if !anim.has_started() {
                 continue;
             }
-            let xf = animated_transform(anim);
-            let card = Card {
-                face_up: xf.show_front,
-                ..anim.card
+            let q = animated_quad(anim);
+            let sprite = if q.show_front {
+                self.atlas.face(anim.card.suit, anim.card.rank)
+            } else {
+                self.atlas.back()
             };
-            let cx = xf.x + anim.card_w / 2.0;
-            let cy = xf.y + anim.card_h / 2.0;
-            ctx.save();
-            ctx.translate(cx, cy);
-            ctx.scale(xf.scale_x.max(0.001), 1.0);
-            ctx.translate(-cx, -cy);
-            paint_card_at(
-                ctx,
-                &card,
-                xf.x,
-                xf.y,
-                anim.card_w,
-                anim.card_h,
-                &self.atlas,
-            );
-            ctx.restore();
+            ctx.draw_image_rgba_corners(&sprite, self.atlas.px_w, self.atlas.px_h, q.corners);
         }
 
         // Paint dragged cards on top.

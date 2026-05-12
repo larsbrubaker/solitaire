@@ -82,43 +82,85 @@ pub fn ease_out_cubic(t: f64) -> f64 {
     1.0 - inv * inv * inv
 }
 
-/// Render-time transform for an in-flight card. Returns the screen-
-/// space top-left position, the horizontal scale factor (cosine of
-/// the flip angle), and whether to draw the FRONT face (true) or the
-/// BACK (false).
-pub fn animated_transform(anim: &CardAnim) -> AnimTransform {
-    let t = anim.progress();
-    let eased = ease_out_cubic(t);
-    let x = anim.src_x + (anim.dst_x - anim.src_x) * eased;
-    let y = anim.src_y + (anim.dst_y - anim.src_y) * eased;
-    if !anim.flip {
-        return AnimTransform {
-            x,
-            y,
-            scale_x: 1.0,
-            show_front: anim.card.face_up,
-        };
-    }
-    // The card rotates 180° about its vertical axis over the
-    // animation. cos(0) = 1 → full width; cos(π/2) = 0 → edge-on;
-    // cos(π) = -1 → full width again but mirrored. We take the
-    // absolute value for `scale_x` and swap the face at the halfway
-    // point so the texture never paints mirrored.
-    let angle = t * std::f64::consts::PI;
-    let scale_x = angle.cos().abs();
-    let show_front = t >= 0.5;
-    AnimTransform {
-        x,
-        y,
-        scale_x,
-        show_front,
-    }
+/// Real-3D projected card snapshot — four screen-space corners of
+/// the card after applying Y-axis rotation and perspective division.
+/// `GameWidget` draws the card as a textured quad with these corners,
+/// so the rendering is genuine 3D (perspective foreshortening, the
+/// card looks thinner near the camera-far edge) rather than a 2D
+/// horizontal-squash trick.
+#[derive(Clone, Copy, Debug)]
+pub struct AnimQuad {
+    /// Four corners in SCREEN coordinates, ordered bottom-left,
+    /// bottom-right, top-right, top-left (Y-up convention to match
+    /// the rest of the widget tree).
+    pub corners: [(f64, f64); 4],
+    /// `true` if this frame should sample the FRONT face; `false`
+    /// for the back. Swaps at the halfway point of the rotation so
+    /// the texture is never mirrored.
+    pub show_front: bool,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct AnimTransform {
-    pub x: f64,
-    pub y: f64,
-    pub scale_x: f64,
-    pub show_front: bool,
+/// Project the card into screen space for the current animation
+/// frame. Position interpolates with cubic ease-out + a parabolic
+/// arc; the card itself rotates 0→180° around its vertical axis with
+/// a small perspective focal length so the foreshortening is
+/// visible at oblique angles.
+pub fn animated_quad(anim: &CardAnim) -> AnimQuad {
+    let t = anim.progress();
+    let eased = ease_out_cubic(t);
+    let x_base = anim.src_x + (anim.dst_x - anim.src_x) * eased;
+    let y_base = anim.src_y + (anim.dst_y - anim.src_y) * eased;
+    // Parabolic arc — lifts the card mid-flight, settles to 0 at
+    // both endpoints. Magnitude scales with travel distance so a
+    // short hop barely lifts, a 10-cascade Spider deal arcs high.
+    let dx = anim.dst_x - anim.src_x;
+    let dy = anim.dst_y - anim.src_y;
+    let dist = (dx * dx + dy * dy).sqrt();
+    let arc = (t * std::f64::consts::PI).sin() * dist * 0.12;
+
+    let cx = x_base + anim.card_w / 2.0;
+    let cy = y_base + anim.card_h / 2.0 + arc;
+    let half_w = anim.card_w / 2.0;
+    let half_h = anim.card_h / 2.0;
+
+    let angle = if anim.flip {
+        t * std::f64::consts::PI
+    } else {
+        0.0
+    };
+    let show_front = if anim.flip {
+        t >= 0.5
+    } else {
+        anim.card.face_up
+    };
+
+    // 3-D projection: each corner sits at (±half_w, ±half_h, 0) in
+    // card-local space. Rotate around the Y axis by `angle`, then
+    // divide x/y by (1 - z / focal) for a perspective foreshortening.
+    // Focal length is the rendered card-height — strong enough that
+    // a near-edge view shows real trapezoidal distortion, weak enough
+    // that the face-on extremes still read as a near-rectangle.
+    let focal = anim.card_h * 4.0;
+    let cos_a = angle.cos();
+    let sin_a = angle.sin();
+    let project = |lx: f64, ly: f64| -> (f64, f64) {
+        // Y-axis rotation: x' = x*cos + z*sin, z' = -x*sin + z*cos.
+        // With z_local = 0: x' = x*cos, z' = -x*sin.
+        let x3 = lx * cos_a;
+        let z3 = -lx * sin_a;
+        let denom = 1.0 - z3 / focal;
+        let safe = if denom.abs() < 1e-4 { 1e-4 } else { denom };
+        (cx + x3 / safe, cy + ly / safe)
+    };
+    // Corner order: BL, BR, TR, TL (Y-up).
+    let corners = [
+        project(-half_w, -half_h),
+        project(half_w, -half_h),
+        project(half_w, half_h),
+        project(-half_w, half_h),
+    ];
+    AnimQuad {
+        corners,
+        show_front,
+    }
 }
