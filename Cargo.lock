@@ -2690,6 +2690,7 @@ version = "0.1.0"
 dependencies = [
  "agg-gui",
  "ehttp",
+ "flate2",
  "flume",
  "futures-util",
  "getrandom 0.2.17",
