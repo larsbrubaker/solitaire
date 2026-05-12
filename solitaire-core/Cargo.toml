@@ -22,6 +22,13 @@ flume = { version = "0.11", default-features = false, features = ["async"] }
 futures-util = { version = "0.3", default-features = false }
 thiserror = "1"
 rand = "0.8"
+# Inflate the bundled CC0 deck SVG, which ships as
+# `english_pattern_cc0.svg.gz` (≈1.9 MB) and decompresses once per process
+# into a `OnceLock` cache. Saves ~5.7 MB of wasm transmission vs. shipping
+# the raw 7.6 MB SVG. `flate2` defaults to the pure-Rust `miniz_oxide`
+# backend, so this builds cleanly on `wasm32-unknown-unknown` with no
+# native C dependency.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }

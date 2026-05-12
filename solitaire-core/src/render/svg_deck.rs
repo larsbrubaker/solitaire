@@ -15,13 +15,40 @@
 //! License: CC0 1.0 Universal Public Domain Dedication. No attribution
 //! required, but we credit upstream in this file's header for goodwill.
 
+use std::io::Read;
+use std::sync::OnceLock;
+
 use agg_gui::framebuffer::unpremultiply_rgba_inplace;
 use agg_gui::svg::{parse_svg, render_svg_tree_to_framebuffer_at_size, SvgParseOptions};
+use flate2::read::GzDecoder;
 
 use crate::cards::{Rank, Suit};
 
-/// Bundled master SVG (~7.6 MB). Parsed once per atlas rebuild.
-const MASTER_SVG: &[u8] = include_bytes!("../../assets/cards/english_pattern_cc0.svg");
+/// Bundled master SVG, gzipped to ≈1.9 MB at compile time (the raw SVG is
+/// ≈7.6 MB). Inflated lazily by `master_svg()` on first use and cached
+/// for the rest of the process, so atlas rebuilds (which fire on every
+/// render-scale change) re-use the same uncompressed bytes instead of
+/// re-inflating ~7 MB per call.
+const MASTER_SVG_GZ: &[u8] = include_bytes!("../../assets/cards/english_pattern_cc0.svg.gz");
+
+/// Lazily-inflated master SVG. The first call decompresses the bundled
+/// gzip into an owned `Vec<u8>` cached in a `OnceLock`; subsequent calls
+/// return a reference into the same cache.
+fn master_svg() -> &'static [u8] {
+    static CACHE: OnceLock<Vec<u8>> = OnceLock::new();
+    CACHE
+        .get_or_init(|| {
+            // Source is ≈7.6 MB so pre-size aggressively; growth-only
+            // allocators would otherwise pay several `realloc`s for a
+            // file of this magnitude.
+            let mut out = Vec::with_capacity(8 * 1024 * 1024);
+            GzDecoder::new(MASTER_SVG_GZ)
+                .read_to_end(&mut out)
+                .expect("bundled CC0 deck gzip decompresses");
+            out
+        })
+        .as_slice()
+}
 
 /// Card grid dimensions in the master SVG.
 const COLS: u32 = 13;
@@ -88,7 +115,7 @@ impl DeckBitmap {
     pub fn build(card_px_w: u32, card_px_h: u32) -> Self {
         let master_w = (card_px_w as f64 * SRC_MASTER_W / SRC_CARD_W).round() as u32;
         let master_h = (card_px_h as f64 * SRC_MASTER_H / SRC_CARD_H).round() as u32;
-        let svg = strip_background(MASTER_SVG);
+        let svg = strip_background(master_svg());
         let tree =
             parse_svg(&svg, &SvgParseOptions::default()).expect("bundled CC0 deck SVG parses");
         let fb = render_svg_tree_to_framebuffer_at_size(&tree, master_w, master_h)
@@ -129,7 +156,7 @@ impl DeckBitmap {
         let wide_w = master_w
             .checked_mul(3)
             .expect("LCD wide-buffer width fits in u32");
-        let svg = strip_background(MASTER_SVG);
+        let svg = strip_background(master_svg());
         let tree =
             parse_svg(&svg, &SvgParseOptions::default()).expect("bundled CC0 deck SVG parses");
         let fb = render_svg_tree_to_framebuffer_at_size(&tree, wide_w, master_h)
