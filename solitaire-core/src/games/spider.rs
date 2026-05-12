@@ -494,6 +494,34 @@ mod tests {
     }
 
     #[test]
+    fn stock_dispense_undoes_in_one_step() {
+        // Regression: clicking stock fires `on_pile_click` which
+        // returns N_CASCADES moves; before batching, each landed as
+        // its own user-undo step and the player had to press Undo
+        // ten times to roll back one dispense.
+        let mut s = GameSession::new(Spider::four_suit(), 1);
+        let stock_before = s.piles.get(STOCK).len();
+        let cascade_lens_before: Vec<usize> = (CASCADE_FIRST..=CASCADE_LAST)
+            .map(|id| s.piles.get(id).len())
+            .collect();
+
+        let moves = s.rules.on_pile_click(&s.piles, STOCK);
+        assert_eq!(moves.len(), N_CASCADES, "stock dispenses one per cascade");
+        assert!(s.try_apply_batch(moves), "dispense applies");
+        assert_eq!(s.piles.get(STOCK).len(), stock_before - N_CASCADES);
+        for (i, id) in (CASCADE_FIRST..=CASCADE_LAST).enumerate() {
+            assert_eq!(s.piles.get(id).len(), cascade_lens_before[i] + 1);
+        }
+
+        // ONE undo rolls back the entire 10-card dispense.
+        assert!(s.try_undo());
+        assert_eq!(s.piles.get(STOCK).len(), stock_before);
+        for (i, id) in (CASCADE_FIRST..=CASCADE_LAST).enumerate() {
+            assert_eq!(s.piles.get(id).len(), cascade_lens_before[i]);
+        }
+    }
+
+    #[test]
     fn foundation_collapse_flips_newly_exposed_facedown() {
         // Regression: a K→A run collapse left the freshly exposed
         // face-down card face-down, leaving the cascade visually stuck

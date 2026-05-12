@@ -10,6 +10,10 @@ use crate::session::{GameSession, Move};
 
 pub trait DynGameSession {
     fn try_apply(&mut self, m: Move) -> bool;
+    /// Apply a batch of moves as a single undo unit. Used for stock
+    /// dispenses where one click yields N moves but the player
+    /// thinks of it as one action.
+    fn try_apply_batch(&mut self, moves: Vec<Move>) -> bool;
     /// Apply a move bypassing `legal_move`. Used by engine-initiated
     /// actions like Mom's Solitaire's Shuffle that intentionally fall
     /// outside the user-facing move grammar.
@@ -31,6 +35,9 @@ pub trait DynGameSession {
 impl<R: GameRules> DynGameSession for GameSession<R> {
     fn try_apply(&mut self, m: Move) -> bool {
         GameSession::try_apply(self, m)
+    }
+    fn try_apply_batch(&mut self, moves: Vec<Move>) -> bool {
+        GameSession::try_apply_batch(self, moves)
     }
     fn apply_forced(&mut self, m: Move) {
         GameSession::apply_forced(self, m);

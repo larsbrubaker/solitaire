@@ -299,18 +299,14 @@ impl GameWidget {
         if moves.is_empty() {
             return false;
         }
-        let mut applied_any = false;
-        for m in moves {
-            if session.try_apply(m) {
-                applied_any = true;
-            } else {
-                break;
-            }
-        }
-        if applied_any {
+        // Batch: one click = one undo step. Spider's stock dispense
+        // yields 10 moves (one per cascade); the player expects a
+        // single Undo to roll them all back, not 10 presses.
+        let applied = session.try_apply_batch(moves);
+        if applied {
             agg_gui::animation::request_draw();
         }
-        applied_any
+        applied
     }
 
     fn finish_drag(&mut self, vx: f64, vy: f64) {

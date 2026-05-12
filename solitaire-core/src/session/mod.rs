@@ -68,6 +68,37 @@ impl<R: GameRules> GameSession<R> {
         true
     }
 
+    /// Apply a batch of player-initiated moves as a single undo unit.
+    /// Used for Spider's stock click (dispenses one card to each of
+    /// 10 cascades) and Klondike's stock recycle — operations that
+    /// the player thinks of as one action even though they decompose
+    /// into multiple `Move`s. Only the FIRST move counts as a user
+    /// step on the undo stack; the rest are auto follow-ups so a
+    /// single Undo reverts the entire batch.
+    pub fn try_apply_batch(&mut self, moves: Vec<Move>) -> bool {
+        let mut iter = moves.into_iter();
+        let Some(first) = iter.next() else {
+            return false;
+        };
+        if !self.rules.legal_move(&self.piles, &first) {
+            return false;
+        }
+        apply_move(&mut self.piles, &first);
+        self.undo.push_user(first);
+        for m in iter {
+            if !self.rules.legal_move(&self.piles, &m) {
+                break;
+            }
+            apply_move(&mut self.piles, &m);
+            self.undo.push_auto(m);
+        }
+        while let Some(am) = self.rules.after_move(&self.piles) {
+            apply_move(&mut self.piles, &am);
+            self.undo.push_auto(am);
+        }
+        true
+    }
+
     /// Apply a move WITHOUT consulting `rules.legal_move`. Used for
     /// engine-initiated state changes that intentionally don't fit
     /// the user-facing move grammar — e.g. Mom's Solitaire's
