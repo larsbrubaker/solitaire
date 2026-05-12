@@ -9,6 +9,7 @@ use std::sync::Arc;
 use agg_gui::text::Font;
 use agg_gui::App;
 
+pub mod animation;
 pub mod app_model;
 pub mod app_root;
 pub mod dyn_session;

@@ -19,6 +19,7 @@ use crate::piles::{HitResult, PileId, PileKind};
 use crate::render::{paint_card_at, paint_pile, CardSpriteAtlas};
 use crate::session::Move;
 
+use super::animation::{animated_transform, CardAnim};
 use super::app_model::{Screen, SharedModel};
 use super::layout;
 
@@ -61,6 +62,9 @@ pub struct GameWidget {
     /// Last MouseDown timestamp + virtual-coord position; used to
     /// detect double-clicks for the auto-foundation shortcut.
     last_click: Option<(web_time::Instant, f64, f64)>,
+    /// In-flight card animations (stock dispense, etc.). Painted on
+    /// top of static piles each frame; cleared as entries complete.
+    animations: Vec<CardAnim>,
 }
 
 impl GameWidget {
@@ -73,7 +77,20 @@ impl GameWidget {
             atlas,
             drag: None,
             last_click: None,
+            animations: Vec::new(),
         }
+    }
+
+    /// `hide_from` index for `pile_id` while any in-flight animation
+    /// targets it — `None` means draw all cards normally. Multiple
+    /// animations targeting the same pile collapse to the lowest
+    /// `dst_hide_from` so all of them are correctly suppressed.
+    fn hide_from_for(&self, pile_id: PileId) -> Option<usize> {
+        self.animations
+            .iter()
+            .filter(|a| a.dst_pile == pile_id)
+            .map(|a| a.dst_hide_from)
+            .min()
     }
 
     fn is_double_click(&self, vx: f64, vy: f64) -> bool {
@@ -299,14 +316,54 @@ impl GameWidget {
         if moves.is_empty() {
             return false;
         }
-        // Batch: one click = one undo step. Spider's stock dispense
-        // yields 10 moves (one per cascade); the player expects a
-        // single Undo to roll them all back, not 10 presses.
+        // Capture the source origin (top of the clicked pile) BEFORE
+        // applying the batch — once we apply, the stock's top card
+        // has moved and we can't read its pre-move position.
+        let src_pile = piles.get(pile_id);
+        let src_x = src_pile.origin_x;
+        let src_y = src_pile.origin_y;
+        // Snapshot destinations before applying so we know how many
+        // animations to enqueue. (`moves` may legitimately fan-out to
+        // multiple piles — Spider stock click does 10.)
+        let dst_pile_ids: Vec<PileId> = moves.iter().map(|m| m.to).collect();
+
         let applied = session.try_apply_batch(moves);
-        if applied {
-            agg_gui::animation::request_draw();
+        if !applied {
+            return false;
         }
-        applied
+
+        // After-apply: queue a fly-and-flip animation per dispensed
+        // card. The card is already on its destination pile; we hide
+        // the newly-added top during the animation and paint the
+        // in-flight version over it.
+        let now = web_time::Instant::now();
+        let per_card_dur = std::time::Duration::from_millis(220);
+        let stagger = std::time::Duration::from_millis(40);
+        for (i, dst_id) in dst_pile_ids.iter().enumerate() {
+            let dst_pile = session.piles().get(*dst_id);
+            if dst_pile.cards.is_empty() {
+                continue;
+            }
+            let new_idx = dst_pile.cards.len() - 1;
+            let card = dst_pile.cards[new_idx];
+            let (dx, dy) = dst_pile.position_for(new_idx);
+            self.animations.push(CardAnim {
+                card,
+                src_x,
+                src_y,
+                dst_x: dx,
+                dst_y: dy,
+                card_w: dst_pile.card_w,
+                card_h: dst_pile.card_h,
+                start_at: now + stagger * i as u32,
+                duration: per_card_dur,
+                dst_pile: *dst_id,
+                dst_hide_from: new_idx,
+                flip: true,
+            });
+        }
+        agg_gui::animation::request_draw();
+        true
     }
 
     fn finish_drag(&mut self, vx: f64, vy: f64) {
@@ -424,6 +481,10 @@ impl Widget for GameWidget {
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
         let t0 = web_time::Instant::now();
         self.ensure_atlas_for_session();
+        // Drop completed animations BEFORE this frame's paint so a
+        // landed card lights up in the same frame the in-flight one
+        // would otherwise still draw.
+        self.animations.retain(|a| !a.done());
 
         // Paint piles directly — pile origins are already in screen
         // coordinates (set by `set_bounds` → `relayout`).
@@ -432,15 +493,51 @@ impl Widget for GameWidget {
         if let Some(session) = model.session.as_ref() {
             let piles = session.piles();
             for pile in piles.iter() {
-                let hide_from = self
+                let drag_hide = self
                     .drag
                     .as_ref()
                     .filter(|d| d.source_pile == pile.id)
                     .map(|d| d.start_idx);
+                let anim_hide = self.hide_from_for(pile.id);
+                let hide_from = match (drag_hide, anim_hide) {
+                    (Some(a), Some(b)) => Some(a.min(b)),
+                    (a, b) => a.or(b),
+                };
                 paint_pile(ctx, pile, hide_from, &self.atlas);
             }
         }
         drop(model);
+
+        // Paint in-flight card animations on top of the static
+        // piles. 3D-flip uses a horizontal scale around the card's
+        // center; the face shown swaps at the halfway point so the
+        // texture is never mirrored.
+        for anim in &self.animations {
+            if !anim.has_started() {
+                continue;
+            }
+            let xf = animated_transform(anim);
+            let card = Card {
+                face_up: xf.show_front,
+                ..anim.card
+            };
+            let cx = xf.x + anim.card_w / 2.0;
+            let cy = xf.y + anim.card_h / 2.0;
+            ctx.save();
+            ctx.translate(cx, cy);
+            ctx.scale(xf.scale_x.max(0.001), 1.0);
+            ctx.translate(-cx, -cy);
+            paint_card_at(
+                ctx,
+                &card,
+                xf.x,
+                xf.y,
+                anim.card_w,
+                anim.card_h,
+                &self.atlas,
+            );
+            ctx.restore();
+        }
 
         // Paint dragged cards on top.
         if let Some(drag) = self.drag.clone() {
@@ -519,7 +616,7 @@ impl Widget for GameWidget {
     }
 
     fn needs_draw(&self) -> bool {
-        self.drag.is_some()
+        self.drag.is_some() || !self.animations.is_empty()
     }
 }
 
