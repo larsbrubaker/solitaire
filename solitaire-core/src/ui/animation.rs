@@ -164,12 +164,32 @@ pub fn animated_quad(anim: &CardAnim) -> AnimQuad {
         (cx + x3 / safe, cy + ly / safe)
     };
     // Corner order: BL, BR, TR, TL (Y-up).
-    let corners = [
-        project(-half_w, -half_h),
-        project(half_w, -half_h),
-        project(half_w, half_h),
-        project(-half_w, half_h),
-    ];
+    //
+    // Past the flip's midpoint `cos_a < 0`, the Y-axis rotation has
+    // swept local-X across the camera, so `project(-half_w, …)` now
+    // lands on screen-RIGHT and `project(half_w, …)` on screen-LEFT.
+    // If we still wired the BL texel into `corners[0]` from
+    // `project(-half_w, …)`, the texture would render horizontally
+    // mirrored — visible on face cards as e.g. the "10" rank
+    // indicator jumping from top-left to top-right. Swap the
+    // texel→corner mapping so each texel lands on the screen side it
+    // belongs to (same trick `animated_deck_faces` uses for its
+    // Bottom face).
+    let corners = if cos_a >= 0.0 {
+        [
+            project(-half_w, -half_h),
+            project(half_w, -half_h),
+            project(half_w, half_h),
+            project(-half_w, half_h),
+        ]
+    } else {
+        [
+            project(half_w, -half_h),
+            project(-half_w, -half_h),
+            project(-half_w, half_h),
+            project(half_w, half_h),
+        ]
+    };
     AnimQuad {
         corners,
         show_front,
