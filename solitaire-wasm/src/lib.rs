@@ -42,6 +42,7 @@ pub fn start() {
     // mode, storage disabled) silently fall through to the default
     // no-op store and the user just gets defaults — no crash.
     register_local_storage_io();
+    register_open_url();
     ensure_app();
     wasm_bindgen_futures::spawn_local(async {
         match init_wgpu_async().await {
@@ -51,6 +52,17 @@ pub fn start() {
             }
         }
         mark_dirty();
+    });
+}
+
+/// Open `url` in a new browser tab via `window.open(url, '_blank')`.
+/// Wired to `solitaire_core::platform::request_open_url` so clicking
+/// the GitHub source link in the About dialog opens in a new tab.
+fn register_open_url() {
+    solitaire_core::platform::set_open_url(|url| {
+        if let Some(window) = web_sys::window() {
+            let _ = window.open_with_url_and_target(url, "_blank");
+        }
     });
 }
 

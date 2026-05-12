@@ -22,13 +22,26 @@ use crate::session::Move;
 
 use super::app_model::{Screen, SharedModel};
 use super::layout;
-use super::title_widget::{playfield_transform, screen_to_virtual};
+use super::title_widget::{default_content_rect, playfield_transform, screen_to_virtual};
 
 /// Chrome-aware playfield rect for the current viewport. The playfield
 /// letterboxes 1024×720 inside this rect, leaving room for menu / HUD
 /// according to `layout::compute`.
 fn playfield_rect(bounds: Rect) -> Rect {
     layout::compute(Size::new(bounds.width, bounds.height)).playfield_rect
+}
+
+/// Content rect for the active session, falling back to the default
+/// (full virtual playfield) when no game is loaded. Mom's overrides
+/// this to a tight 13×4 envelope so the letterbox scales cards up to
+/// fill the screen.
+fn session_content_rect(model: &SharedModel) -> Rect {
+    model
+        .borrow()
+        .session
+        .as_ref()
+        .map(|s| s.content_bounds())
+        .unwrap_or_else(default_content_rect)
 }
 
 #[derive(Clone, Debug)]
@@ -417,7 +430,8 @@ impl Widget for GameWidget {
 
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
         let t0 = web_time::Instant::now();
-        let (tx, ty, scale) = playfield_transform(playfield_rect(self.bounds));
+        let content = session_content_rect(&self.model);
+        let (tx, ty, scale) = playfield_transform(playfield_rect(self.bounds), content);
         self.ensure_atlas_for(scale);
         ctx.save();
         ctx.translate(tx, ty);
@@ -467,13 +481,14 @@ impl Widget for GameWidget {
             return EventResult::Ignored;
         }
         let bounds = self.bounds;
+        let content = session_content_rect(&self.model);
         match event {
             Event::MouseDown {
                 pos,
                 button: MouseButton::Left,
                 ..
             } => {
-                let (vx, vy) = screen_to_virtual(playfield_rect(bounds), pos.x, pos.y);
+                let (vx, vy) = screen_to_virtual(playfield_rect(bounds), content, pos.x, pos.y);
                 // Detect double-click against the previous MouseDown
                 // BEFORE updating the timestamp.
                 let is_double = self.is_double_click(vx, vy);
@@ -503,7 +518,7 @@ impl Widget for GameWidget {
             }
             Event::MouseMove { pos } => {
                 if let Some(drag) = self.drag.as_mut() {
-                    let (vx, vy) = screen_to_virtual(playfield_rect(bounds), pos.x, pos.y);
+                    let (vx, vy) = screen_to_virtual(playfield_rect(bounds), content, pos.x, pos.y);
                     drag.cur_x = vx;
                     drag.cur_y = vy;
                     agg_gui::animation::request_draw();
@@ -516,7 +531,7 @@ impl Widget for GameWidget {
                 ..
             } => {
                 if self.drag.is_some() {
-                    let (vx, vy) = screen_to_virtual(playfield_rect(bounds), pos.x, pos.y);
+                    let (vx, vy) = screen_to_virtual(playfield_rect(bounds), content, pos.x, pos.y);
                     self.finish_drag(vx, vy);
                     return EventResult::Consumed;
                 }

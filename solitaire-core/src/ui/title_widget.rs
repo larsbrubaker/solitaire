@@ -193,7 +193,7 @@ impl Widget for TitleWidget {
         // letterbox-fit by translating so the playfield is centered in
         // self.bounds; coordinates inside paint_* helpers stay in virtual
         // space.
-        let (tx, ty, scale) = playfield_transform(self.bounds);
+        let (tx, ty, scale) = playfield_transform(self.bounds, default_content_rect());
         ctx.save();
         ctx.translate(tx, ty);
         ctx.scale(scale, scale);
@@ -218,7 +218,7 @@ impl Widget for TitleWidget {
                 button: MouseButton::Left,
                 ..
             } => {
-                let (vx, vy) = screen_to_virtual(bounds, pos.x, pos.y);
+                let (vx, vy) = screen_to_virtual(bounds, default_content_rect(), pos.x, pos.y);
                 if self.click_at(vx, vy) {
                     agg_gui::animation::request_draw();
                     return EventResult::Consumed;
@@ -226,7 +226,7 @@ impl Widget for TitleWidget {
                 EventResult::Ignored
             }
             Event::MouseMove { pos } => {
-                let (vx, vy) = screen_to_virtual(bounds, pos.x, pos.y);
+                let (vx, vy) = screen_to_virtual(bounds, default_content_rect(), pos.x, pos.y);
                 let mut new_hover = None;
                 for (i, _) in KINDS.iter().enumerate() {
                     let (bx, by, bw, bh) = self.button_rect(i);
@@ -252,35 +252,43 @@ impl Widget for TitleWidget {
     }
 }
 
+/// Default content rect: the full 1024×720 virtual playfield, used by
+/// callers (Title screen) that don't have a specific game's content
+/// envelope to letterbox.
+pub fn default_content_rect() -> Rect {
+    Rect::new(0.0, 0.0, VIRTUAL_W, VIRTUAL_H)
+}
+
 /// Compute the (translation_x, translation_y, scale) used to letterbox
-/// the virtual VIRTUAL_W × VIRTUAL_H playfield inside `rect`. The
-/// translation is in the same coordinate space as `rect`'s origin: pass
-/// a viewport-relative `Rect` (e.g. `chrome.playfield_rect`) and the
-/// returned `tx, ty` are also viewport-relative.
+/// the virtual `content` rect inside the screen-space `rect`. The
+/// translation is in the same coordinate space as `rect`'s origin:
+/// pass a viewport-relative `rect` (e.g. `chrome.playfield_rect`) and
+/// the returned `tx, ty` are also viewport-relative.
 ///
-/// Letterbox-fit on both axes (cards centered). Earlier this function
-/// tried a scale-to-FILL-width path on wide viewports to make cards
-/// larger on landscape mobile, but that cropped the bottom of the
-/// virtual playfield and long Spider tableau fans started running off
-/// the bottom of the screen. Reverting to a pure letterbox keeps the
-/// whole virtual playfield visible at every viewport aspect; we'll
-/// chase larger mobile cards through layout changes (compact pile
-/// placement on narrow viewports) rather than at the transform level.
-pub fn playfield_transform(rect: Rect) -> (f64, f64, f64) {
-    let sx = rect.width / VIRTUAL_W;
-    let sy = rect.height / VIRTUAL_H;
+/// `content` is the rectangle in virtual coordinates that should fit
+/// inside `rect`. For most variants this is `default_content_rect()`
+/// (the full 1024×720 playfield, since tableau fans can extend
+/// anywhere). Variants whose content is bounded — Mom's 13×4 grid —
+/// pass a tighter `content` so cards scale up to fill freed pixels.
+pub fn playfield_transform(rect: Rect, content: Rect) -> (f64, f64, f64) {
+    let sx = rect.width / content.width;
+    let sy = rect.height / content.height;
     let scale = sx.min(sy);
-    let used_w = VIRTUAL_W * scale;
-    let used_h = VIRTUAL_H * scale;
-    let tx = rect.x + (rect.width - used_w) / 2.0;
-    let ty = rect.y + (rect.height - used_h) / 2.0;
+    let used_w = content.width * scale;
+    let used_h = content.height * scale;
+    // Letterbox-center the content inside `rect`; subtract the
+    // content origin so virtual (content.x, content.y) maps to the
+    // letterboxed top-left.
+    let tx = rect.x + (rect.width - used_w) / 2.0 - content.x * scale;
+    let ty = rect.y + (rect.height - used_h) / 2.0 - content.y * scale;
     (tx, ty, scale)
 }
 
 /// Inverse of `playfield_transform` — convert a pointer position (in
 /// the same coordinate space as `rect`) to virtual playfield
-/// coordinates.
-pub fn screen_to_virtual(rect: Rect, px: f64, py: f64) -> (f64, f64) {
-    let (tx, ty, scale) = playfield_transform(rect);
+/// coordinates. Must be called with the same `content` rect that was
+/// passed to `playfield_transform`.
+pub fn screen_to_virtual(rect: Rect, content: Rect, px: f64, py: f64) -> (f64, f64) {
+    let (tx, ty, scale) = playfield_transform(rect, content);
     ((px - tx) / scale, (py - ty) / scale)
 }

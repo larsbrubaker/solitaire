@@ -12,11 +12,13 @@ use std::cell::RefCell;
 type ToggleFn = Box<dyn Fn()>;
 type StorageLoadFn = Box<dyn Fn(&str) -> Option<String>>;
 type StorageSaveFn = Box<dyn Fn(&str, &str)>;
+type OpenUrlFn = Box<dyn Fn(&str)>;
 
 thread_local! {
     static FULLSCREEN_TOGGLE: RefCell<Option<ToggleFn>> = const { RefCell::new(None) };
     static STORAGE_LOAD: RefCell<Option<StorageLoadFn>> = const { RefCell::new(None) };
     static STORAGE_SAVE: RefCell<Option<StorageSaveFn>> = const { RefCell::new(None) };
+    static OPEN_URL: RefCell<Option<OpenUrlFn>> = const { RefCell::new(None) };
 }
 
 /// Register the platform's fullscreen toggle implementation. Called
@@ -73,4 +75,22 @@ pub fn storage_save(key: &str, value: &str) {
 pub fn clear_storage_io_for_test() {
     STORAGE_LOAD.with(|cell| *cell.borrow_mut() = None);
     STORAGE_SAVE.with(|cell| *cell.borrow_mut() = None);
+}
+
+/// Register the platform's open-URL implementation. WASM uses
+/// `window.open(url, '_blank')`; native shells can hand off to the OS
+/// browser. No-op without a backend (links in the About markdown stay
+/// visually highlighted but unresponsive).
+pub fn set_open_url(f: impl Fn(&str) + 'static) {
+    OPEN_URL.with(|cell| *cell.borrow_mut() = Some(Box::new(f)));
+}
+
+/// Ask the host to open `url` in a new browser tab / window. No-op if
+/// no backend was registered.
+pub fn request_open_url(url: &str) {
+    OPEN_URL.with(|cell| {
+        if let Some(f) = cell.borrow().as_ref() {
+            f(url);
+        }
+    });
 }

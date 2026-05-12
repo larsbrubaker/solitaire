@@ -1,5 +1,6 @@
 //! Pile layout — how successive cards are positioned relative to the pile origin.
 
+use crate::cards::Card;
 use crate::consts::{CARD_H, TABLEAU_FAN_DOWN, TABLEAU_FAN_DOWN_FACEDOWN};
 
 /// How successive cards in a pile are visually offset.
@@ -16,47 +17,68 @@ pub enum PileLayout {
     /// cards in Y-up). Face-down cards use a smaller offset than face-up
     /// cards because nothing readable is shown on the back.
     FannedDown,
+    /// Like `FannedDown`, but consecutive cards that form a SUITED
+    /// descending run (same suit, rank stepping down by one) compact
+    /// tightly together — a single Spider tableau pile that grows a
+    /// long K-down-to-A spades run no longer fills the screen. The
+    /// compact step matches the face-down fan offset, so the visual
+    /// rhythm reads as "deck-thick" cards stacking onto a partner.
+    FannedDownCompactSuited,
 }
 
 impl PileLayout {
-    /// Y-up offset between card[idx] and card[idx-1] given whether the
-    /// previous card was face-up. Returns a NEGATIVE number for FannedDown
-    /// (later cards lower on screen = smaller numerical Y).
-    pub fn dy_for(self, prev_face_up: bool) -> f64 {
+    /// Y-up offset between card[idx] and card[idx-1]. `prev` is
+    /// card[idx-1], `curr` is card[idx]. Either can be `None` if the
+    /// caller is computing the position before the pile is fully
+    /// populated (defaults to a face-down step in that case). Returns
+    /// a NEGATIVE number for any `FannedDown*` variant (later cards
+    /// lower on screen = smaller numerical Y).
+    pub fn dy_for(self, prev: Option<&Card>, curr: Option<&Card>) -> f64 {
         match self {
             PileLayout::Stacked => 0.0,
             PileLayout::FannedDown => {
+                let prev_face_up = prev.map(|c| c.face_up).unwrap_or(false);
                 if prev_face_up {
                     -TABLEAU_FAN_DOWN
                 } else {
                     -TABLEAU_FAN_DOWN_FACEDOWN
                 }
             }
+            PileLayout::FannedDownCompactSuited => {
+                let Some(p) = prev else {
+                    return -TABLEAU_FAN_DOWN_FACEDOWN;
+                };
+                if !p.face_up {
+                    return -TABLEAU_FAN_DOWN_FACEDOWN;
+                }
+                // Suited-descending run continuation? Compact tightly.
+                let compact = match curr {
+                    Some(c) => c.face_up && p.suit == c.suit && Some(c.rank) == p.rank.next_down(),
+                    None => false,
+                };
+                if compact {
+                    -TABLEAU_FAN_DOWN_FACEDOWN
+                } else {
+                    -TABLEAU_FAN_DOWN
+                }
+            }
         }
     }
 
-    /// Total Y-up height occupied by a pile of `n` cards under this layout
-    /// when laid out with the supplied face-up flags. Useful to clamp
-    /// scrolling or to compute hit-test envelopes.
-    pub fn pile_height(self, face_ups: &[bool]) -> f64 {
-        let n = face_ups.len();
+    /// Total Y-up height occupied by `cards` under this layout. Used
+    /// to clamp scrolling or compute hit-test envelopes. Returns a
+    /// POSITIVE number regardless of fan direction.
+    pub fn pile_height(self, cards: &[Card]) -> f64 {
+        let n = cards.len();
         if n == 0 {
             return 0.0;
         }
         match self {
             PileLayout::Stacked => CARD_H,
-            PileLayout::FannedDown => {
-                // First card is full height; each subsequent card adds its
-                // fan offset (we report unsigned height here regardless of
-                // Y-direction).
+            PileLayout::FannedDown | PileLayout::FannedDownCompactSuited => {
                 let mut h = CARD_H;
                 for i in 1..n {
-                    let prev_face_up = face_ups[i - 1];
-                    h += if prev_face_up {
-                        TABLEAU_FAN_DOWN
-                    } else {
-                        TABLEAU_FAN_DOWN_FACEDOWN
-                    };
+                    h += -self.dy_for(cards.get(i - 1), cards.get(i));
                 }
                 h
             }

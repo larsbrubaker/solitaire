@@ -201,7 +201,7 @@ const SHARED_CREDITS: &str = r#"
   card faces, with extra contributions from Guy vandegrift). Released
   under CC0 1.0 Universal — no attribution required, but credited
   here gladly.
-- Source: **github.com/larsbrubaker/solitaire**.
+- Source: [github.com/larsbrubaker/solitaire](https://github.com/larsbrubaker/solitaire).
 "#;
 
 const KLONDIKE_ABOUT: &str = const_concat::concat!(

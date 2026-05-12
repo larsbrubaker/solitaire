@@ -109,7 +109,8 @@ impl HelpDialog {
         if let Some(k) = kind {
             let md = MarkdownView::new(markdown_for(k), self.font.clone())
                 .with_padding(0.0)
-                .with_font_size(15.0);
+                .with_font_size(15.0)
+                .on_link_click(crate::platform::request_open_url);
             // Wrap in a ScrollView so help text taller than the panel
             // body stays scrollable. Without this the markdown lays
             // itself out at total content height and overflows the

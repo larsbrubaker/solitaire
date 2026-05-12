@@ -7,8 +7,10 @@ pub mod klondike;
 pub mod moms;
 pub mod spider;
 
+use agg_gui::geometry::Rect;
 use rand::rngs::StdRng;
 
+use crate::consts::{VIRTUAL_H, VIRTUAL_W};
 use crate::piles::{PileId, PileSet, PileSlot};
 use crate::session::Move;
 
@@ -62,5 +64,17 @@ pub trait GameRules: 'static {
     /// applies.
     fn after_move(&self, _piles: &PileSet) -> Option<Move> {
         None
+    }
+
+    /// Virtual-coord rect that bounds the game's visible content. The
+    /// playfield letterbox letterboxes THIS rect (rather than the full
+    /// 1024×720 virtual playfield) into the screen-space playfield
+    /// rect, so a variant that doesn't reach the full virtual height
+    /// (Mom's Solitaire's 13×4 grid never grows down) can claim the
+    /// freed pixels for larger cards. Default: the full virtual
+    /// playfield, which matches the historical behaviour for variants
+    /// whose tableau fans CAN extend across the whole virtual area.
+    fn content_bounds(&self) -> Rect {
+        Rect::new(0.0, 0.0, VIRTUAL_W, VIRTUAL_H)
     }
 }

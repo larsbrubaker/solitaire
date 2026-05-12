@@ -233,6 +233,21 @@ impl GameRules for MomsSolitaire {
     fn game_slug(&self) -> &'static str {
         "moms"
     }
+
+    fn content_bounds(&self) -> agg_gui::geometry::Rect {
+        // The 13×4 grid never grows — every card stays in its dealt
+        // cell. So we can letterbox the actual grid envelope rather
+        // than the full 1024×720 virtual playfield, scaling cards up
+        // by a factor that's a meaningful fraction over the default.
+        // A small vertical pad on each side keeps the cards from
+        // hugging the chrome edges.
+        const PAD_Y: f64 = 8.0;
+        let total_h = ROWS as f64 * MOMS_CARD_H + (ROWS as f64 - 1.0) * ROW_GAP;
+        let top_card_top = TOP_ROW_BOTTOM_Y - (CARD_H - MOMS_CARD_H) + MOMS_CARD_H;
+        let content_top = top_card_top + PAD_Y;
+        let content_bottom = content_top - total_h - PAD_Y * 2.0;
+        agg_gui::geometry::Rect::new(0.0, content_bottom, VIRTUAL_W, content_top - content_bottom)
+    }
 }
 
 /// Is the card at `(x, y)` currently in its final position? A cell is

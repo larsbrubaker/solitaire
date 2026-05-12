@@ -40,7 +40,11 @@ const fn slot_cascade(idx: usize) -> PileSlot {
     PileSlot {
         id: CASCADE_FIRST + idx as u8,
         kind: PileKind::Tableau,
-        layout: PileLayout::FannedDown,
+        // Suited descending runs compact tightly so long Spider
+        // sequences (e.g. K-down-to-A spades) don't fill the playfield
+        // vertically. Cards that aren't part of a suited descending
+        // run still get the standard face-up fan offset.
+        layout: PileLayout::FannedDownCompactSuited,
         origin_x: SPIDER_LEFT + (idx as f64) * SPIDER_PITCH,
         origin_y: TABLEAU_BASE_Y,
     }

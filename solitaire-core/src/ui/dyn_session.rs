@@ -2,6 +2,8 @@
 //! any of the four variants behind a single `Box<dyn DynGameSession>`
 //! without making `GameWidget` generic.
 
+use agg_gui::geometry::Rect;
+
 use crate::games::GameRules;
 use crate::piles::{PileId, PileSet};
 use crate::session::{GameSession, Move};
@@ -20,6 +22,11 @@ pub trait DynGameSession {
     fn is_won(&self) -> bool;
     fn game_slug(&self) -> &'static str;
     fn seed(&self) -> u64;
+    /// Virtual-coord rect that bounds visible content. The playfield
+    /// letterbox uses this rather than the full 1024×720 so a variant
+    /// like Mom's (fixed 13×4 grid) can scale cards up to fill the
+    /// available screen space.
+    fn content_bounds(&self) -> Rect;
 }
 
 impl<R: GameRules> DynGameSession for GameSession<R> {
@@ -52,5 +59,8 @@ impl<R: GameRules> DynGameSession for GameSession<R> {
     }
     fn seed(&self) -> u64 {
         self.seed
+    }
+    fn content_bounds(&self) -> Rect {
+        self.rules.content_bounds()
     }
 }

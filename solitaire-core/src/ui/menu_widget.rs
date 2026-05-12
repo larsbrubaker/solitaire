@@ -26,6 +26,31 @@ use crate::games::GameKind;
 use super::app_model::{AppModel, HelpKind, Screen, SharedModel};
 use super::layout::{self, ChromeMode, SIDEBAR_MENU_H, SIDEBAR_W};
 
+/// Snapshot of every `AppModel` field that affects the menu's text or
+/// radio state. The hosts compare a freshly-computed snapshot against
+/// the last-built one each paint and rebuild the inner `MenuBar` if
+/// anything changed — without this, switching Spider from 4-suit to
+/// 1-suit via the Options menu left the "● 2 Suits" / "● 4 Suits"
+/// radio dots stale (the radios were locked in at construction).
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct MenuSnapshot {
+    kind: Option<GameKind>,
+    klondike_draw_count: u8,
+    spider_suit_count: u8,
+    spider_one_suit: Suit,
+}
+
+impl MenuSnapshot {
+    fn from(model: &AppModel) -> Self {
+        Self {
+            kind: model.kind,
+            klondike_draw_count: model.klondike_draw_count,
+            spider_suit_count: model.spider_suit_count,
+            spider_one_suit: model.spider_one_suit,
+        }
+    }
+}
+
 /// Horizontal menu bar across the top of the viewport. Hidden in
 /// sidebar mode (its actions are mirrored by `SidebarMenuHost`).
 pub struct MenuBarHost {
@@ -33,22 +58,19 @@ pub struct MenuBarHost {
     children: Vec<Box<dyn Widget>>,
     model: SharedModel,
     font: Arc<Font>,
-    /// Last `model.kind` the inner bar was built for. When the active
-    /// variant changes we rebuild the bar so the Options menu reflects
-    /// the new variant's settings.
-    current_kind: Option<GameKind>,
+    current_snapshot: MenuSnapshot,
 }
 
 impl MenuBarHost {
     pub fn new(model: SharedModel, font: Arc<Font>) -> Self {
-        let kind = model.borrow().kind;
+        let snapshot = MenuSnapshot::from(&model.borrow());
         let bar = build_menu_bar(model.clone(), font.clone(), MenuOrientation::Horizontal);
         Self {
             bounds: Rect::default(),
             children: vec![Box::new(bar)],
             model,
             font,
-            current_kind: kind,
+            current_snapshot: snapshot,
         }
     }
 }
@@ -61,19 +83,19 @@ pub struct SidebarMenuHost {
     children: Vec<Box<dyn Widget>>,
     model: SharedModel,
     font: Arc<Font>,
-    current_kind: Option<GameKind>,
+    current_snapshot: MenuSnapshot,
 }
 
 impl SidebarMenuHost {
     pub fn new(model: SharedModel, font: Arc<Font>) -> Self {
-        let kind = model.borrow().kind;
+        let snapshot = MenuSnapshot::from(&model.borrow());
         let bar = build_menu_bar(model.clone(), font.clone(), MenuOrientation::Vertical);
         Self {
             bounds: Rect::default(),
             children: vec![Box::new(bar)],
             model,
             font,
-            current_kind: kind,
+            current_snapshot: snapshot,
         }
     }
 }
@@ -236,27 +258,25 @@ fn spider_set_one_suit(model: &mut AppModel, suit: Suit) {
 }
 
 impl MenuBarHost {
-    /// Rebuild the inner `MenuBar` if the active variant has changed
-    /// since last sync. Called from `paint()` so per-frame menu rebuilds
-    /// pick up state changes (new game started, draw count flipped via
-    /// menu, etc.). The rebuild discards transient hover/open state on
-    /// the bar — acceptable because variant changes are rare and almost
-    /// always happen via "New Deal" / "Back to Title" with no popup
-    /// open.
-    fn sync_kind(&mut self) {
-        let kind = self.model.borrow().kind;
-        if self.current_kind == kind {
+    /// Rebuild the inner `MenuBar` if any menu-visible state has
+    /// changed since last sync — variant, draw count, Spider suit
+    /// count + active suit. Called from `paint()` so per-frame menu
+    /// rebuilds pick up state changes. The rebuild discards transient
+    /// hover/open state on the bar — acceptable because the changes
+    /// that trigger a rebuild (radio click in Options, "New Deal",
+    /// etc.) close the popup on their own first.
+    fn sync_state(&mut self) {
+        let snapshot = MenuSnapshot::from(&self.model.borrow());
+        if self.current_snapshot == snapshot {
             return;
         }
-        self.current_kind = kind;
+        self.current_snapshot = snapshot;
         let bar = build_menu_bar(
             self.model.clone(),
             self.font.clone(),
             MenuOrientation::Horizontal,
         );
         self.children = vec![Box::new(bar)];
-        // Re-apply the layout so the new bar gets a real rect before
-        // the framework's next paint walk.
         let bar_y = self.bounds.y + self.bounds.height - MENU_BAR_H;
         let bar_rect = Rect::new(self.bounds.x, bar_y, self.bounds.width, MENU_BAR_H);
         if let Some(bar) = self.children.first_mut() {
@@ -268,12 +288,12 @@ impl MenuBarHost {
 }
 
 impl SidebarMenuHost {
-    fn sync_kind(&mut self) {
-        let kind = self.model.borrow().kind;
-        if self.current_kind == kind {
+    fn sync_state(&mut self) {
+        let snapshot = MenuSnapshot::from(&self.model.borrow());
+        if self.current_snapshot == snapshot {
             return;
         }
-        self.current_kind = kind;
+        self.current_snapshot = snapshot;
         let bar = build_menu_bar(
             self.model.clone(),
             self.font.clone(),
@@ -345,7 +365,7 @@ impl Widget for MenuBarHost {
         local_pos.y >= bottom && local_pos.y <= top
     }
     fn paint(&mut self, _ctx: &mut dyn DrawCtx) {
-        self.sync_kind();
+        self.sync_state();
     }
     fn on_event(&mut self, _event: &Event) -> EventResult {
         EventResult::Ignored
@@ -405,7 +425,7 @@ impl Widget for SidebarMenuHost {
             && local_pos.y <= top
     }
     fn paint(&mut self, _ctx: &mut dyn DrawCtx) {
-        self.sync_kind();
+        self.sync_state();
     }
     fn on_event(&mut self, _event: &Event) -> EventResult {
         EventResult::Ignored
