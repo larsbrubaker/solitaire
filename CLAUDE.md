@@ -32,6 +32,8 @@ wasm-pack build solitaire-wasm --target web --out-dir ../demo/public/pkg --no-ty
 
 **Pile widgets DO NOT EXIST.** agg-gui has no pointer-capture API, so a drag that crossed pile boundaries would lose tracking. `GameWidget` owns drag state for the entire playfield and hit-tests piles directly via `Pile::topmost_under(p)`. Pile rendering is the free function `render::pile_paint::paint_pile(...)` called from `GameWidget::paint`.
 
+**Mouse-wheel `delta_y` convention is `winit` / `WheelEvent`'s.** Positive = user wants to see content ABOVE (wheel rotated forward, post-OS-natural-scroll). Scroll containers DECREASE their offset on positive `delta_y`. The native shell forwards winit's `MouseScrollDelta` to `App::on_mouse_wheel_xy_mods` as-is — no sign flip. Don't add scrolling to a widget that doesn't go through agg-gui's `ScrollView`/`TreeView`/`MarkdownView`; if you do, the system convention is whatever they implement.
+
 ## agg-gui is a path dep — extend it as you go
 
 `[patch.crates-io]` in the workspace `Cargo.toml` redirects `agg-gui = "0.2"` to `../agg-gui/agg-gui`. When Solitaire needs a draw-primitive, easing helper, or clip path that doesn't exist yet, **add it to `../agg-gui/agg-gui/src/…` first** and call it from Solitaire. agg-gui is being grown to support games well; Solitaire is one of the first callers driving that growth. CI clones `larsbrubaker/agg-gui` as a sibling so the patch resolves there too. If you cloned Solitaire standalone:
