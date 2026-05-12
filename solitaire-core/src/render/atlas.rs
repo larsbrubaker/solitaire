@@ -60,6 +60,17 @@ impl CardSpriteAtlas {
         let px_w = (card_w_logical * scale).round().max(1.0) as u32;
         let px_h = (card_h_logical * scale).round().max(1.0) as u32;
 
+        // On desktop the wgpu surface lands texture pixels 1:1 on
+        // physical RGB-stripe LCD subpixels, so the SVG goes through a
+        // 3×-horizontal "LCD-RGB back buffer" + 5-tap subpixel filter
+        // for a small horizontal-resolution boost. On WASM (and any
+        // other non-RGB-stripe target) the browser / display path
+        // resamples the texture, which would smear the subpixel
+        // pattern and add chroma fringing, so stick with the plain
+        // RGBA raster there.
+        #[cfg(not(target_arch = "wasm32"))]
+        let deck = DeckBitmap::build_lcd(px_w, px_h);
+        #[cfg(target_arch = "wasm32")]
         let deck = DeckBitmap::build(px_w, px_h);
         let back = Arc::new(deck.extract_back());
 

@@ -81,6 +81,10 @@ impl DeckBitmap {
     /// crop. The green felt rect is stripped first (see
     /// `strip_background`) so transparent gutters between cards stay
     /// transparent in the output.
+    // Native builds use `build_lcd` (RGB-stripe subpixel) and only
+    // reach `build` from `#[cfg(test)]` code; suppress the resulting
+    // dead-code warning on non-WASM targets.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     pub fn build(card_px_w: u32, card_px_h: u32) -> Self {
         let master_w = (card_px_w as f64 * SRC_MASTER_W / SRC_CARD_W).round() as u32;
         let master_h = (card_px_h as f64 * SRC_MASTER_H / SRC_CARD_H).round() as u32;
@@ -91,6 +95,48 @@ impl DeckBitmap {
             .expect("bundled CC0 deck SVG rasterizes");
         let mut pixels = fb.pixels_flipped();
         unpremultiply_rgba_inplace(&mut pixels);
+        debug_assert_eq!(pixels.len(), (master_w * master_h * 4) as usize);
+        Self {
+            pixels,
+            master_w,
+            card_px_w,
+            card_px_h,
+        }
+    }
+
+    /// LCD-subpixel build for RGB-stripe desktop displays. Rasterizes
+    /// the master SVG at 3× horizontal resolution into an "LCD-RGB back
+    /// buffer", then collapses to a normal-width RGBA8 atlas with
+    /// per-channel offset sampling (R from subcolumn 3x, G from 3x+1,
+    /// B from 3x+2) through a `[1, 4, 7, 4, 1] / 17` low-pass filter.
+    /// The output shape matches `build()` exactly so the rest of the
+    /// atlas / blit path is unchanged — only the pixel content
+    /// differs, with a small but visible horizontal-resolution boost
+    /// on static cards (edges read at ≈3× the horizontal density of
+    /// the pixel grid). Card animations smear the subpixel pattern
+    /// across the screen pixel grid, so the benefit is mostly visible
+    /// when cards are at rest.
+    ///
+    /// Only safe to call when texture pixels land 1:1 on physical
+    /// RGB-stripe LCD pixels (i.e. desktop wgpu surface at integer
+    /// scale). Mobile / browser canvases re-sample the texture
+    /// through their own pipelines — there `build()` (no subpixel
+    /// trickery) is the right choice.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub fn build_lcd(card_px_w: u32, card_px_h: u32) -> Self {
+        let master_w = (card_px_w as f64 * SRC_MASTER_W / SRC_CARD_W).round() as u32;
+        let master_h = (card_px_h as f64 * SRC_MASTER_H / SRC_CARD_H).round() as u32;
+        let wide_w = master_w
+            .checked_mul(3)
+            .expect("LCD wide-buffer width fits in u32");
+        let svg = strip_background(MASTER_SVG);
+        let tree =
+            parse_svg(&svg, &SvgParseOptions::default()).expect("bundled CC0 deck SVG parses");
+        let fb = render_svg_tree_to_framebuffer_at_size(&tree, wide_w, master_h)
+            .expect("bundled CC0 deck SVG rasterizes (LCD wide buffer)");
+        let mut wide = fb.pixels_flipped();
+        unpremultiply_rgba_inplace(&mut wide);
+        let pixels = lcd_subpixel_collapse(&wide, wide_w, master_h, master_w);
         debug_assert_eq!(pixels.len(), (master_w * master_h * 4) as usize);
         Self {
             pixels,
@@ -144,6 +190,70 @@ impl DeckBitmap {
     }
 }
 
+/// Collapse a 3×-horizontal RGBA "LCD back buffer" into a normal-width
+/// RGBA8 image using per-channel offset sampling through a 5-tap
+/// `[1, 4, 7, 4, 1] / 17` low-pass filter. For each output pixel
+/// column `x`:
+///
+/// - output `R` = filter centred at source subcolumn `3x + 0`, sampling the source R channel
+/// - output `G` = filter centred at source subcolumn `3x + 1`, sampling the source G channel
+/// - output `B` = filter centred at source subcolumn `3x + 2`, sampling the source B channel
+/// - output `A` = filter centred at the pixel centre (subcolumn `3x + 1`), sampling the source A channel
+///
+/// On RGB-stripe LCDs, this lights up each physical R/G/B subpixel from
+/// a different sub-column of the wide source — perceptually around 3×
+/// the horizontal resolution of a same-pixel-count plain raster, at
+/// the cost of mild chroma fringing on saturated edges. The 5-tap
+/// low-pass dampens the worst fringing while keeping the resolution
+/// boost.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+fn lcd_subpixel_collapse(src: &[u8], src_w: u32, h: u32, out_w: u32) -> Vec<u8> {
+    debug_assert_eq!(src_w, out_w * 3);
+    debug_assert_eq!(src.len(), (src_w as usize) * (h as usize) * 4);
+    let filter = [1u32, 4, 7, 4, 1];
+    let filter_sum: u32 = 17;
+    let src_w_i = src_w as i32;
+    let src_stride = (src_w as usize) * 4;
+    let dst_stride = (out_w as usize) * 4;
+    let mut out = vec![0u8; dst_stride * (h as usize)];
+
+    let sample = |row_off: usize, sub: i32, channel: usize| -> u32 {
+        let s = sub.clamp(0, src_w_i - 1) as usize;
+        src[row_off + s * 4 + channel] as u32
+    };
+
+    for y in 0..h as usize {
+        let src_row = y * src_stride;
+        let dst_row = y * dst_stride;
+        for x in 0..out_w as i32 {
+            let tgt_r = 3 * x;
+            let tgt_g = 3 * x + 1;
+            let tgt_b = 3 * x + 2;
+            let mut acc_r = 0u32;
+            let mut acc_g = 0u32;
+            let mut acc_b = 0u32;
+            let mut acc_a = 0u32;
+            for (i, &w) in filter.iter().enumerate() {
+                let off = i as i32 - 2;
+                acc_r += w * sample(src_row, tgt_r + off, 0);
+                acc_g += w * sample(src_row, tgt_g + off, 1);
+                acc_b += w * sample(src_row, tgt_b + off, 2);
+                // Alpha collapsed through a centred filter so it stays
+                // a single per-pixel value compatible with the standard
+                // `SRC_ALPHA / 1-SRC_ALPHA` blit path.
+                acc_a += w * sample(src_row, tgt_g + off, 3);
+            }
+            let half = filter_sum / 2;
+            let di = dst_row + (x as usize) * 4;
+            out[di] = ((acc_r + half) / filter_sum).min(255) as u8;
+            out[di + 1] = ((acc_g + half) / filter_sum).min(255) as u8;
+            out[di + 2] = ((acc_b + half) / filter_sum).min(255) as u8;
+            out[di + 3] = ((acc_a + half) / filter_sum).min(255) as u8;
+        }
+    }
+    out
+}
+
 fn position_for(suit: Suit, rank: Rank) -> (u32, u32) {
     let row = match suit {
         Suit::Spades => 0,
@@ -158,6 +268,65 @@ fn position_for(suit: Suit, rank: Rank) -> (u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A uniform-colour source must collapse to the same colour with
+    /// zero subpixel fringing — the filter is normalised to sum 17, so
+    /// 17 identical taps round-trip exactly.
+    #[test]
+    fn lcd_collapse_uniform_color_is_unchanged() {
+        let out_w = 4u32;
+        let src_w = out_w * 3;
+        let h = 2u32;
+        // Solid opaque slate-blue.
+        let mut src = Vec::with_capacity((src_w * h * 4) as usize);
+        for _ in 0..src_w * h {
+            src.extend_from_slice(&[0x33, 0x55, 0x99, 0xff]);
+        }
+        let out = lcd_subpixel_collapse(&src, src_w, h, out_w);
+        for px in out.chunks_exact(4) {
+            assert_eq!(px, [0x33, 0x55, 0x99, 0xff]);
+        }
+    }
+
+    /// A hard white-to-black edge crossing the centre of the output
+    /// must produce a per-channel staircase in the output pixel that
+    /// straddles the edge: R (left subpixel) brightest, B (right
+    /// subpixel) darkest. That ordering is the whole point of the
+    /// LCD-RGB path.
+    #[test]
+    fn lcd_collapse_white_to_black_edge_has_rgb_staircase() {
+        let out_w = 4u32;
+        let src_w = out_w * 3; // = 12
+        let h = 1u32;
+        // White for the first 6 subcolumns, black for the last 6.
+        // So the centre of the edge sits between subcolumns 5 and 6,
+        // i.e. inside output pixel x = 2 (which spans subcolumns 6/7/8).
+        let mut src = Vec::with_capacity((src_w * 4) as usize);
+        for sx in 0..src_w {
+            if sx < src_w / 2 {
+                src.extend_from_slice(&[0xff, 0xff, 0xff, 0xff]);
+            } else {
+                src.extend_from_slice(&[0x00, 0x00, 0x00, 0xff]);
+            }
+        }
+        let out = lcd_subpixel_collapse(&src, src_w, h, out_w);
+        // Output pixel 2 straddles the edge; R subpixel sits on
+        // subcolumn 6 (just past the edge so a little white leaks in via
+        // the 5-tap filter), G on 7, B on 8 — each strictly darker.
+        let r = out[2 * 4];
+        let g = out[2 * 4 + 1];
+        let b = out[2 * 4 + 2];
+        assert!(
+            r > g && g > b,
+            "edge pixel should be R>G>B but got R={r} G={g} B={b}",
+        );
+        // Pixels left of the edge stay white, right of the edge stay black.
+        assert_eq!(&out[0..3], &[0xff, 0xff, 0xff]);
+        assert_eq!(
+            &out[(out_w as usize - 1) * 4..(out_w as usize - 1) * 4 + 3],
+            &[0, 0, 0]
+        );
+    }
 
     #[test]
     fn position_corners() {
