@@ -102,9 +102,10 @@ impl Pile {
     pub fn position_for(&self, idx: usize) -> (f64, f64) {
         let mut y = self.origin_y;
         for i in 1..=idx {
+            let prev_prev = if i >= 2 { self.cards.get(i - 2) } else { None };
             let prev = self.cards.get(i - 1);
             let curr = self.cards.get(i);
-            y += self.layout.dy_for(self.card_h, prev, curr);
+            y += self.layout.dy_for(self.card_h, prev_prev, prev, curr);
         }
         let x = self.origin_x + self.fan_x_offset(idx);
         (x, y)

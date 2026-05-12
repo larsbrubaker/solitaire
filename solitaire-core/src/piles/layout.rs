@@ -35,13 +35,19 @@ pub enum PileLayout {
 
 impl PileLayout {
     /// Y-up offset between card[idx] and card[idx-1] given the
-    /// pile's `card_h`. Fan steps scale with card height — so the
-    /// fan stays a constant fraction of the card whether the game
-    /// pushed cards to 80 px tall or 200 px tall. `prev` and `curr`
-    /// can be `None` while a pile is mid-deal (defaults to face-down
-    /// step in that case). Returns a NEGATIVE number for any
-    /// `FannedDown*` variant.
-    pub fn dy_for(self, card_h: f64, prev: Option<&Card>, curr: Option<&Card>) -> f64 {
+    /// pile's `card_h`. Fan steps scale with card height so the fan
+    /// stays a constant fraction of the card whether the game pushed
+    /// cards to 80 px tall or 200 px tall. `prev_prev`, `prev` and
+    /// `curr` are card[idx-2], card[idx-1] and card[idx]; any can be
+    /// `None` while a pile is mid-deal (defaults to face-down step).
+    /// Returns a NEGATIVE number for any `FannedDown*` variant.
+    pub fn dy_for(
+        self,
+        card_h: f64,
+        prev_prev: Option<&Card>,
+        prev: Option<&Card>,
+        curr: Option<&Card>,
+    ) -> f64 {
         match self {
             PileLayout::Stacked => 0.0,
             PileLayout::FannedDown => {
@@ -59,11 +65,24 @@ impl PileLayout {
                 if !p.face_up {
                     return -card_h * FAN_DOWN_FACE_DOWN;
                 }
-                let compact = match curr {
+                // Compact only when we're INSIDE an established run —
+                // i.e. both `prev_prev → prev` AND `prev → curr` are
+                // suited-descending pairs. The FIRST transition into
+                // a run keeps the standard face-up step so the run's
+                // top card (the K of a K-down-to-A) shows its full
+                // rank/suit indicator instead of being squashed under
+                // the next card with only 14 px of clearance.
+                let prev_curr_in_run = match curr {
                     Some(c) => c.face_up && p.suit == c.suit && Some(c.rank) == p.rank.next_down(),
                     None => false,
                 };
-                if compact {
+                let prev_prev_in_run = match prev_prev {
+                    Some(pp) => {
+                        pp.face_up && pp.suit == p.suit && Some(p.rank) == pp.rank.next_down()
+                    }
+                    None => false,
+                };
+                if prev_curr_in_run && prev_prev_in_run {
                     -card_h * FAN_DOWN_FACE_DOWN
                 } else {
                     -card_h * FAN_DOWN_FACE_UP
@@ -84,7 +103,8 @@ impl PileLayout {
             PileLayout::FannedDown | PileLayout::FannedDownCompactSuited => {
                 let mut h = card_h;
                 for i in 1..n {
-                    h += -self.dy_for(card_h, cards.get(i - 1), cards.get(i));
+                    let pp = if i >= 2 { cards.get(i - 2) } else { None };
+                    h += -self.dy_for(card_h, pp, cards.get(i - 1), cards.get(i));
                 }
                 h
             }
