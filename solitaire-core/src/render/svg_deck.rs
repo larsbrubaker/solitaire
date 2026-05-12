@@ -210,10 +210,12 @@ impl DeckBitmap {
         self.extract(row, col)
     }
 
-    /// The default card back is the blue rounded-rectangle in the
-    /// ancillary row at column 0 (under the Aces).
+    /// The default card back is the intricate blue interlace pattern
+    /// in the ancillary row at column 4. The simpler rounded-rectangle
+    /// at row 4 / col 0 is still there in the master if a future deck
+    /// theme wants a minimalist look.
     pub fn extract_back(&self) -> Vec<u8> {
-        self.extract(4, 0)
+        self.extract(4, 4)
     }
 }
 
