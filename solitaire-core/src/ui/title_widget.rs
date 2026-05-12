@@ -59,26 +59,47 @@ impl TitleWidget {
         }
     }
 
+    /// Uniform scale applied to all title-screen dimensions when the
+    /// viewport is too short for the full block (e.g. iPhone 12 Pro
+    /// landscape, 844×390). 1.0 on desktop / portrait phones.
+    fn fit_scale(&self) -> f64 {
+        let n = KINDS.len() as f64;
+        let block_h = n * BTN_H + (n - 1.0) * BTN_GAP_Y + TITLE_BUTTONS_GAP + TITLE_FONT_SIZE;
+        // Leave a 24-px margin at top and bottom so the title and the
+        // bottom button never paint flush against the chrome.
+        let avail = (self.bounds.height - 48.0).max(1.0);
+        (avail / block_h).min(1.0)
+    }
+
+    fn scaled(&self, v: f64) -> f64 {
+        v * self.fit_scale()
+    }
+
     /// Y-up screen-space rect for the title+buttons block, centered
     /// inside `self.bounds`.
     fn block_origin_y(&self) -> f64 {
         let n = KINDS.len() as f64;
-        let total_h = n * BTN_H + (n - 1.0) * BTN_GAP_Y;
-        let block_h = total_h + TITLE_BUTTONS_GAP + TITLE_FONT_SIZE;
+        let s = self.fit_scale();
+        let total_h = (n * BTN_H + (n - 1.0) * BTN_GAP_Y) * s;
+        let block_h = total_h + (TITLE_BUTTONS_GAP + TITLE_FONT_SIZE) * s;
         self.bounds.y + (self.bounds.height - block_h) / 2.0
     }
 
     fn button_rect(&self, idx: usize) -> (f64, f64, f64, f64) {
         let start_y_top = self.block_origin_y();
         let n = KINDS.len() as f64;
-        let total_h = n * BTN_H + (n - 1.0) * BTN_GAP_Y;
+        let s = self.fit_scale();
+        let bh = BTN_H * s;
+        let gap = BTN_GAP_Y * s;
+        let total_h = n * bh + (n - 1.0) * gap;
         // Y-up: top of the FIRST button (Klondike) sits at the top of
         // the buttons portion of the block; subsequent buttons drop
-        // by (BTN_H + BTN_GAP_Y).
-        let top_of_btn = start_y_top + total_h - idx as f64 * (BTN_H + BTN_GAP_Y);
-        let y = top_of_btn - BTN_H;
-        let x = self.bounds.x + (self.bounds.width - BTN_W) / 2.0;
-        (x, y, BTN_W, BTN_H)
+        // by (bh + gap).
+        let top_of_btn = start_y_top + total_h - idx as f64 * (bh + gap);
+        let y = top_of_btn - bh;
+        let bw = BTN_W * s;
+        let x = self.bounds.x + (self.bounds.width - bw) / 2.0;
+        (x, y, bw, bh)
     }
 
     fn click_at(&mut self, x: f64, y: f64) -> bool {
@@ -94,20 +115,21 @@ impl TitleWidget {
     }
 
     fn paint_title(&self, ctx: &mut dyn DrawCtx) {
+        let s = self.fit_scale();
         ctx.set_fill_color(TITLE_COLOR);
         ctx.set_font(self.font.clone());
-        ctx.set_font_size(TITLE_FONT_SIZE);
+        ctx.set_font_size(TITLE_FONT_SIZE * s);
         let label = "Solitaire";
         let m = ctx.measure_text(label);
         let w = m.map(|t| t.width).unwrap_or(0.0);
         let x = self.bounds.x + (self.bounds.width - w) / 2.0;
-        // Title baseline sits TITLE_BUTTONS_GAP above the topmost
-        // button (Klondike).
+        // Title baseline sits scaled-TITLE_BUTTONS_GAP above the
+        // topmost button (Klondike).
         let n = KINDS.len() as f64;
-        let total_h = n * BTN_H + (n - 1.0) * BTN_GAP_Y;
+        let total_h = (n * BTN_H + (n - 1.0) * BTN_GAP_Y) * s;
         let start_y_top = self.block_origin_y();
         let klondike_top = start_y_top + total_h;
-        let y = klondike_top + TITLE_BUTTONS_GAP;
+        let y = klondike_top + TITLE_BUTTONS_GAP * s;
         ctx.fill_text(label, x, y);
     }
 
@@ -132,7 +154,7 @@ impl TitleWidget {
 
         ctx.set_fill_color(BTN_TEXT);
         ctx.set_font(self.font.clone());
-        ctx.set_font_size(28.0);
+        ctx.set_font_size(self.scaled(28.0));
         let label = kind.display_name();
         let Some(m) = ctx.measure_text(label) else {
             return;
