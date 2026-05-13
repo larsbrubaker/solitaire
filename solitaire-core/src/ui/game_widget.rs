@@ -284,12 +284,27 @@ impl GameWidget {
                 true
             }
             ClickResolution::ApplySwap(m) => {
+                let swap_sources = {
+                    let Some(session) = model.session.as_ref() else {
+                        return false;
+                    };
+                    Self::snapshot_swap_sources(session.piles(), &m)
+                };
                 let won = {
                     let Some(session) = model.session.as_mut() else {
                         return false;
                     };
                     if !session.try_apply(m) {
                         return false;
+                    }
+                    if let Some(sources) = swap_sources.as_ref() {
+                        Self::queue_swap_animations_from_snapshot(
+                            &mut self.animations,
+                            sources,
+                            session.piles(),
+                            &m,
+                            web_time::Instant::now(),
+                        );
                     }
                     session.is_won()
                 };
@@ -397,6 +412,70 @@ impl GameWidget {
                 dst_pile: m.to,
                 dst_hide_from: dst_start,
                 flip: m.flip_moved,
+            });
+        }
+    }
+
+    fn snapshot_swap_sources(
+        piles: &crate::piles::PileSet,
+        m: &Move,
+    ) -> Option<[(PileId, Card, f64, f64); 2]> {
+        if !m.swap_with_top {
+            return None;
+        }
+        let from = piles.get(m.from);
+        let to = piles.get(m.to);
+        let from_idx = from.cards.len().checked_sub(1)?;
+        let to_idx = to.cards.len().checked_sub(1)?;
+        let (from_x, from_y) = from.position_for(from_idx);
+        let (to_x, to_y) = to.position_for(to_idx);
+        Some([
+            (m.from, from.cards[from_idx], from_x, from_y),
+            (m.to, to.cards[to_idx], to_x, to_y),
+        ])
+    }
+
+    fn queue_swap_animations_from_snapshot(
+        animations: &mut Vec<CardAnim>,
+        sources: &[(PileId, Card, f64, f64); 2],
+        piles: &crate::piles::PileSet,
+        m: &Move,
+        now: web_time::Instant,
+    ) {
+        if !m.swap_with_top {
+            return;
+        }
+        let from_kind = piles.get(m.from).kind;
+        let to_kind = piles.get(m.to).kind;
+        let moms_gap_swap = from_kind == PileKind::Tableau
+            && to_kind == PileKind::Tableau
+            && sources
+                .iter()
+                .any(|(_, card, _, _)| card.rank == crate::cards::Rank::Ace);
+
+        for &(src_pile, card, src_x, src_y) in sources {
+            if moms_gap_swap && card.rank == crate::cards::Rank::Ace {
+                continue;
+            }
+            let dst_id = if src_pile == m.from { m.to } else { m.from };
+            let dst_pile = piles.get(dst_id);
+            let Some(dst_idx) = dst_pile.cards.len().checked_sub(1) else {
+                continue;
+            };
+            let (dst_x, dst_y) = dst_pile.position_for(dst_idx);
+            animations.push(CardAnim {
+                card,
+                src_x,
+                src_y,
+                dst_x,
+                dst_y,
+                card_w: dst_pile.card_w,
+                card_h: dst_pile.card_h,
+                start_at: now,
+                duration: std::time::Duration::from_millis(220),
+                dst_pile: dst_id,
+                dst_hide_from: dst_idx,
+                flip: false,
             });
         }
     }
@@ -814,20 +893,31 @@ impl GameWidget {
                     }
                     m
                 };
+                let swap_sources = Self::snapshot_swap_sources(session.piles(), &m);
                 let source_reflow = Self::snapshot_source_waste_reflow(session.piles(), &m);
                 if session.try_apply(m) {
+                    let now = web_time::Instant::now();
+                    if let Some(sources) = swap_sources.as_ref() {
+                        Self::queue_swap_animations_from_snapshot(
+                            &mut self.animations,
+                            sources,
+                            session.piles(),
+                            &m,
+                            now,
+                        );
+                    }
                     Self::queue_source_flip_animation_from_piles(
                         &mut self.animations,
                         session.piles(),
                         &m,
-                        web_time::Instant::now(),
+                        now,
                     );
                     Self::queue_source_waste_reflow_animations(
                         &mut self.animations,
                         &source_reflow,
                         session.piles(),
                         &m,
-                        web_time::Instant::now(),
+                        now,
                     );
                 }
             }
