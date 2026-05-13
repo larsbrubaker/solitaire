@@ -117,9 +117,7 @@ impl<R: GameRules> GameSession<R> {
         moves: Vec<Move>,
     ) -> Option<Vec<AppliedMoveRecord>> {
         let mut iter = moves.into_iter();
-        let Some(first) = iter.next() else {
-            return None;
-        };
+        let first = iter.next()?;
         if !self.rules.legal_move(&self.piles, &first) {
             return None;
         }

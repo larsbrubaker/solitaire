@@ -62,6 +62,15 @@ pub struct CardAnim {
     /// session has already marked the card face-up, but visually it
     /// must remain a face-down back until its flip begins.
     pub hold_before_start: bool,
+    /// Optional gate for `hold_before_start`: when `Some(t)`, the held
+    /// pose is suppressed until `t`. Used so a follow-up auto-move's
+    /// just-landed cards (e.g., the 4-A in a Spider collapse triggered
+    /// by clicking a 4-A onto a K-5 run) do not double-draw on top of
+    /// the user's own in-flight transfer animation, but DO appear at
+    /// their landing position once the user's animation finishes.
+    /// `None` means the held pose is visible from queue time onward
+    /// (the original `hold_before_start` semantics).
+    pub late_appear_at: Option<Instant>,
 }
 
 impl CardAnim {
@@ -91,7 +100,16 @@ impl CardAnim {
     }
 
     pub fn should_paint_now(&self) -> bool {
-        self.hold_before_start || self.has_started()
+        if self.has_started() {
+            return true;
+        }
+        if !self.hold_before_start {
+            return false;
+        }
+        match self.late_appear_at {
+            Some(t) => Instant::now() >= t,
+            None => true,
+        }
     }
 }
 

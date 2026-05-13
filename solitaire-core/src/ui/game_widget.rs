@@ -129,6 +129,13 @@ impl GameWidget {
             && (ly - vy).abs() <= DOUBLE_CLICK_RADIUS
     }
 
+    fn is_source_reveal_anim(anim: &CardAnim) -> bool {
+        anim.hold_before_start
+            && anim.flip
+            && (anim.src_x - anim.dst_x).abs() < 0.5
+            && (anim.src_y - anim.dst_y).abs() < 0.5
+    }
+
     fn paint_card_animation(&self, ctx: &mut dyn DrawCtx, anim: &CardAnim) {
         let q = animated_quad(anim);
         let sprite = if q.show_front {
@@ -334,6 +341,7 @@ impl GameWidget {
             dst_hide_from: idx,
             flip: true,
             hold_before_start: true,
+            late_appear_at: None,
         });
     }
 
@@ -355,6 +363,7 @@ impl GameWidget {
             .collect()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn queue_move_animations_from_snapshot(
         animations: &mut Vec<CardAnim>,
         sources: &[(Card, f64, f64)],
@@ -362,6 +371,8 @@ impl GameWidget {
         m: &Move,
         now: web_time::Instant,
         stagger: std::time::Duration,
+        hold_before_start: bool,
+        late_hold: Option<(usize, web_time::Instant)>,
     ) {
         if sources.is_empty() || m.swap_with_top {
             return;
@@ -384,6 +395,14 @@ impl GameWidget {
             let dst_idx = dst_start + dst_offset;
             let card = dst_pile.cards[dst_idx];
             let (dst_x, dst_y) = dst_pile.position_for(dst_idx);
+            let late_appear_at = match late_hold {
+                Some((late_top, late_at))
+                    if hold_before_start && src_offset + late_top >= sources.len() =>
+                {
+                    Some(late_at)
+                }
+                _ => None,
+            };
             animations.push(CardAnim {
                 card,
                 src_x,
@@ -393,11 +412,12 @@ impl GameWidget {
                 card_w: dst_pile.card_w,
                 card_h: dst_pile.card_h,
                 start_at: now + stagger * dst_offset as u32,
-                duration: std::time::Duration::from_millis(240),
+                duration: std::time::Duration::from_millis(480),
                 dst_pile: m.to,
                 dst_hide_from: dst_start,
                 flip: m.flip_moved,
-                hold_before_start: false,
+                hold_before_start,
+                late_appear_at,
             });
         }
     }
@@ -463,6 +483,7 @@ impl GameWidget {
                 dst_hide_from: dst_idx,
                 flip: false,
                 hold_before_start: false,
+                late_appear_at: None,
             });
         }
     }
@@ -557,6 +578,7 @@ impl GameWidget {
                 dst_hide_from: hide_from,
                 flip: false,
                 hold_before_start: false,
+                late_appear_at: None,
             });
         }
     }
@@ -596,6 +618,7 @@ impl GameWidget {
                 dst_hide_from: hide_from,
                 flip: false,
                 hold_before_start: false,
+                late_appear_at: None,
             });
         }
 
@@ -626,6 +649,7 @@ impl GameWidget {
                 dst_hide_from: dst_idx,
                 flip: true,
                 hold_before_start: false,
+                late_appear_at: None,
             });
         }
     }
@@ -636,12 +660,17 @@ impl GameWidget {
         now: web_time::Instant,
         animate_user_move: bool,
     ) {
-        let move_duration = std::time::Duration::from_millis(240);
+        let move_duration = std::time::Duration::from_millis(480);
         let swap_duration = std::time::Duration::from_millis(220);
         let flip_duration = std::time::Duration::from_millis(260);
+        let auto_followup_pause = std::time::Duration::from_millis(120);
         let mut cursor = now;
+        let mut previous_move: Option<Move> = None;
+        let mut prev_anim_end: Option<web_time::Instant> = None;
+        let mut deferred_source_flips: Vec<&AppliedMoveRecord> = Vec::new();
 
-        for record in records {
+        for (record_idx, record) in records.iter().enumerate() {
+            let next_is_auto = records.get(record_idx + 1).is_some_and(|next| next.is_auto);
             let should_animate_transfer = animate_user_move || record.is_auto;
             let mut transfer_duration = std::time::Duration::ZERO;
 
@@ -658,6 +687,23 @@ impl GameWidget {
                 } else {
                     let sources = Self::snapshot_move_sources(&record.before, &record.m);
                     if !sources.is_empty() {
+                        // Hold the source pose only when this auto follow-up
+                        // is consuming the previous move's destination — e.g.
+                        // a Spider K-A run collapse fired by clicking an Ace
+                        // onto a K-down-to-2. The just-landed top of the run
+                        // appears *after* the user's flying animation ends so
+                        // we don't double-draw with it; the rest of the run
+                        // appears immediately to cover the static cascade
+                        // that the session has already emptied.
+                        let needs_hold = previous_move.is_some_and(|prev| prev.to == record.m.from)
+                            && cursor > now;
+                        let late_hold = if needs_hold {
+                            previous_move
+                                .map(|prev| prev.take as usize)
+                                .zip(prev_anim_end)
+                        } else {
+                            None
+                        };
                         Self::queue_move_animations_from_snapshot(
                             animations,
                             &sources,
@@ -665,6 +711,8 @@ impl GameWidget {
                             &record.m,
                             cursor,
                             std::time::Duration::ZERO,
+                            needs_hold,
+                            late_hold,
                         );
                         transfer_duration = move_duration;
                     }
@@ -672,12 +720,6 @@ impl GameWidget {
             }
 
             let after_transfer = cursor + transfer_duration;
-            Self::queue_source_flip_animation_from_piles(
-                animations,
-                &record.after,
-                &record.m,
-                after_transfer,
-            );
             let source_reflow = Self::snapshot_source_waste_reflow(&record.before, &record.m);
             Self::queue_source_waste_reflow_animations(
                 animations,
@@ -686,11 +728,38 @@ impl GameWidget {
                 &record.m,
                 cursor,
             );
-            cursor = if record.m.flip_source_after {
+
+            let mut flip_phase = false;
+            if next_is_auto && record.m.flip_source_after {
+                deferred_source_flips.push(record);
+            } else {
+                flip_phase = !deferred_source_flips.is_empty() || record.m.flip_source_after;
+                for deferred in deferred_source_flips.drain(..) {
+                    Self::queue_source_flip_animation_from_piles(
+                        animations,
+                        &deferred.after,
+                        &deferred.m,
+                        after_transfer,
+                    );
+                }
+                Self::queue_source_flip_animation_from_piles(
+                    animations,
+                    &record.after,
+                    &record.m,
+                    after_transfer,
+                );
+            }
+
+            prev_anim_end = Some(after_transfer);
+            cursor = if flip_phase {
                 after_transfer + flip_duration
             } else {
                 after_transfer
             };
+            if next_is_auto {
+                cursor += auto_followup_pause;
+            }
+            previous_move = Some(record.m);
         }
     }
 
@@ -868,6 +937,8 @@ impl GameWidget {
                     &m,
                     now,
                     std::time::Duration::from_millis(70),
+                    false,
+                    None,
                 );
             }
         } else {
@@ -896,6 +967,7 @@ impl GameWidget {
                     dst_hide_from: new_idx,
                     flip: true,
                     hold_before_start: false,
+                    late_appear_at: None,
                 });
             }
         }
@@ -1089,16 +1161,29 @@ impl Widget for GameWidget {
         // — a real wgpu textured quad, NOT a 2-D horizontal squash.
         // The face shown swaps at the halfway point so the texture
         // never paints mirrored.
-        // Held source flips are background cards: draw them before
-        // traveling cards so they never cover the card moving away.
+        // Source-reveal backs are the lowest animation layer. They
+        // may appear before the flip starts, but must stay under the
+        // run that is still visually sitting above them.
         for anim in &self.animations {
-            if !anim.hold_before_start || !anim.should_paint_now() {
+            if !Self::is_source_reveal_anim(anim) || anim.has_started() || !anim.should_paint_now()
+            {
+                continue;
+            }
+            self.paint_card_animation(ctx, anim);
+        }
+        // Held-but-not-started transfer cards preserve an intermediate
+        // board state while later automatic moves wait their turn.
+        // Late-held cards (auto-collapse top cards just landed by the
+        // user move) only paint after their `late_appear_at`, so the
+        // gating runs through `should_paint_now`.
+        for anim in &self.animations {
+            if Self::is_source_reveal_anim(anim) || anim.has_started() || !anim.should_paint_now() {
                 continue;
             }
             self.paint_card_animation(ctx, anim);
         }
         for anim in &self.animations {
-            if anim.hold_before_start || !anim.should_paint_now() {
+            if !anim.has_started() {
                 continue;
             }
             self.paint_card_animation(ctx, anim);
