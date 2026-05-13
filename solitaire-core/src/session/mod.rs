@@ -14,6 +14,14 @@ use agg_gui::geometry::Rect;
 use crate::games::GameRules;
 use crate::piles::PileSet;
 
+#[derive(Clone, Debug)]
+pub struct AppliedMoveRecord {
+    pub m: Move,
+    pub before: PileSet,
+    pub after: PileSet,
+    pub is_auto: bool,
+}
+
 /// Reference playfield rect used by `GameSession::new` when there's no
 /// real viewport yet (headless tests, app startup before first paint).
 /// `GameWidget` immediately re-applies `rules.pile_layout(real_rect)`
@@ -56,16 +64,39 @@ impl<R: GameRules> GameSession<R> {
     /// rules engine's `after_move` hook in a loop so auto follow-ups
     /// (Spider's K-to-A run collapse, future polish) chain transparently.
     pub fn try_apply(&mut self, m: Move) -> bool {
+        self.try_apply_recording(m).is_some()
+    }
+
+    /// Same as [`try_apply`](Self::try_apply), but returns a before/after
+    /// record for the user move and each automatic follow-up. UI code uses
+    /// these snapshots to animate state changes that the session applies
+    /// immediately, such as Spider's completed-run collapse.
+    pub fn try_apply_recording(&mut self, m: Move) -> Option<Vec<AppliedMoveRecord>> {
         if !self.rules.legal_move(&self.piles, &m) {
-            return false;
+            return None;
         }
+        let mut records = Vec::new();
+        let before = self.piles.clone();
         apply_move(&mut self.piles, &m);
+        records.push(AppliedMoveRecord {
+            m,
+            before,
+            after: self.piles.clone(),
+            is_auto: false,
+        });
         self.undo.push_user(m);
         while let Some(am) = self.rules.after_move(&self.piles) {
+            let before = self.piles.clone();
             apply_move(&mut self.piles, &am);
+            records.push(AppliedMoveRecord {
+                m: am,
+                before,
+                after: self.piles.clone(),
+                is_auto: true,
+            });
             self.undo.push_auto(am);
         }
-        true
+        Some(records)
     }
 
     /// Apply a batch of player-initiated moves as a single undo unit.
@@ -76,27 +107,58 @@ impl<R: GameRules> GameSession<R> {
     /// step on the undo stack; the rest are auto follow-ups so a
     /// single Undo reverts the entire batch.
     pub fn try_apply_batch(&mut self, moves: Vec<Move>) -> bool {
+        self.try_apply_batch_recording(moves).is_some()
+    }
+
+    /// Recording version of [`try_apply_batch`](Self::try_apply_batch).
+    /// Returns every applied batch step plus any automatic follow-ups.
+    pub fn try_apply_batch_recording(
+        &mut self,
+        moves: Vec<Move>,
+    ) -> Option<Vec<AppliedMoveRecord>> {
         let mut iter = moves.into_iter();
         let Some(first) = iter.next() else {
-            return false;
+            return None;
         };
         if !self.rules.legal_move(&self.piles, &first) {
-            return false;
+            return None;
         }
+        let mut records = Vec::new();
+        let before = self.piles.clone();
         apply_move(&mut self.piles, &first);
+        records.push(AppliedMoveRecord {
+            m: first,
+            before,
+            after: self.piles.clone(),
+            is_auto: false,
+        });
         self.undo.push_user(first);
         for m in iter {
             if !self.rules.legal_move(&self.piles, &m) {
                 break;
             }
+            let before = self.piles.clone();
             apply_move(&mut self.piles, &m);
+            records.push(AppliedMoveRecord {
+                m,
+                before,
+                after: self.piles.clone(),
+                is_auto: true,
+            });
             self.undo.push_auto(m);
         }
         while let Some(am) = self.rules.after_move(&self.piles) {
+            let before = self.piles.clone();
             apply_move(&mut self.piles, &am);
+            records.push(AppliedMoveRecord {
+                m: am,
+                before,
+                after: self.piles.clone(),
+                is_auto: true,
+            });
             self.undo.push_auto(am);
         }
-        true
+        Some(records)
     }
 
     /// Apply a move WITHOUT consulting `rules.legal_move`. Used for

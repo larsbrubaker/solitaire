@@ -17,7 +17,7 @@ use agg_gui::widget::Widget;
 use crate::cards::Card;
 use crate::piles::{HitResult, PileId, PileKind, FAN_DOWN_FACE_UP};
 use crate::render::{paint_card_at, paint_pile, CardSpriteAtlas};
-use crate::session::Move;
+use crate::session::{AppliedMoveRecord, Move};
 
 use super::animation::{
     animated_deck_faces, animated_quad, build_stripe_texture, deck_thickness_for, CardAnim,
@@ -103,12 +103,14 @@ impl GameWidget {
         let card_min = self
             .animations
             .iter()
+            .filter(|a| a.should_paint_now())
             .filter(|a| a.dst_pile == pile_id)
             .map(|a| a.dst_hide_from)
             .min();
         let deck_min = self
             .deck_animations
             .iter()
+            .filter(|a| a.has_started())
             .filter(|a| a.dst_pile == pile_id)
             .map(|a| a.dst_hide_from)
             .min();
@@ -125,6 +127,16 @@ impl GameWidget {
         t.elapsed().as_millis() <= DOUBLE_CLICK_MS
             && (lx - vx).abs() <= DOUBLE_CLICK_RADIUS
             && (ly - vy).abs() <= DOUBLE_CLICK_RADIUS
+    }
+
+    fn paint_card_animation(&self, ctx: &mut dyn DrawCtx, anim: &CardAnim) {
+        let q = animated_quad(anim);
+        let sprite = if q.show_front {
+            self.atlas.face(anim.card.suit, anim.card.rank)
+        } else {
+            self.atlas.back()
+        };
+        ctx.draw_image_rgba_corners(&sprite, self.atlas.px_w, self.atlas.px_h, q.corners);
     }
 
     /// On a double-click of the topmost face-up card under the cursor,
@@ -179,31 +191,12 @@ impl GameWidget {
             if beneath_face_down {
                 m = m.with_flip_source();
             }
-            let move_sources = Self::snapshot_move_sources(session.piles(), &m);
-            let source_reflow = Self::snapshot_source_waste_reflow(session.piles(), &m);
-            if session.legal_move(&m) && session.try_apply(m) {
+            if session.legal_move(&m) {
+                let Some(records) = session.try_apply_recording(m) else {
+                    continue;
+                };
                 let now = web_time::Instant::now();
-                Self::queue_move_animations_from_snapshot(
-                    &mut self.animations,
-                    &move_sources,
-                    session.piles(),
-                    &m,
-                    now,
-                    std::time::Duration::from_millis(28),
-                );
-                Self::queue_source_waste_reflow_animations(
-                    &mut self.animations,
-                    &source_reflow,
-                    session.piles(),
-                    &m,
-                    now,
-                );
-                Self::queue_source_flip_animation_from_piles(
-                    &mut self.animations,
-                    session.piles(),
-                    &m,
-                    now,
-                );
+                Self::queue_recorded_move_animations(&mut self.animations, &records, now, true);
                 agg_gui::animation::request_draw();
                 return true;
             }
@@ -284,28 +277,19 @@ impl GameWidget {
                 true
             }
             ClickResolution::ApplySwap(m) => {
-                let swap_sources = {
-                    let Some(session) = model.session.as_ref() else {
-                        return false;
-                    };
-                    Self::snapshot_swap_sources(session.piles(), &m)
-                };
                 let won = {
                     let Some(session) = model.session.as_mut() else {
                         return false;
                     };
-                    if !session.try_apply(m) {
+                    let Some(records) = session.try_apply_recording(m) else {
                         return false;
-                    }
-                    if let Some(sources) = swap_sources.as_ref() {
-                        Self::queue_swap_animations_from_snapshot(
-                            &mut self.animations,
-                            sources,
-                            session.piles(),
-                            &m,
-                            web_time::Instant::now(),
-                        );
-                    }
+                    };
+                    Self::queue_recorded_move_animations(
+                        &mut self.animations,
+                        &records,
+                        web_time::Instant::now(),
+                        true,
+                    );
                     session.is_won()
                 };
                 model.moms_waiting_king_at = None;
@@ -349,6 +333,7 @@ impl GameWidget {
             dst_pile: m.from,
             dst_hide_from: idx,
             flip: true,
+            hold_before_start: true,
         });
     }
 
@@ -412,6 +397,7 @@ impl GameWidget {
                 dst_pile: m.to,
                 dst_hide_from: dst_start,
                 flip: m.flip_moved,
+                hold_before_start: false,
             });
         }
     }
@@ -476,6 +462,7 @@ impl GameWidget {
                 dst_pile: dst_id,
                 dst_hide_from: dst_idx,
                 flip: false,
+                hold_before_start: false,
             });
         }
     }
@@ -569,6 +556,7 @@ impl GameWidget {
                 dst_pile: m.from,
                 dst_hide_from: hide_from,
                 flip: false,
+                hold_before_start: false,
             });
         }
     }
@@ -607,6 +595,7 @@ impl GameWidget {
                 dst_pile: m.to,
                 dst_hide_from: hide_from,
                 flip: false,
+                hold_before_start: false,
             });
         }
 
@@ -636,7 +625,72 @@ impl GameWidget {
                 dst_pile: m.to,
                 dst_hide_from: dst_idx,
                 flip: true,
+                hold_before_start: false,
             });
+        }
+    }
+
+    fn queue_recorded_move_animations(
+        animations: &mut Vec<CardAnim>,
+        records: &[AppliedMoveRecord],
+        now: web_time::Instant,
+        animate_user_move: bool,
+    ) {
+        let move_duration = std::time::Duration::from_millis(240);
+        let swap_duration = std::time::Duration::from_millis(220);
+        let flip_duration = std::time::Duration::from_millis(260);
+        let mut cursor = now;
+
+        for record in records {
+            let should_animate_transfer = animate_user_move || record.is_auto;
+            let mut transfer_duration = std::time::Duration::ZERO;
+
+            if should_animate_transfer {
+                if let Some(sources) = Self::snapshot_swap_sources(&record.before, &record.m) {
+                    Self::queue_swap_animations_from_snapshot(
+                        animations,
+                        &sources,
+                        &record.after,
+                        &record.m,
+                        cursor,
+                    );
+                    transfer_duration = swap_duration;
+                } else {
+                    let sources = Self::snapshot_move_sources(&record.before, &record.m);
+                    if !sources.is_empty() {
+                        Self::queue_move_animations_from_snapshot(
+                            animations,
+                            &sources,
+                            &record.after,
+                            &record.m,
+                            cursor,
+                            std::time::Duration::ZERO,
+                        );
+                        transfer_duration = move_duration;
+                    }
+                }
+            }
+
+            let after_transfer = cursor + transfer_duration;
+            Self::queue_source_flip_animation_from_piles(
+                animations,
+                &record.after,
+                &record.m,
+                after_transfer,
+            );
+            let source_reflow = Self::snapshot_source_waste_reflow(&record.before, &record.m);
+            Self::queue_source_waste_reflow_animations(
+                animations,
+                &source_reflow,
+                &record.after,
+                &record.m,
+                cursor,
+            );
+            cursor = if record.m.flip_source_after {
+                after_transfer + flip_duration
+            } else {
+                after_transfer
+            };
         }
     }
 
@@ -753,10 +807,9 @@ impl GameWidget {
             None
         };
 
-        let applied = session.try_apply_batch(moves);
-        if !applied {
+        let Some(records) = session.try_apply_batch_recording(moves) else {
             return false;
-        }
+        };
 
         let now = web_time::Instant::now();
         if let Some((_from_id, top_card, card_count, wx, wy, card_w, card_h)) = recycle_setup {
@@ -842,8 +895,18 @@ impl GameWidget {
                     dst_pile: *dst_id,
                     dst_hide_from: new_idx,
                     flip: true,
+                    hold_before_start: false,
                 });
             }
+        }
+        let batch_len = dst_pile_ids.len();
+        if records.len() > batch_len {
+            Self::queue_recorded_move_animations(
+                &mut self.animations,
+                &records[batch_len..],
+                now,
+                true,
+            );
         }
         agg_gui::animation::request_draw();
         true
@@ -893,31 +956,13 @@ impl GameWidget {
                     }
                     m
                 };
-                let swap_sources = Self::snapshot_swap_sources(session.piles(), &m);
-                let source_reflow = Self::snapshot_source_waste_reflow(session.piles(), &m);
-                if session.try_apply(m) {
+                if let Some(records) = session.try_apply_recording(m) {
                     let now = web_time::Instant::now();
-                    if let Some(sources) = swap_sources.as_ref() {
-                        Self::queue_swap_animations_from_snapshot(
-                            &mut self.animations,
-                            sources,
-                            session.piles(),
-                            &m,
-                            now,
-                        );
-                    }
-                    Self::queue_source_flip_animation_from_piles(
+                    Self::queue_recorded_move_animations(
                         &mut self.animations,
-                        session.piles(),
-                        &m,
+                        &records,
                         now,
-                    );
-                    Self::queue_source_waste_reflow_animations(
-                        &mut self.animations,
-                        &source_reflow,
-                        session.piles(),
-                        &m,
-                        now,
+                        false,
                     );
                 }
             }
@@ -937,33 +982,11 @@ impl GameWidget {
         let Some(m) = session.single_click_move(source_pile, start_idx) else {
             return false;
         };
-        let move_sources = Self::snapshot_move_sources(session.piles(), &m);
-        let source_reflow = Self::snapshot_source_waste_reflow(session.piles(), &m);
-        if !session.try_apply(m) {
+        let Some(records) = session.try_apply_recording(m) else {
             return false;
-        }
+        };
         let now = web_time::Instant::now();
-        Self::queue_move_animations_from_snapshot(
-            &mut self.animations,
-            &move_sources,
-            session.piles(),
-            &m,
-            now,
-            std::time::Duration::ZERO,
-        );
-        Self::queue_source_flip_animation_from_piles(
-            &mut self.animations,
-            session.piles(),
-            &m,
-            now,
-        );
-        Self::queue_source_waste_reflow_animations(
-            &mut self.animations,
-            &source_reflow,
-            session.piles(),
-            &m,
-            now,
-        );
+        Self::queue_recorded_move_animations(&mut self.animations, &records, now, true);
         if session.is_won() {
             model.screen = Screen::Won;
         }
@@ -1066,17 +1089,19 @@ impl Widget for GameWidget {
         // — a real wgpu textured quad, NOT a 2-D horizontal squash.
         // The face shown swaps at the halfway point so the texture
         // never paints mirrored.
+        // Held source flips are background cards: draw them before
+        // traveling cards so they never cover the card moving away.
         for anim in &self.animations {
-            if !anim.has_started() {
+            if !anim.hold_before_start || !anim.should_paint_now() {
                 continue;
             }
-            let q = animated_quad(anim);
-            let sprite = if q.show_front {
-                self.atlas.face(anim.card.suit, anim.card.rank)
-            } else {
-                self.atlas.back()
-            };
-            ctx.draw_image_rgba_corners(&sprite, self.atlas.px_w, self.atlas.px_h, q.corners);
+            self.paint_card_animation(ctx, anim);
+        }
+        for anim in &self.animations {
+            if anim.hold_before_start || !anim.should_paint_now() {
+                continue;
+            }
+            self.paint_card_animation(ctx, anim);
         }
 
         // Deck-flip animations: render each in-flight DeckFlipAnim

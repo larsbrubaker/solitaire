@@ -116,6 +116,37 @@ fn has_complete_run_on_top(pile: &crate::piles::Pile) -> bool {
     tail[0].rank == Rank::King && tail[12].rank == Rank::Ace
 }
 
+fn suited_run_len_on_top(pile: &crate::piles::Pile) -> usize {
+    let Some(top) = pile.cards.last() else {
+        return 0;
+    };
+    if !top.face_up {
+        return 0;
+    }
+    let mut len = 1;
+    for pair in pile.cards.windows(2).rev() {
+        let lower = &pair[1];
+        let higher = &pair[0];
+        if !higher.face_up
+            || higher.suit != lower.suit
+            || Some(lower.rank) != higher.rank.next_down()
+        {
+            break;
+        }
+        len += 1;
+    }
+    len
+}
+
+fn destination_run_score(piles: &PileSet, dst: PileId) -> usize {
+    let pile = piles.get(dst);
+    if pile.is_empty() {
+        0
+    } else {
+        suited_run_len_on_top(pile)
+    }
+}
+
 impl GameRules for Spider {
     fn pile_layout(&self, rect: Rect) -> Vec<PileSlot> {
         // 10 columns horizontally (max of top-row count and cascade
@@ -321,11 +352,22 @@ impl GameRules for Spider {
         let take = src.cards.len() - card_idx;
         let mut candidates: Vec<_> = (CASCADE_FIRST..=CASCADE_LAST)
             .filter(|&dst| dst != pile)
-            .map(|dst| (piles.get(dst).origin_x, dst))
+            .map(|dst| {
+                (
+                    destination_run_score(piles, dst),
+                    piles.get(dst).origin_x,
+                    dst,
+                )
+            })
             .collect();
-        candidates.sort_by(|(ax, aid), (bx, bid)| ax.total_cmp(bx).then_with(|| aid.cmp(bid)));
+        candidates.sort_by(|(a_run, ax, aid), (b_run, bx, bid)| {
+            b_run
+                .cmp(a_run)
+                .then_with(|| ax.total_cmp(bx))
+                .then_with(|| aid.cmp(bid))
+        });
 
-        for (_, dst) in candidates {
+        for (_, _, dst) in candidates {
             let mut m = Move::simple(pile, take as u8, dst);
             if card_idx > 0 && !src.cards[card_idx - 1].face_up {
                 m = m.with_flip_source();
@@ -448,6 +490,49 @@ mod tests {
             .expect("six can move onto two sevens");
         assert_eq!(m.from, src);
         assert_eq!(m.to, left_dst);
+        assert_eq!(m.take, 1);
+    }
+
+    #[test]
+    fn single_click_move_prefers_longest_destination_run() {
+        let rules = Spider::one_suit();
+        let mut piles =
+            PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
+        for cid in CASCADE_FIRST..=CASCADE_LAST {
+            piles
+                .get_mut(cid)
+                .cards
+                .push(Card::new(Suit::Spades, Rank::King).face_up());
+        }
+
+        let src = CASCADE_FIRST + 8;
+        piles.get_mut(src).cards.clear();
+        piles
+            .get_mut(src)
+            .cards
+            .push(Card::new(Suit::Spades, Rank::Six).face_up());
+
+        let left_short_dst = CASCADE_FIRST + 1;
+        piles.get_mut(left_short_dst).cards.clear();
+        piles
+            .get_mut(left_short_dst)
+            .cards
+            .push(Card::new(Suit::Spades, Rank::Seven).face_up());
+
+        let right_long_dst = CASCADE_FIRST + 5;
+        piles.get_mut(right_long_dst).cards.clear();
+        for r in [Rank::Nine, Rank::Eight, Rank::Seven] {
+            piles
+                .get_mut(right_long_dst)
+                .cards
+                .push(Card::new(Suit::Spades, r).face_up());
+        }
+
+        let m = rules
+            .single_click_move(&piles, src, 0)
+            .expect("six can move onto either seven");
+        assert_eq!(m.from, src);
+        assert_eq!(m.to, right_long_dst);
         assert_eq!(m.take, 1);
     }
 
@@ -693,6 +778,49 @@ mod tests {
         // After collapse: cascade 0 empty, foundation 0 has 13 cards.
         assert!(s.piles.get(cid).is_empty(), "K-A run collapsed off cascade");
         assert_eq!(s.piles.get(FOUND_FIRST).len(), 13);
+    }
+
+    #[test]
+    fn recording_reports_complete_run_collapse() {
+        let mut s = GameSession::new(Spider::four_suit(), 1);
+        s.piles = PileSet::from_slots(
+            &Spider::four_suit().pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT),
+        );
+        let cid = CASCADE_FIRST;
+        for r in [
+            Rank::King,
+            Rank::Queen,
+            Rank::Jack,
+            Rank::Ten,
+            Rank::Nine,
+            Rank::Eight,
+            Rank::Seven,
+            Rank::Six,
+            Rank::Five,
+            Rank::Four,
+            Rank::Three,
+            Rank::Two,
+        ] {
+            s.piles
+                .get_mut(cid)
+                .cards
+                .push(Card::new(Suit::Spades, r).face_up());
+        }
+        let src = CASCADE_FIRST + 1;
+        s.piles
+            .get_mut(src)
+            .cards
+            .push(Card::new(Suit::Spades, Rank::Ace).face_up());
+
+        let records = s
+            .try_apply_recording(Move::simple(src, 1, cid))
+            .expect("A onto 2 applies and collapses");
+        assert_eq!(records.len(), 2);
+        assert!(!records[0].is_auto);
+        assert!(records[1].is_auto);
+        assert_eq!(records[1].m.from, cid);
+        assert_eq!(records[1].m.to, FOUND_FIRST);
+        assert_eq!(records[1].m.take, 13);
     }
 
     #[test]

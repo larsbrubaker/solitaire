@@ -57,6 +57,11 @@ pub struct CardAnim {
     /// through). `false` keeps the face static — used when a card is
     /// already face-up at both endpoints and only the position moves.
     pub flip: bool,
+    /// Hide the destination static card and draw this animation even
+    /// before `start_at`. Used for delayed source-card flips: the
+    /// session has already marked the card face-up, but visually it
+    /// must remain a face-down back until its flip begins.
+    pub hold_before_start: bool,
 }
 
 impl CardAnim {
@@ -83,6 +88,10 @@ impl CardAnim {
     /// `start_at` instant has passed).
     pub fn has_started(&self) -> bool {
         Instant::now() >= self.start_at
+    }
+
+    pub fn should_paint_now(&self) -> bool {
+        self.hold_before_start || self.has_started()
     }
 }
 

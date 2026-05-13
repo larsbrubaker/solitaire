@@ -6,14 +6,16 @@ use agg_gui::geometry::Rect;
 
 use crate::games::GameRules;
 use crate::piles::{PileId, PileSet};
-use crate::session::{GameSession, Move};
+use crate::session::{AppliedMoveRecord, GameSession, Move};
 
 pub trait DynGameSession {
     fn try_apply(&mut self, m: Move) -> bool;
+    fn try_apply_recording(&mut self, m: Move) -> Option<Vec<AppliedMoveRecord>>;
     /// Apply a batch of moves as a single undo unit. Used for stock
     /// dispenses where one click yields N moves but the player
     /// thinks of it as one action.
     fn try_apply_batch(&mut self, moves: Vec<Move>) -> bool;
+    fn try_apply_batch_recording(&mut self, moves: Vec<Move>) -> Option<Vec<AppliedMoveRecord>>;
     /// Apply a move bypassing `legal_move`. Used by engine-initiated
     /// actions like Mom's Solitaire's Shuffle that intentionally fall
     /// outside the user-facing move grammar.
@@ -37,8 +39,14 @@ impl<R: GameRules> DynGameSession for GameSession<R> {
     fn try_apply(&mut self, m: Move) -> bool {
         GameSession::try_apply(self, m)
     }
+    fn try_apply_recording(&mut self, m: Move) -> Option<Vec<AppliedMoveRecord>> {
+        GameSession::try_apply_recording(self, m)
+    }
     fn try_apply_batch(&mut self, moves: Vec<Move>) -> bool {
         GameSession::try_apply_batch(self, moves)
+    }
+    fn try_apply_batch_recording(&mut self, moves: Vec<Move>) -> Option<Vec<AppliedMoveRecord>> {
+        GameSession::try_apply_batch_recording(self, moves)
     }
     fn apply_forced(&mut self, m: Move) {
         GameSession::apply_forced(self, m);
