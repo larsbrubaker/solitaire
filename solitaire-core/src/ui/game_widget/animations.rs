@@ -379,7 +379,16 @@ pub(super) fn queue_klondike_draw_animations(
         });
     }
 
-    let deal_start = now + compact_duration;
+    // Only push the deal back behind the compaction when there IS
+    // a compaction. Empty-waste first deal has no fan to slide, so
+    // a `compact_duration` gap here would render the just-applied
+    // waste cards unhidden (no anim is `should_paint_now` yet) for
+    // 140 ms before they get hidden and re-flown — a visible flash.
+    let deal_start = if compact_sources.is_empty() {
+        now
+    } else {
+        now + compact_duration
+    };
     let deal_duration = Duration::from_millis(240);
     // Draw-3 must read as three distinct deals into slots 0, 1, 2.
     // Starting the next card only after the previous one lands keeps
