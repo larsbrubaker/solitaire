@@ -180,6 +180,7 @@ impl GameWidget {
                 m = m.with_flip_source();
             }
             let move_sources = Self::snapshot_move_sources(session.piles(), &m);
+            let source_reflow = Self::snapshot_source_waste_reflow(session.piles(), &m);
             if session.legal_move(&m) && session.try_apply(m) {
                 let now = web_time::Instant::now();
                 Self::queue_move_animations_from_snapshot(
@@ -189,6 +190,13 @@ impl GameWidget {
                     &m,
                     now,
                     std::time::Duration::from_millis(28),
+                );
+                Self::queue_source_waste_reflow_animations(
+                    &mut self.animations,
+                    &source_reflow,
+                    session.piles(),
+                    &m,
+                    now,
                 );
                 Self::queue_source_flip_animation_from_piles(
                     &mut self.animations,
@@ -417,6 +425,73 @@ impl GameWidget {
                 (idx, waste.cards[idx], x, y)
             })
             .collect()
+    }
+
+    fn snapshot_source_waste_reflow(
+        piles: &crate::piles::PileSet,
+        m: &Move,
+    ) -> Vec<(usize, Card, f64, f64)> {
+        if m.swap_with_top || m.reverse_order || m.take == 0 {
+            return Vec::new();
+        }
+        let pile = piles.get(m.from);
+        if pile.kind != PileKind::Waste || pile.fan_top_n <= 1 || pile.fan_dx == 0.0 {
+            return Vec::new();
+        }
+        let take = m.take as usize;
+        if pile.cards.len() <= take {
+            return Vec::new();
+        }
+        let after_len = pile.cards.len() - take;
+        (0..after_len)
+            .map(|idx| {
+                let (x, y) = pile.position_for(idx);
+                (idx, pile.cards[idx], x, y)
+            })
+            .collect()
+    }
+
+    fn queue_source_waste_reflow_animations(
+        animations: &mut Vec<CardAnim>,
+        sources: &[(usize, Card, f64, f64)],
+        piles: &crate::piles::PileSet,
+        m: &Move,
+        now: web_time::Instant,
+    ) {
+        if sources.is_empty() {
+            return;
+        }
+        let pile = piles.get(m.from);
+        let mut shifted = Vec::new();
+        for &(idx, card, src_x, src_y) in sources {
+            if idx >= pile.cards.len() || pile.cards[idx] != card {
+                continue;
+            }
+            let (dst_x, dst_y) = pile.position_for(idx);
+            if (dst_x - src_x).abs() < 0.5 && (dst_y - src_y).abs() < 0.5 {
+                continue;
+            }
+            shifted.push((idx, card, src_x, src_y, dst_x, dst_y));
+        }
+        let Some(hide_from) = shifted.iter().map(|(idx, ..)| *idx).min() else {
+            return;
+        };
+        for (_idx, card, src_x, src_y, dst_x, dst_y) in shifted {
+            animations.push(CardAnim {
+                card,
+                src_x,
+                src_y,
+                dst_x,
+                dst_y,
+                card_w: pile.card_w,
+                card_h: pile.card_h,
+                start_at: now,
+                duration: std::time::Duration::from_millis(160),
+                dst_pile: m.from,
+                dst_hide_from: hide_from,
+                flip: false,
+            });
+        }
     }
 
     fn queue_klondike_draw_animations(
@@ -739,9 +814,17 @@ impl GameWidget {
                     }
                     m
                 };
+                let source_reflow = Self::snapshot_source_waste_reflow(session.piles(), &m);
                 if session.try_apply(m) {
                     Self::queue_source_flip_animation_from_piles(
                         &mut self.animations,
+                        session.piles(),
+                        &m,
+                        web_time::Instant::now(),
+                    );
+                    Self::queue_source_waste_reflow_animations(
+                        &mut self.animations,
+                        &source_reflow,
                         session.piles(),
                         &m,
                         web_time::Instant::now(),
@@ -765,6 +848,7 @@ impl GameWidget {
             return false;
         };
         let move_sources = Self::snapshot_move_sources(session.piles(), &m);
+        let source_reflow = Self::snapshot_source_waste_reflow(session.piles(), &m);
         if !session.try_apply(m) {
             return false;
         }
@@ -775,10 +859,17 @@ impl GameWidget {
             session.piles(),
             &m,
             now,
-            std::time::Duration::from_millis(28),
+            std::time::Duration::ZERO,
         );
         Self::queue_source_flip_animation_from_piles(
             &mut self.animations,
+            session.piles(),
+            &m,
+            now,
+        );
+        Self::queue_source_waste_reflow_animations(
+            &mut self.animations,
+            &source_reflow,
             session.piles(),
             &m,
             now,

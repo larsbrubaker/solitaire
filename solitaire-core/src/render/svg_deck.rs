@@ -202,6 +202,7 @@ impl DeckBitmap {
             out[dst_off..dst_off + dst_stride as usize]
                 .copy_from_slice(&self.pixels[src_off..src_off + dst_stride as usize]);
         }
+        paint_one_pixel_card_border(&mut out, self.card_px_w, self.card_px_h);
         out
     }
 
@@ -216,6 +217,55 @@ impl DeckBitmap {
     /// theme wants a minimalist look.
     pub fn extract_back(&self) -> Vec<u8> {
         self.extract(4, 4)
+    }
+}
+
+/// Final pixel-space card outline pass. The SVG deck is rasterized at many
+/// output sizes; relying on the source outline means rounding/cropping can
+/// occasionally drop an edge pixel. This pass finds the alpha silhouette of
+/// the cropped card and paints the inside boundary black, giving every sprite
+/// a stable 1-device-pixel outline at its actual atlas size.
+fn paint_one_pixel_card_border(pixels: &mut [u8], w: u32, h: u32) {
+    if w == 0 || h == 0 {
+        return;
+    }
+    debug_assert_eq!(pixels.len(), (w * h * 4) as usize);
+    const ALPHA_THRESHOLD: u8 = 16;
+    let src = pixels.to_vec();
+    let idx = |x: u32, y: u32| -> usize { ((y * w + x) * 4) as usize };
+    let belongs_to_card = |x: u32, y: u32| -> bool { src[idx(x, y) + 3] >= ALPHA_THRESHOLD };
+
+    for y in 0..h {
+        for x in 0..w {
+            if !belongs_to_card(x, y) {
+                continue;
+            }
+            let mut boundary = x == 0 || y == 0 || x + 1 == w || y + 1 == h;
+            if !boundary {
+                let x0 = x.saturating_sub(1);
+                let y0 = y.saturating_sub(1);
+                let x1 = (x + 1).min(w - 1);
+                let y1 = (y + 1).min(h - 1);
+                'neighbors: for ny in y0..=y1 {
+                    for nx in x0..=x1 {
+                        if nx == x && ny == y {
+                            continue;
+                        }
+                        if !belongs_to_card(nx, ny) {
+                            boundary = true;
+                            break 'neighbors;
+                        }
+                    }
+                }
+            }
+            if boundary {
+                let i = idx(x, y);
+                pixels[i] = 0;
+                pixels[i + 1] = 0;
+                pixels[i + 2] = 0;
+                pixels[i + 3] = src[i + 3].max(0xcc);
+            }
+        }
     }
 }
 
@@ -364,6 +414,40 @@ mod tests {
         assert_eq!(position_for(Suit::Clubs, Rank::Ace), (3, 0));
         assert_eq!(position_for(Suit::Clubs, Rank::King), (3, 12));
         assert_eq!(position_for(Suit::Diamonds, Rank::Seven), (2, 6));
+    }
+
+    #[test]
+    fn card_border_pass_paints_alpha_silhouette_boundary() {
+        let w = 5;
+        let h = 5;
+        let mut pixels = vec![0u8; w * h * 4];
+        for y in 1..4 {
+            for x in 1..4 {
+                let i = (y * w + x) * 4;
+                pixels[i] = 0xff;
+                pixels[i + 1] = 0xff;
+                pixels[i + 2] = 0xff;
+                pixels[i + 3] = 0xff;
+            }
+        }
+
+        paint_one_pixel_card_border(&mut pixels, w as u32, h as u32);
+
+        let center = (2 * w + 2) * 4;
+        assert_eq!(&pixels[center..center + 4], &[0xff, 0xff, 0xff, 0xff]);
+        for &(x, y) in &[
+            (1usize, 1usize),
+            (2, 1),
+            (3, 1),
+            (1, 2),
+            (3, 2),
+            (1, 3),
+            (2, 3),
+            (3, 3),
+        ] {
+            let i = (y * w + x) * 4;
+            assert_eq!(&pixels[i..i + 4], &[0, 0, 0, 0xff]);
+        }
     }
 
     /// Sanity check that the bundled SVG parses and rasterizes at a
