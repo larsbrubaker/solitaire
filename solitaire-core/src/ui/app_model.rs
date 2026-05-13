@@ -245,3 +245,57 @@ fn wallclock_seed() -> u64 {
     let nanos = now.elapsed().as_nanos() as u64;
     nanos.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0xCAFEBABE
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+    use std::rc::Rc;
+
+    struct StorageGuard {
+        _store: Rc<RefCell<HashMap<String, String>>>,
+    }
+
+    impl Drop for StorageGuard {
+        fn drop(&mut self) {
+            crate::platform::clear_storage_io_for_test();
+        }
+    }
+
+    fn install_test_storage() -> StorageGuard {
+        let store = Rc::new(RefCell::new(HashMap::new()));
+        let load_store = store.clone();
+        let save_store = store.clone();
+        crate::platform::set_storage_io(
+            move |k| load_store.borrow().get(k).cloned(),
+            move |k, v| {
+                save_store.borrow_mut().insert(k.to_string(), v.to_string());
+            },
+        );
+        StorageGuard { _store: store }
+    }
+
+    #[test]
+    fn app_model_loads_persisted_spider_options() {
+        let _guard = install_test_storage();
+        UserSettings {
+            klondike_draw_count: 3,
+            spider_suit_count: 1,
+            spider_one_suit: Suit::Spades,
+        }
+        .save();
+
+        let mut model = AppModel::new();
+        assert_eq!(model.klondike_draw_count, 3);
+        assert_eq!(model.spider_suit_count, 1);
+        assert_eq!(model.spider_one_suit, Suit::Spades);
+
+        model.start_game_with_seed(GameKind::Spider, 7);
+        let session = model.session.as_ref().unwrap();
+        for cid in 9..=18u8 {
+            let top = session.piles().get(cid).top().unwrap();
+            assert_eq!(top.suit, Suit::Spades);
+        }
+    }
+}

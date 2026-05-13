@@ -1,5 +1,5 @@
 //! Chrome layout — picks where the menu bar, HUD, and playfield
-//! sit based on the current viewport size. On wide / tall desktops
+//! sit based on the current viewport size. On desktop and portrait-ish
 //! the menu bar runs across the top, the HUD along the bottom, and
 //! the playfield fills the middle. On landscape-mobile-shaped
 //! viewports (short / wide) the HUD switches to a vertical strip on
@@ -24,10 +24,8 @@ pub const HUD_STRIP_H: f64 = 48.0;
 /// `VERTICAL_ROW_H` (36 px). The HUD action buttons sit below this in
 /// the same sidebar column.
 pub const SIDEBAR_MENU_H: f64 = 3.0 * 36.0;
-/// Breathing room between the playfield and the chrome (menu bar, HUD
-/// strip, or sidebar) so cards never paint flush against a chrome
-/// edge. Applied symmetrically on every side the playfield touches
-/// chrome.
+/// Breathing room between the playfield and the chrome/window edges so
+/// cards never paint flush against the UI frame.
 pub const PLAY_PAD: f64 = 12.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,17 +54,16 @@ pub struct ChromeLayout {
     pub playfield_rect: Rect,
 }
 
-/// Decide the chrome layout for the given viewport. The thresholds
-/// are intentionally generous so a slightly cramped desktop window
-/// keeps the familiar bottom-strip layout.
+/// Decide the chrome layout for the given viewport. Sidebar mode is
+/// reserved for genuinely landscape-wide viewports; narrow or roughly
+/// square windows need the full horizontal span for cards.
 pub fn compute(viewport: Size) -> ChromeLayout {
     let w = viewport.width;
     let h = viewport.height;
-    // Compact when the window is short enough that a 48-px bottom
-    // strip + 26-px top strip would eat >15% of vertical room, or
-    // when the aspect is markedly landscape-wide (phones in
-    // landscape, 16:9 / 19.5:9). Either triggers sidebar mode.
-    let compact = h < 700.0 || (w > h * 1.5 && h < 900.0);
+    // Compact only when the aspect is markedly landscape-wide (phones
+    // in landscape, 16:9 / 19.5:9). A modest desktop window can be
+    // short without having horizontal space to spare for a sidebar.
+    let compact = w > h * 1.5 && h < 900.0;
     if compact {
         // Sidebar mode:
         //   * `menu_rect` = top portion of the left column — the
@@ -93,12 +90,12 @@ pub fn compute(viewport: Size) -> ChromeLayout {
     } else {
         let menu_rect = Rect::new(0.0, h - MENU_BAR_H, w, MENU_BAR_H);
         let hud_rect = Rect::new(0.0, 0.0, w, HUD_STRIP_H);
-        // Inset top + bottom so cards have breathing room between the
-        // menu bar above and HUD strip below.
+        // Inset on every side so cards have breathing room between
+        // the menu bar above, HUD strip below, and window edges.
         let playfield_rect = Rect::new(
-            0.0,
+            PLAY_PAD,
             HUD_STRIP_H + PLAY_PAD,
-            w,
+            w - PLAY_PAD * 2.0,
             h - HUD_STRIP_H - MENU_BAR_H - PLAY_PAD * 2.0,
         );
         ChromeLayout {
@@ -120,7 +117,8 @@ mod tests {
         assert_eq!(l.mode, ChromeMode::Standard);
         // Playfield grabs the middle band minus PLAY_PAD breathing room
         // between menu/HUD and the cards.
-        assert_eq!(l.playfield_rect.width, 1024.0);
+        assert_eq!(l.playfield_rect.x, PLAY_PAD);
+        assert_eq!(l.playfield_rect.width, 1024.0 - PLAY_PAD * 2.0);
         assert_eq!(
             l.playfield_rect.height,
             720.0 - MENU_BAR_H - HUD_STRIP_H - PLAY_PAD * 2.0
@@ -154,5 +152,17 @@ mod tests {
         // mode is a future option.)
         let l = compute(Size::new(390.0, 844.0));
         assert_eq!(l.mode, ChromeMode::Standard);
+    }
+
+    #[test]
+    fn cramped_non_landscape_window_stays_standard() {
+        // This shape needs horizontal room for wide games like Spider;
+        // sidebar mode would spend too much width on chrome.
+        let l = compute(Size::new(654.0, 690.0));
+        assert_eq!(l.mode, ChromeMode::Standard);
+        assert_eq!(l.menu_rect.y, 690.0 - MENU_BAR_H);
+        assert_eq!(l.hud_rect.y, 0.0);
+        assert_eq!(l.playfield_rect.x, PLAY_PAD);
+        assert_eq!(l.playfield_rect.width, 654.0 - PLAY_PAD * 2.0);
     }
 }

@@ -302,6 +302,50 @@ impl GameRules for Klondike {
         }
         Vec::new()
     }
+
+    fn single_click_move(&self, piles: &PileSet, pile: PileId, card_idx: usize) -> Option<Move> {
+        let src = piles.get(pile);
+        if card_idx >= src.cards.len() || !src.cards[card_idx].face_up {
+            return None;
+        }
+
+        let take = src.cards.len() - card_idx;
+        let can_flip_source = is_tableau(pile) && card_idx > 0 && !src.cards[card_idx - 1].face_up;
+
+        // Prefer foundation moves for top cards, matching the double-click
+        // shortcut and the usual "send it home" click expectation.
+        if take == 1 {
+            for dst in FOUND_FIRST..=FOUND_LAST {
+                if dst == pile {
+                    continue;
+                }
+                let mut m = Move::simple(pile, 1, dst);
+                if can_flip_source {
+                    m = m.with_flip_source();
+                }
+                if self.legal_move(piles, &m) {
+                    return Some(m);
+                }
+            }
+        }
+
+        let mut candidates: Vec<_> = (TABLEAU_FIRST..=TABLEAU_LAST)
+            .filter(|&dst| dst != pile)
+            .map(|dst| (piles.get(dst).origin_x, dst))
+            .collect();
+        candidates.sort_by(|(ax, aid), (bx, bid)| ax.total_cmp(bx).then_with(|| aid.cmp(bid)));
+
+        for (_, dst) in candidates {
+            let mut m = Move::simple(pile, take as u8, dst);
+            if can_flip_source {
+                m = m.with_flip_source();
+            }
+            if self.legal_move(piles, &m) {
+                return Some(m);
+            }
+        }
+        None
+    }
 }
 
 // Re-exported so callers don't need to know about the constants.
@@ -410,6 +454,60 @@ mod tests {
             .push(Card::new(Suit::Spades, Rank::King).face_up());
         let m = Move::simple(WASTE, 1, TABLEAU_FIRST);
         assert!(rules.legal_move(&piles, &m));
+    }
+
+    #[test]
+    fn single_click_top_card_prefers_foundation() {
+        let rules = Klondike::new();
+        let mut piles =
+            PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
+        piles
+            .get_mut(TABLEAU_FIRST)
+            .cards
+            .push(Card::new(Suit::Hearts, Rank::Ace).face_up());
+        piles
+            .get_mut(TABLEAU_FIRST + 1)
+            .cards
+            .push(Card::new(Suit::Spades, Rank::Two).face_up());
+
+        let m = rules
+            .single_click_move(&piles, TABLEAU_FIRST, 0)
+            .expect("ace can move to foundation");
+        assert_eq!(m.from, TABLEAU_FIRST);
+        assert_eq!(m.to, FOUND_FIRST);
+        assert_eq!(m.take, 1);
+    }
+
+    #[test]
+    fn single_click_run_moves_to_leftmost_legal_tableau() {
+        let rules = Klondike::new();
+        let mut piles =
+            PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
+        let src = TABLEAU_FIRST + 4;
+        piles
+            .get_mut(src)
+            .cards
+            .push(Card::new(Suit::Clubs, Rank::Ten).face_up());
+        piles
+            .get_mut(src)
+            .cards
+            .push(Card::new(Suit::Hearts, Rank::Nine).face_up());
+
+        let left_dst = TABLEAU_FIRST + 1;
+        let right_dst = TABLEAU_FIRST + 3;
+        for dst in [left_dst, right_dst] {
+            piles
+                .get_mut(dst)
+                .cards
+                .push(Card::new(Suit::Diamonds, Rank::Jack).face_up());
+        }
+
+        let m = rules
+            .single_click_move(&piles, src, 0)
+            .expect("10-9 run can move onto either jack");
+        assert_eq!(m.from, src);
+        assert_eq!(m.to, left_dst);
+        assert_eq!(m.take, 2);
     }
 
     #[test]

@@ -3,9 +3,9 @@
 use crate::cards::Card;
 
 /// Fan-down step for a face-up card, expressed as a fraction of
-/// `card_h`. 0.22 matches the historical 28 px against 126 px tall
-/// cards, scaling cleanly with whatever card size the game picks.
-const FAN_DOWN_FACE_UP: f64 = 0.22;
+/// `card_h`. Slightly tighter than the historical 28 px against
+/// 126 px tall cards so long tableau columns fit more comfortably.
+pub const FAN_DOWN_FACE_UP: f64 = 0.176;
 /// Fan-down step for a face-down card (smaller — nothing readable on
 /// the back). 0.11 matches the historical 14 px against 126 px cards.
 const FAN_DOWN_FACE_DOWN: f64 = 0.11;
@@ -24,12 +24,9 @@ pub enum PileLayout {
     /// cards in Y-up). Face-down cards use a smaller offset than face-up
     /// cards because nothing readable is shown on the back.
     FannedDown,
-    /// Like `FannedDown`, but consecutive cards that form a SUITED
-    /// descending run (same suit, rank stepping down by one) compact
-    /// tightly together — a single Spider tableau pile that grows a
-    /// long K-down-to-A spades run no longer fills the screen. The
-    /// compact step matches the face-down fan offset, so the visual
-    /// rhythm reads as "deck-thick" cards stacking onto a partner.
+    /// Legacy compacting layout for suited Spider runs. Kept so old
+    /// test fixtures and saved layouts can still parse, but active game
+    /// layouts should prefer `FannedDown` for uniform visible spacing.
     FannedDownCompactSuited,
 }
 

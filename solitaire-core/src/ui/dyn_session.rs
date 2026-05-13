@@ -21,6 +21,7 @@ pub trait DynGameSession {
     fn try_undo(&mut self) -> bool;
     fn legal_move(&self, m: &Move) -> bool;
     fn on_pile_click(&self, pile: PileId) -> Vec<Move>;
+    fn single_click_move(&self, pile: PileId, card_idx: usize) -> Option<Move>;
     fn auto_complete_step(&self) -> Option<Move>;
     fn piles(&self) -> &PileSet;
     fn is_won(&self) -> bool;
@@ -50,6 +51,9 @@ impl<R: GameRules> DynGameSession for GameSession<R> {
     }
     fn on_pile_click(&self, pile: PileId) -> Vec<Move> {
         self.rules.on_pile_click(&self.piles, pile)
+    }
+    fn single_click_move(&self, pile: PileId, card_idx: usize) -> Option<Move> {
+        self.rules.single_click_move(&self.piles, pile, card_idx)
     }
     fn auto_complete_step(&self) -> Option<Move> {
         self.rules.auto_complete_step(&self.piles)

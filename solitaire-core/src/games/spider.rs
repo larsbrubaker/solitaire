@@ -24,9 +24,9 @@ const N_CASCADES: usize = 10;
 
 /// Top row has 8 foundations + a 1-column gap + stock = 10 columns.
 const TOP_COLS: usize = 10;
-/// Vertical budget in card-heights — top row + tableau fan. Spider
-/// runs compact via `FannedDownCompactSuited`, so even long descending
-/// runs rarely exceed ~5 card-heights of total fan extent.
+/// Vertical budget in card-heights — top row + tableau fan. The normal
+/// fan step is intentionally tight, so a typical Spider column still
+/// fits without compacting suited runs differently from other cards.
 const VERT_BUDGET_CARDS: f64 = 5.0;
 
 pub struct Spider {
@@ -161,12 +161,12 @@ impl GameRules for Spider {
             9.0,
             top_row_origin_y,
         ));
-        // 10 cascades on the row below, with compact-suited-run fan.
+        // 10 cascades on the row below, with uniform visible fan spacing.
         for i in 0..N_CASCADES as u8 {
             out.push(mk(
                 CASCADE_FIRST + i,
                 PileKind::Tableau,
-                PileLayout::FannedDownCompactSuited,
+                PileLayout::FannedDown,
                 i as f64,
                 tableau_origin_y,
             ));
@@ -309,6 +309,33 @@ impl GameRules for Spider {
         }
         out
     }
+
+    fn single_click_move(&self, piles: &PileSet, pile: PileId, card_idx: usize) -> Option<Move> {
+        if !is_cascade(pile) {
+            return None;
+        }
+        let src = piles.get(pile);
+        if card_idx >= src.cards.len() || !src.cards[card_idx].face_up {
+            return None;
+        }
+        let take = src.cards.len() - card_idx;
+        let mut candidates: Vec<_> = (CASCADE_FIRST..=CASCADE_LAST)
+            .filter(|&dst| dst != pile)
+            .map(|dst| (piles.get(dst).origin_x, dst))
+            .collect();
+        candidates.sort_by(|(ax, aid), (bx, bid)| ax.total_cmp(bx).then_with(|| aid.cmp(bid)));
+
+        for (_, dst) in candidates {
+            let mut m = Move::simple(pile, take as u8, dst);
+            if card_idx > 0 && !src.cards[card_idx - 1].face_up {
+                m = m.with_flip_source();
+            }
+            if self.legal_move(piles, &m) {
+                return Some(m);
+            }
+        }
+        None
+    }
 }
 
 #[cfg(test)]
@@ -334,6 +361,15 @@ mod tests {
         // Top of every cascade face-up.
         for id in CASCADE_FIRST..=CASCADE_LAST {
             assert!(s.piles.get(id).top().unwrap().face_up);
+        }
+    }
+
+    #[test]
+    fn cascades_use_uniform_fanned_spacing() {
+        let rules = Spider::four_suit();
+        let slots = rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT);
+        for cid in CASCADE_FIRST..=CASCADE_LAST {
+            assert_eq!(slots[cid as usize].layout, PileLayout::FannedDown);
         }
     }
 
@@ -377,6 +413,42 @@ mod tests {
             .push(Card::new(Suit::Clubs, Rank::Eight).face_up());
         let m = Move::simple(src, 2, dst);
         assert!(!rules.legal_move(&piles, &m));
+    }
+
+    #[test]
+    fn single_click_move_picks_leftmost_legal_destination() {
+        let rules = Spider::four_suit();
+        let mut piles =
+            PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
+        for cid in CASCADE_FIRST..=CASCADE_LAST {
+            piles
+                .get_mut(cid)
+                .cards
+                .push(Card::new(Suit::Clubs, Rank::King).face_up());
+        }
+
+        let src = CASCADE_FIRST + 5;
+        piles.get_mut(src).cards.clear();
+        piles
+            .get_mut(src)
+            .cards
+            .push(Card::new(Suit::Spades, Rank::Six).face_up());
+        let left_dst = CASCADE_FIRST + 2;
+        let right_dst = CASCADE_FIRST + 4;
+        for dst in [left_dst, right_dst] {
+            piles.get_mut(dst).cards.clear();
+            piles
+                .get_mut(dst)
+                .cards
+                .push(Card::new(Suit::Hearts, Rank::Seven).face_up());
+        }
+
+        let m = rules
+            .single_click_move(&piles, src, 0)
+            .expect("six can move onto two sevens");
+        assert_eq!(m.from, src);
+        assert_eq!(m.to, left_dst);
+        assert_eq!(m.take, 1);
     }
 
     #[test]

@@ -345,8 +345,7 @@ impl Widget for MenuBarHost {
             return false;
         }
         // Hide the horizontal menu bar in sidebar mode — the same
-        // actions are exposed as vertical buttons in HudWidget so the
-        // top 26 px of viewport can go to the playfield.
+        // actions are exposed by `SidebarMenuHost` in the left column.
         let chrome = layout::compute(Size::new(self.bounds.width, self.bounds.height));
         chrome.mode != ChromeMode::Sidebar
     }

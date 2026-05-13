@@ -69,6 +69,13 @@ pub trait GameRules: 'static {
         Vec::new()
     }
 
+    /// Single-click card move helper. Variants that support click-to-
+    /// move can return the move they want applied for `card_idx` in
+    /// `pile`; the UI only calls this for a press/release with no drag.
+    fn single_click_move(&self, _piles: &PileSet, _pile: PileId, _card_idx: usize) -> Option<Move> {
+        None
+    }
+
     /// After-move hook — called by `GameSession::try_apply` in a loop
     /// after every user move. Used by Spider to collapse complete K→A
     /// suited runs into a foundation. Returns `None` when no auto step

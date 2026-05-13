@@ -16,16 +16,162 @@
 
 #![allow(deprecated)] // matches the agg-gui demo-native winit 0.30 idiom
 
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use agg_gui::{winit_adapter, App, Modifiers, Size};
 use demo_wgpu::{begin_frame, WgpuGfxCtx};
+use serde::{Deserialize, Serialize};
 use solitaire_core::ui::build_solitaire_app;
-use winit::dpi::LogicalSize;
+use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize, Position};
 use winit::event::{ElementState, Event, MouseScrollDelta, WindowEvent};
 use winit::event_loop::EventLoop;
-use winit::window::{Window, WindowAttributes};
+use winit::window::{Fullscreen, Window, WindowAttributes};
+
+const WINDOW_STATE_KEY: &str = "solitaire-native:window-state:v1";
+const DEFAULT_WINDOW_W: u32 = 1024;
+const DEFAULT_WINDOW_H: u32 = 768;
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+struct WindowState {
+    width: u32,
+    height: u32,
+    x: i32,
+    y: i32,
+    fullscreen: bool,
+}
+
+impl WindowState {
+    fn from_window(window: &Window) -> Self {
+        let size = window.inner_size();
+        let pos = window
+            .outer_position()
+            .unwrap_or_else(|_| PhysicalPosition::new(0, 0));
+        Self {
+            width: size.width.max(1),
+            height: size.height.max(1),
+            x: pos.x,
+            y: pos.y,
+            fullscreen: window.fullscreen().is_some(),
+        }
+    }
+
+    fn is_reasonable(self) -> bool {
+        (320..=7680).contains(&self.width)
+            && (240..=4320).contains(&self.height)
+            && self.x.abs() <= 100_000
+            && self.y.abs() <= 100_000
+    }
+
+    fn load() -> Option<Self> {
+        let raw = solitaire_core::platform::storage_load(WINDOW_STATE_KEY)?;
+        serde_json::from_str::<Self>(&raw)
+            .ok()
+            .filter(|s| s.is_reasonable())
+    }
+
+    fn save(self) {
+        if let Ok(raw) = serde_json::to_string(&self) {
+            solitaire_core::platform::storage_save(WINDOW_STATE_KEY, &raw);
+        }
+    }
+
+    fn save_from_window(window: &Window) {
+        if window.fullscreen().is_some() {
+            Self::save_fullscreen(true);
+        } else {
+            Self::from_window(window).save();
+        }
+    }
+
+    fn save_fullscreen(fullscreen: bool) {
+        let mut state = Self::load().unwrap_or(Self {
+            width: DEFAULT_WINDOW_W,
+            height: DEFAULT_WINDOW_H,
+            x: 0,
+            y: 0,
+            fullscreen,
+        });
+        state.fullscreen = fullscreen;
+        state.save();
+    }
+}
+
+fn storage_path() -> Option<PathBuf> {
+    let mut path = dirs::config_dir()?;
+    path.push("Solitaire");
+    path.push("settings.json");
+    Some(path)
+}
+
+fn read_storage_file(path: &PathBuf) -> HashMap<String, String> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+fn write_storage_file(path: &PathBuf, store: &HashMap<String, String>) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(s) = serde_json::to_string_pretty(store) {
+        let _ = std::fs::write(path, s);
+    }
+}
+
+fn register_file_storage_io() {
+    let Some(path) = storage_path() else {
+        return;
+    };
+    let load_path = path.clone();
+    solitaire_core::platform::set_storage_io(
+        move |key| read_storage_file(&load_path).get(key).cloned(),
+        move |key, value| {
+            let mut store = read_storage_file(&path);
+            store.insert(key.to_string(), value.to_string());
+            write_storage_file(&path, &store);
+        },
+    );
+}
+
+fn register_native_fullscreen_toggle(window: Arc<Window>) {
+    solitaire_core::platform::set_fullscreen_toggle(move || {
+        let entering_fullscreen = window.fullscreen().is_none();
+        let fullscreen = if entering_fullscreen {
+            Some(Fullscreen::Borderless(None))
+        } else {
+            None
+        };
+        if entering_fullscreen {
+            WindowState::save_from_window(&window);
+        }
+        window.set_fullscreen(fullscreen);
+        WindowState::save_fullscreen(entering_fullscreen);
+    });
+}
+
+fn save_window_size(window: &Window, size: PhysicalSize<u32>) {
+    let mut state = WindowState::load().unwrap_or_else(|| WindowState::from_window(window));
+    state.fullscreen = window.fullscreen().is_some();
+    if !state.fullscreen {
+        state.width = size.width.max(1);
+        state.height = size.height.max(1);
+    }
+    state.save();
+}
+
+fn save_window_position(window: &Window, pos: PhysicalPosition<i32>) {
+    let mut state = WindowState::load().unwrap_or_else(|| WindowState::from_window(window));
+    state.fullscreen = window.fullscreen().is_some();
+    if !state.fullscreen {
+        state.x = pos.x;
+        state.y = pos.y;
+    }
+    state.save();
+}
 
 struct Gpu {
     device: Arc<wgpu::Device>,
@@ -102,18 +248,32 @@ impl Gpu {
 
 fn main() {
     let _ = dotenvy::dotenv();
+    register_file_storage_io();
 
     let event_loop = EventLoop::new().expect("create event loop");
+    let saved_window = WindowState::load();
 
-    let window_attributes = WindowAttributes::default()
+    let mut window_attributes = WindowAttributes::default()
         .with_title("Solitaire")
-        .with_inner_size(LogicalSize::new(1024, 768));
+        .with_inner_size(LogicalSize::new(
+            saved_window.map_or(DEFAULT_WINDOW_W, |s| s.width),
+            saved_window.map_or(DEFAULT_WINDOW_H, |s| s.height),
+        ));
+    if let Some(state) = saved_window {
+        window_attributes = window_attributes
+            .with_position(Position::Physical(PhysicalPosition::new(state.x, state.y)));
+        if state.fullscreen {
+            window_attributes =
+                window_attributes.with_fullscreen(Some(Fullscreen::Borderless(None)));
+        }
+    }
 
     let window = Arc::new(
         event_loop
             .create_window(window_attributes)
             .expect("create window"),
     );
+    register_native_fullscreen_toggle(window.clone());
     agg_gui::set_device_scale(window.scale_factor());
     agg_gui::font_settings::set_lcd_enabled(agg_gui::device_scale() <= 1.25);
 
@@ -148,7 +308,10 @@ fn main() {
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
                 ..
-            } => elwt.exit(),
+            } => {
+                WindowState::save_from_window(&window);
+                elwt.exit();
+            }
 
             Event::WindowEvent {
                 event: WindowEvent::Resized(size),
@@ -157,6 +320,15 @@ fn main() {
                 win_w = size.width;
                 win_h = size.height;
                 gpu.resize(win_w, win_h);
+                save_window_size(&window, size);
+                window.request_redraw();
+            }
+
+            Event::WindowEvent {
+                event: WindowEvent::Moved(pos),
+                ..
+            } => {
+                save_window_position(&window, pos);
                 window.request_redraw();
             }
 
