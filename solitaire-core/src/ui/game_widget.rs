@@ -6,6 +6,10 @@
 //! exist. `paint_pile` is a free function called from this widget's
 //! `paint`.
 
+mod animations;
+mod banners;
+mod pile_click;
+
 use std::sync::Arc;
 
 use agg_gui::draw_ctx::DrawCtx;
@@ -17,12 +21,9 @@ use agg_gui::widget::Widget;
 use crate::cards::Card;
 use crate::piles::{HitResult, PileId, PileKind, FAN_DOWN_FACE_UP};
 use crate::render::{paint_card_at, paint_pile, CardSpriteAtlas};
-use crate::session::{AppliedMoveRecord, Move};
+use crate::session::Move;
 
-use super::animation::{
-    animated_deck_faces, animated_quad, build_stripe_texture, deck_thickness_for, CardAnim,
-    DeckFace, DeckFlipAnim,
-};
+use super::animation::{animated_deck_faces, CardAnim, DeckFace, DeckFlipAnim};
 use super::app_model::{Screen, SharedModel};
 use super::layout;
 
@@ -95,31 +96,6 @@ impl GameWidget {
         }
     }
 
-    /// `hide_from` index for `pile_id` while any in-flight animation
-    /// targets it — `None` means draw all cards normally. Multiple
-    /// animations targeting the same pile collapse to the lowest
-    /// `dst_hide_from` so all of them are correctly suppressed.
-    fn hide_from_for(&self, pile_id: PileId) -> Option<usize> {
-        let card_min = self
-            .animations
-            .iter()
-            .filter(|a| a.should_paint_now())
-            .filter(|a| a.dst_pile == pile_id)
-            .map(|a| a.dst_hide_from)
-            .min();
-        let deck_min = self
-            .deck_animations
-            .iter()
-            .filter(|a| a.has_started())
-            .filter(|a| a.dst_pile == pile_id)
-            .map(|a| a.dst_hide_from)
-            .min();
-        match (card_min, deck_min) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (a, b) => a.or(b),
-        }
-    }
-
     fn is_double_click(&self, vx: f64, vy: f64) -> bool {
         let Some((t, lx, ly)) = self.last_click else {
             return false;
@@ -127,23 +103,6 @@ impl GameWidget {
         t.elapsed().as_millis() <= DOUBLE_CLICK_MS
             && (lx - vx).abs() <= DOUBLE_CLICK_RADIUS
             && (ly - vy).abs() <= DOUBLE_CLICK_RADIUS
-    }
-
-    fn is_source_reveal_anim(anim: &CardAnim) -> bool {
-        anim.hold_before_start
-            && anim.flip
-            && (anim.src_x - anim.dst_x).abs() < 0.5
-            && (anim.src_y - anim.dst_y).abs() < 0.5
-    }
-
-    fn paint_card_animation(&self, ctx: &mut dyn DrawCtx, anim: &CardAnim) {
-        let q = animated_quad(anim);
-        let sprite = if q.show_front {
-            self.atlas.face(anim.card.suit, anim.card.rank)
-        } else {
-            self.atlas.back()
-        };
-        ctx.draw_image_rgba_corners(&sprite, self.atlas.px_w, self.atlas.px_h, q.corners);
     }
 
     /// On a double-click of the topmost face-up card under the cursor,
@@ -203,7 +162,12 @@ impl GameWidget {
                     continue;
                 };
                 let now = web_time::Instant::now();
-                Self::queue_recorded_move_animations(&mut self.animations, &records, now, true);
+                animations::queue_recorded_move_animations(
+                    &mut self.animations,
+                    &records,
+                    now,
+                    true,
+                );
                 agg_gui::animation::request_draw();
                 return true;
             }
@@ -291,7 +255,7 @@ impl GameWidget {
                     let Some(records) = session.try_apply_recording(m) else {
                         return false;
                     };
-                    Self::queue_recorded_move_animations(
+                    animations::queue_recorded_move_animations(
                         &mut self.animations,
                         &records,
                         web_time::Instant::now(),
@@ -306,460 +270,6 @@ impl GameWidget {
                 agg_gui::animation::request_draw();
                 true
             }
-        }
-    }
-
-    fn queue_source_flip_animation_from_piles(
-        animations: &mut Vec<CardAnim>,
-        piles: &crate::piles::PileSet,
-        m: &Move,
-        now: web_time::Instant,
-    ) {
-        if !m.flip_source_after {
-            return;
-        }
-        let pile = piles.get(m.from);
-        let Some(idx) = pile.cards.len().checked_sub(1) else {
-            return;
-        };
-        let card = pile.cards[idx];
-        if !card.face_up {
-            return;
-        }
-        let (x, y) = pile.position_for(idx);
-        animations.push(CardAnim {
-            card,
-            src_x: x,
-            src_y: y,
-            dst_x: x,
-            dst_y: y,
-            card_w: pile.card_w,
-            card_h: pile.card_h,
-            start_at: now,
-            duration: std::time::Duration::from_millis(260),
-            dst_pile: m.from,
-            dst_hide_from: idx,
-            flip: true,
-            hold_before_start: true,
-            late_appear_at: None,
-        });
-    }
-
-    fn snapshot_move_sources(piles: &crate::piles::PileSet, m: &Move) -> Vec<(Card, f64, f64)> {
-        if m.swap_with_top || m.take == 0 {
-            return Vec::new();
-        }
-        let pile = piles.get(m.from);
-        let take = m.take as usize;
-        if pile.cards.len() < take {
-            return Vec::new();
-        }
-        let start = pile.cards.len() - take;
-        (start..pile.cards.len())
-            .map(|idx| {
-                let (x, y) = pile.position_for(idx);
-                (pile.cards[idx], x, y)
-            })
-            .collect()
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn queue_move_animations_from_snapshot(
-        animations: &mut Vec<CardAnim>,
-        sources: &[(Card, f64, f64)],
-        piles: &crate::piles::PileSet,
-        m: &Move,
-        now: web_time::Instant,
-        stagger: std::time::Duration,
-        hold_before_start: bool,
-        late_hold: Option<(usize, web_time::Instant)>,
-    ) {
-        if sources.is_empty() || m.swap_with_top {
-            return;
-        }
-        let take = m.take as usize;
-        let dst_pile = piles.get(m.to);
-        if dst_pile.cards.len() < take {
-            return;
-        }
-        let dst_start = dst_pile.cards.len() - take;
-        for dst_offset in 0..take {
-            let src_offset = if m.reverse_order {
-                take - 1 - dst_offset
-            } else {
-                dst_offset
-            };
-            let Some((_, src_x, src_y)) = sources.get(src_offset).copied() else {
-                continue;
-            };
-            let dst_idx = dst_start + dst_offset;
-            let card = dst_pile.cards[dst_idx];
-            let (dst_x, dst_y) = dst_pile.position_for(dst_idx);
-            let late_appear_at = match late_hold {
-                Some((late_top, late_at))
-                    if hold_before_start && src_offset + late_top >= sources.len() =>
-                {
-                    Some(late_at)
-                }
-                _ => None,
-            };
-            animations.push(CardAnim {
-                card,
-                src_x,
-                src_y,
-                dst_x,
-                dst_y,
-                card_w: dst_pile.card_w,
-                card_h: dst_pile.card_h,
-                start_at: now + stagger * dst_offset as u32,
-                duration: std::time::Duration::from_millis(480),
-                dst_pile: m.to,
-                dst_hide_from: dst_start,
-                flip: m.flip_moved,
-                hold_before_start,
-                late_appear_at,
-            });
-        }
-    }
-
-    fn snapshot_swap_sources(
-        piles: &crate::piles::PileSet,
-        m: &Move,
-    ) -> Option<[(PileId, Card, f64, f64); 2]> {
-        if !m.swap_with_top {
-            return None;
-        }
-        let from = piles.get(m.from);
-        let to = piles.get(m.to);
-        let from_idx = from.cards.len().checked_sub(1)?;
-        let to_idx = to.cards.len().checked_sub(1)?;
-        let (from_x, from_y) = from.position_for(from_idx);
-        let (to_x, to_y) = to.position_for(to_idx);
-        Some([
-            (m.from, from.cards[from_idx], from_x, from_y),
-            (m.to, to.cards[to_idx], to_x, to_y),
-        ])
-    }
-
-    fn queue_swap_animations_from_snapshot(
-        animations: &mut Vec<CardAnim>,
-        sources: &[(PileId, Card, f64, f64); 2],
-        piles: &crate::piles::PileSet,
-        m: &Move,
-        now: web_time::Instant,
-    ) {
-        if !m.swap_with_top {
-            return;
-        }
-        let from_kind = piles.get(m.from).kind;
-        let to_kind = piles.get(m.to).kind;
-        let moms_gap_swap = from_kind == PileKind::Tableau
-            && to_kind == PileKind::Tableau
-            && sources
-                .iter()
-                .any(|(_, card, _, _)| card.rank == crate::cards::Rank::Ace);
-
-        for &(src_pile, card, src_x, src_y) in sources {
-            if moms_gap_swap && card.rank == crate::cards::Rank::Ace {
-                continue;
-            }
-            let dst_id = if src_pile == m.from { m.to } else { m.from };
-            let dst_pile = piles.get(dst_id);
-            let Some(dst_idx) = dst_pile.cards.len().checked_sub(1) else {
-                continue;
-            };
-            let (dst_x, dst_y) = dst_pile.position_for(dst_idx);
-            animations.push(CardAnim {
-                card,
-                src_x,
-                src_y,
-                dst_x,
-                dst_y,
-                card_w: dst_pile.card_w,
-                card_h: dst_pile.card_h,
-                start_at: now,
-                duration: std::time::Duration::from_millis(220),
-                dst_pile: dst_id,
-                dst_hide_from: dst_idx,
-                flip: false,
-                hold_before_start: false,
-                late_appear_at: None,
-            });
-        }
-    }
-
-    fn is_klondike_stock_to_waste_draw(piles: &crate::piles::PileSet, m: &Move) -> bool {
-        m.flip_moved
-            && !m.reverse_order
-            && !m.swap_with_top
-            && piles.get(m.from).kind == PileKind::Stock
-            && piles.get(m.to).kind == PileKind::Waste
-    }
-
-    fn snapshot_waste_fan_compaction(
-        piles: &crate::piles::PileSet,
-        waste_id: PileId,
-    ) -> Vec<(usize, Card, f64, f64)> {
-        let waste = piles.get(waste_id);
-        if waste.fan_top_n == 0 || waste.fan_dx == 0.0 || waste.cards.is_empty() {
-            return Vec::new();
-        }
-        let top_n = (waste.fan_top_n as usize).min(waste.cards.len());
-        let start = waste.cards.len() - top_n;
-        (start..waste.cards.len())
-            .map(|idx| {
-                let (x, y) = waste.position_for(idx);
-                (idx, waste.cards[idx], x, y)
-            })
-            .collect()
-    }
-
-    fn snapshot_source_waste_reflow(
-        piles: &crate::piles::PileSet,
-        m: &Move,
-    ) -> Vec<(usize, Card, f64, f64)> {
-        if m.swap_with_top || m.reverse_order || m.take == 0 {
-            return Vec::new();
-        }
-        let pile = piles.get(m.from);
-        if pile.kind != PileKind::Waste || pile.fan_top_n <= 1 || pile.fan_dx == 0.0 {
-            return Vec::new();
-        }
-        let take = m.take as usize;
-        if pile.cards.len() <= take {
-            return Vec::new();
-        }
-        let after_len = pile.cards.len() - take;
-        (0..after_len)
-            .map(|idx| {
-                let (x, y) = pile.position_for(idx);
-                (idx, pile.cards[idx], x, y)
-            })
-            .collect()
-    }
-
-    fn queue_source_waste_reflow_animations(
-        animations: &mut Vec<CardAnim>,
-        sources: &[(usize, Card, f64, f64)],
-        piles: &crate::piles::PileSet,
-        m: &Move,
-        now: web_time::Instant,
-    ) {
-        if sources.is_empty() {
-            return;
-        }
-        let pile = piles.get(m.from);
-        let mut shifted = Vec::new();
-        for &(idx, card, src_x, src_y) in sources {
-            if idx >= pile.cards.len() || pile.cards[idx] != card {
-                continue;
-            }
-            let (dst_x, dst_y) = pile.position_for(idx);
-            if (dst_x - src_x).abs() < 0.5 && (dst_y - src_y).abs() < 0.5 {
-                continue;
-            }
-            shifted.push((idx, card, src_x, src_y, dst_x, dst_y));
-        }
-        let Some(hide_from) = shifted.iter().map(|(idx, ..)| *idx).min() else {
-            return;
-        };
-        for (_idx, card, src_x, src_y, dst_x, dst_y) in shifted {
-            animations.push(CardAnim {
-                card,
-                src_x,
-                src_y,
-                dst_x,
-                dst_y,
-                card_w: pile.card_w,
-                card_h: pile.card_h,
-                start_at: now,
-                duration: std::time::Duration::from_millis(160),
-                dst_pile: m.from,
-                dst_hide_from: hide_from,
-                flip: false,
-                hold_before_start: false,
-                late_appear_at: None,
-            });
-        }
-    }
-
-    fn queue_klondike_draw_animations(
-        animations: &mut Vec<CardAnim>,
-        move_sources: &[(Card, f64, f64)],
-        compact_sources: &[(usize, Card, f64, f64)],
-        piles: &crate::piles::PileSet,
-        m: &Move,
-        now: web_time::Instant,
-    ) {
-        let waste = piles.get(m.to);
-        let take = m.take as usize;
-        if waste.cards.len() < take {
-            return;
-        }
-        let draw_start = waste.cards.len() - take;
-        let hide_from = compact_sources
-            .first()
-            .map(|(idx, _, _, _)| *idx)
-            .unwrap_or(draw_start);
-
-        let compact_duration = std::time::Duration::from_millis(140);
-        for &(_, card, src_x, src_y) in compact_sources {
-            animations.push(CardAnim {
-                card,
-                src_x,
-                src_y,
-                dst_x: waste.origin_x,
-                dst_y: waste.origin_y,
-                card_w: waste.card_w,
-                card_h: waste.card_h,
-                start_at: now,
-                duration: compact_duration,
-                dst_pile: m.to,
-                dst_hide_from: hide_from,
-                flip: false,
-                hold_before_start: false,
-                late_appear_at: None,
-            });
-        }
-
-        let deal_start = now + compact_duration;
-        let deal_duration = std::time::Duration::from_millis(240);
-        // Draw-3 must read as three distinct deals into slots 0, 1, 2.
-        // Starting the next card only after the previous one lands keeps
-        // the animated card and final static card in visual lockstep.
-        let deal_stagger = deal_duration;
-        for dst_offset in 0..take {
-            let Some((_, src_x, src_y)) = move_sources.get(dst_offset).copied() else {
-                continue;
-            };
-            let dst_idx = draw_start + dst_offset;
-            let card = waste.cards[dst_idx];
-            let (dst_x, dst_y) = waste.position_for(dst_idx);
-            animations.push(CardAnim {
-                card,
-                src_x,
-                src_y,
-                dst_x,
-                dst_y,
-                card_w: waste.card_w,
-                card_h: waste.card_h,
-                start_at: deal_start + deal_stagger * dst_offset as u32,
-                duration: deal_duration,
-                dst_pile: m.to,
-                dst_hide_from: dst_idx,
-                flip: true,
-                hold_before_start: false,
-                late_appear_at: None,
-            });
-        }
-    }
-
-    fn queue_recorded_move_animations(
-        animations: &mut Vec<CardAnim>,
-        records: &[AppliedMoveRecord],
-        now: web_time::Instant,
-        animate_user_move: bool,
-    ) {
-        let move_duration = std::time::Duration::from_millis(480);
-        let swap_duration = std::time::Duration::from_millis(220);
-        let flip_duration = std::time::Duration::from_millis(260);
-        let auto_followup_pause = std::time::Duration::from_millis(120);
-        let mut cursor = now;
-        let mut previous_move: Option<Move> = None;
-        let mut prev_anim_end: Option<web_time::Instant> = None;
-        let mut deferred_source_flips: Vec<&AppliedMoveRecord> = Vec::new();
-
-        for (record_idx, record) in records.iter().enumerate() {
-            let next_is_auto = records.get(record_idx + 1).is_some_and(|next| next.is_auto);
-            let should_animate_transfer = animate_user_move || record.is_auto;
-            let mut transfer_duration = std::time::Duration::ZERO;
-
-            if should_animate_transfer {
-                if let Some(sources) = Self::snapshot_swap_sources(&record.before, &record.m) {
-                    Self::queue_swap_animations_from_snapshot(
-                        animations,
-                        &sources,
-                        &record.after,
-                        &record.m,
-                        cursor,
-                    );
-                    transfer_duration = swap_duration;
-                } else {
-                    let sources = Self::snapshot_move_sources(&record.before, &record.m);
-                    if !sources.is_empty() {
-                        // Hold the source pose only when this auto follow-up
-                        // is consuming the previous move's destination — e.g.
-                        // a Spider K-A run collapse fired by clicking an Ace
-                        // onto a K-down-to-2. The just-landed top of the run
-                        // appears *after* the user's flying animation ends so
-                        // we don't double-draw with it; the rest of the run
-                        // appears immediately to cover the static cascade
-                        // that the session has already emptied.
-                        let needs_hold = previous_move.is_some_and(|prev| prev.to == record.m.from)
-                            && cursor > now;
-                        let late_hold = if needs_hold {
-                            previous_move
-                                .map(|prev| prev.take as usize)
-                                .zip(prev_anim_end)
-                        } else {
-                            None
-                        };
-                        Self::queue_move_animations_from_snapshot(
-                            animations,
-                            &sources,
-                            &record.after,
-                            &record.m,
-                            cursor,
-                            std::time::Duration::ZERO,
-                            needs_hold,
-                            late_hold,
-                        );
-                        transfer_duration = move_duration;
-                    }
-                }
-            }
-
-            let after_transfer = cursor + transfer_duration;
-            let source_reflow = Self::snapshot_source_waste_reflow(&record.before, &record.m);
-            Self::queue_source_waste_reflow_animations(
-                animations,
-                &source_reflow,
-                &record.after,
-                &record.m,
-                cursor,
-            );
-
-            let mut flip_phase = false;
-            if next_is_auto && record.m.flip_source_after {
-                deferred_source_flips.push(record);
-            } else {
-                flip_phase = !deferred_source_flips.is_empty() || record.m.flip_source_after;
-                for deferred in deferred_source_flips.drain(..) {
-                    Self::queue_source_flip_animation_from_piles(
-                        animations,
-                        &deferred.after,
-                        &deferred.m,
-                        after_transfer,
-                    );
-                }
-                Self::queue_source_flip_animation_from_piles(
-                    animations,
-                    &record.after,
-                    &record.m,
-                    after_transfer,
-                );
-            }
-
-            prev_anim_end = Some(after_transfer);
-            cursor = if flip_phase {
-                after_transfer + flip_duration
-            } else {
-                after_transfer
-            };
-            if next_is_auto {
-                cursor += auto_followup_pause;
-            }
-            previous_move = Some(record.m);
         }
     }
 
@@ -810,180 +320,6 @@ impl GameWidget {
         }
     }
 
-    fn try_pile_click(&mut self, vx: f64, vy: f64) -> bool {
-        let mut model = self.model.borrow_mut();
-        let Some(session) = model.session.as_mut() else {
-            return false;
-        };
-        let piles = session.piles();
-        let Some(hit) = piles.hit_test(vx, vy) else {
-            return false;
-        };
-        let pile_id = match hit {
-            HitResult::Card { pile, .. } => pile,
-            HitResult::EmptySlot { pile } => pile,
-        };
-        let moves = session.on_pile_click(pile_id);
-        if moves.is_empty() {
-            return false;
-        }
-        // Detect Klondike's waste→stock recycle: a single move whose
-        // SOURCE is a different pile from the one we clicked, that
-        // takes the whole pile and reverses it. That's our cue to
-        // animate the ENTIRE waste flipping as one 3-D deck box,
-        // rather than as N per-card flights.
-        let is_recycle = moves.len() == 1
-            && moves[0].from != pile_id
-            && moves[0].reverse_order
-            && moves[0].flip_moved;
-        let single_move_animation = if !is_recycle && moves.len() == 1 {
-            let m = moves[0];
-            let move_sources = Self::snapshot_move_sources(piles, &m);
-            let compact_sources = if Self::is_klondike_stock_to_waste_draw(piles, &m) {
-                Self::snapshot_waste_fan_compaction(piles, m.to)
-            } else {
-                Vec::new()
-            };
-            Some((m, move_sources, compact_sources))
-        } else {
-            None
-        };
-
-        // Capture the source origin (top of the clicked pile) BEFORE
-        // applying the batch — once we apply, the stock's top card
-        // has moved and we can't read its pre-move position.
-        let src_pile = piles.get(pile_id);
-        let src_x = src_pile.origin_x;
-        let src_y = src_pile.origin_y;
-        let dst_pile_ids: Vec<PileId> = moves.iter().map(|m| m.to).collect();
-
-        // Recycle path: snapshot the waste's pre-move state so the
-        // animation knows the card count + top card before the
-        // session mutates them away.
-        let recycle_setup = if is_recycle {
-            let from_id = moves[0].from;
-            let waste = piles.get(from_id);
-            let top = waste.top().copied();
-            let count = waste.cards.len() as u32;
-            // Top of waste = visible center of waste pile.
-            let (wx, wy) = if !waste.cards.is_empty() {
-                waste.position_for(waste.cards.len() - 1)
-            } else {
-                (waste.origin_x, waste.origin_y)
-            };
-            top.map(|t| (from_id, t, count, wx, wy, waste.card_w, waste.card_h))
-        } else {
-            None
-        };
-
-        let Some(records) = session.try_apply_batch_recording(moves) else {
-            return false;
-        };
-
-        let now = web_time::Instant::now();
-        if let Some((_from_id, top_card, card_count, wx, wy, card_w, card_h)) = recycle_setup {
-            // Deck-flip animation: thickness scales with card count,
-            // side stripes generated procedurally. Source center =
-            // waste's top-card center, destination center = stock's
-            // top-card center.
-            let dst_pile = session.piles().get(dst_pile_ids[0]);
-            let (sx, sy) = if !dst_pile.cards.is_empty() {
-                dst_pile.position_for(dst_pile.cards.len() - 1)
-            } else {
-                (dst_pile.origin_x, dst_pile.origin_y)
-            };
-            let thickness = deck_thickness_for(card_count, card_w);
-            let (side_tex, side_w, side_h) = build_stripe_texture(card_count);
-            let dst_hide_from = if dst_pile.cards.is_empty() {
-                0
-            } else {
-                dst_pile.cards.len() - card_count.min(dst_pile.cards.len() as u32) as usize
-            };
-            // Convert pile-origin (bottom-left) to card-center for
-            // both source and destination.
-            self.deck_animations.push(DeckFlipAnim {
-                top_card,
-                card_count,
-                card_w,
-                card_h,
-                thickness,
-                src_center_x: wx + card_w / 2.0,
-                src_center_y: wy + card_h / 2.0,
-                dst_center_x: sx + card_w / 2.0,
-                dst_center_y: sy + card_h / 2.0,
-                start_at: now,
-                duration: std::time::Duration::from_millis(450),
-                dst_pile: dst_pile_ids[0],
-                dst_hide_from,
-                side_texture: side_tex,
-                side_tex_w: side_w,
-                side_tex_h: side_h,
-            });
-        } else if let Some((m, sources, compact_sources)) = single_move_animation {
-            if Self::is_klondike_stock_to_waste_draw(session.piles(), &m) && m.take > 1 {
-                Self::queue_klondike_draw_animations(
-                    &mut self.animations,
-                    &sources,
-                    &compact_sources,
-                    session.piles(),
-                    &m,
-                    now,
-                );
-            } else {
-                Self::queue_move_animations_from_snapshot(
-                    &mut self.animations,
-                    &sources,
-                    session.piles(),
-                    &m,
-                    now,
-                    std::time::Duration::from_millis(70),
-                    false,
-                    None,
-                );
-            }
-        } else {
-            // Regular fly-and-flip per dispensed card.
-            let per_card_dur = std::time::Duration::from_millis(220);
-            let stagger = std::time::Duration::from_millis(40);
-            for (i, dst_id) in dst_pile_ids.iter().enumerate() {
-                let dst_pile = session.piles().get(*dst_id);
-                if dst_pile.cards.is_empty() {
-                    continue;
-                }
-                let new_idx = dst_pile.cards.len() - 1;
-                let card = dst_pile.cards[new_idx];
-                let (dx, dy) = dst_pile.position_for(new_idx);
-                self.animations.push(CardAnim {
-                    card,
-                    src_x,
-                    src_y,
-                    dst_x: dx,
-                    dst_y: dy,
-                    card_w: dst_pile.card_w,
-                    card_h: dst_pile.card_h,
-                    start_at: now + stagger * i as u32,
-                    duration: per_card_dur,
-                    dst_pile: *dst_id,
-                    dst_hide_from: new_idx,
-                    flip: true,
-                    hold_before_start: false,
-                    late_appear_at: None,
-                });
-            }
-        }
-        let batch_len = dst_pile_ids.len();
-        if records.len() > batch_len {
-            Self::queue_recorded_move_animations(
-                &mut self.animations,
-                &records[batch_len..],
-                now,
-                true,
-            );
-        }
-        agg_gui::animation::request_draw();
-        true
-    }
-
     fn finish_drag(&mut self, vx: f64, vy: f64) {
         let Some(drag) = self.drag.take() else { return };
         let mut model = self.model.borrow_mut();
@@ -1030,7 +366,7 @@ impl GameWidget {
                 };
                 if let Some(records) = session.try_apply_recording(m) {
                     let now = web_time::Instant::now();
-                    Self::queue_recorded_move_animations(
+                    animations::queue_recorded_move_animations(
                         &mut self.animations,
                         &records,
                         now,
@@ -1058,7 +394,7 @@ impl GameWidget {
             return false;
         };
         let now = web_time::Instant::now();
-        Self::queue_recorded_move_animations(&mut self.animations, &records, now, true);
+        animations::queue_recorded_move_animations(&mut self.animations, &records, now, true);
         if session.is_won() {
             model.screen = Screen::Won;
         }
@@ -1144,7 +480,8 @@ impl Widget for GameWidget {
                     .as_ref()
                     .filter(|d| d.source_pile == pile.id)
                     .map(|d| d.start_idx);
-                let anim_hide = self.hide_from_for(pile.id);
+                let anim_hide =
+                    animations::hide_from_for(&self.animations, &self.deck_animations, pile.id);
                 let hide_from = match (drag_hide, anim_hide) {
                     (Some(a), Some(b)) => Some(a.min(b)),
                     (a, b) => a.or(b),
@@ -1165,11 +502,13 @@ impl Widget for GameWidget {
         // may appear before the flip starts, but must stay under the
         // run that is still visually sitting above them.
         for anim in &self.animations {
-            if !Self::is_source_reveal_anim(anim) || anim.has_started() || !anim.should_paint_now()
+            if !animations::is_source_reveal_anim(anim)
+                || anim.has_started()
+                || !anim.should_paint_now()
             {
                 continue;
             }
-            self.paint_card_animation(ctx, anim);
+            animations::paint_card_animation(ctx, &self.atlas, anim);
         }
         // Held-but-not-started transfer cards preserve an intermediate
         // board state while later automatic moves wait their turn.
@@ -1177,16 +516,19 @@ impl Widget for GameWidget {
         // user move) only paint after their `late_appear_at`, so the
         // gating runs through `should_paint_now`.
         for anim in &self.animations {
-            if Self::is_source_reveal_anim(anim) || anim.has_started() || !anim.should_paint_now() {
+            if animations::is_source_reveal_anim(anim)
+                || anim.has_started()
+                || !anim.should_paint_now()
+            {
                 continue;
             }
-            self.paint_card_animation(ctx, anim);
+            animations::paint_card_animation(ctx, &self.atlas, anim);
         }
         for anim in &self.animations {
             if !anim.has_started() {
                 continue;
             }
-            self.paint_card_animation(ctx, anim);
+            animations::paint_card_animation(ctx, &self.atlas, anim);
         }
 
         // Deck-flip animations: render each in-flight DeckFlipAnim
@@ -1237,10 +579,10 @@ impl Widget for GameWidget {
 
         // Banners (win / Mom's king-pickup prompt).
         if self.model.borrow().screen == Screen::Won {
-            paint_win_banner(ctx, &self.font, pf);
+            banners::paint_win_banner(ctx, &self.font, pf);
         }
         if self.model.borrow().moms_waiting_king_at.is_some() {
-            paint_moms_prompt(ctx, &self.font, pf, "Select a King for the empty slot");
+            banners::paint_moms_prompt(ctx, &self.font, pf, "Select a King for the empty slot");
         }
 
         let ms = t0.elapsed().as_secs_f64() * 1000.0;
@@ -1320,62 +662,5 @@ impl Widget for GameWidget {
 
     fn needs_draw(&self) -> bool {
         self.drag.is_some() || !self.animations.is_empty() || !self.deck_animations.is_empty()
-    }
-}
-
-fn paint_win_banner(ctx: &mut dyn DrawCtx, font: &Arc<Font>, rect: Rect) {
-    use agg_gui::color::Color;
-    let bg = Color::from_rgba8(0x10, 0x10, 0x10, 0xc8);
-    let fg = Color::from_rgb8(0xff, 0xd7, 0x00);
-    let pad = 30.0;
-    let label = "You Won!";
-    ctx.set_font(font.clone());
-    ctx.set_font_size(56.0);
-    let m = ctx.measure_text(label);
-    let lw = m.map(|t| t.width).unwrap_or(280.0);
-    let bw = lw + pad * 2.0;
-    let bh = 100.0;
-    let bx = rect.x + (rect.width - bw) / 2.0;
-    let by = rect.y + (rect.height - bh) / 2.0;
-    ctx.begin_path();
-    ctx.rounded_rect(bx, by, bw, bh, 14.0);
-    ctx.set_fill_color(bg);
-    ctx.fill();
-    ctx.set_fill_color(fg);
-    ctx.fill_text(label, bx + pad, by + (bh - 56.0) / 2.0);
-}
-
-/// Status banner for Mom's Solitaire's "select a King for the empty
-/// slot" prompt. Painted near the top of the playfield, similar in
-/// style to the C# original's instruction banner.
-fn paint_moms_prompt(ctx: &mut dyn DrawCtx, font: &Arc<Font>, rect: Rect, label: &str) {
-    use agg_gui::color::Color;
-    let bg = Color::from_rgba8(0xf8, 0x89, 0x78, 0xf0);
-    let border = Color::from_rgb8(0x20, 0x20, 0x20);
-    let fg = Color::from_rgb8(0x10, 0x10, 0x10);
-    let pad_x = 18.0;
-    let bh = 32.0;
-    let font_size = 16.0;
-    ctx.set_font(font.clone());
-    ctx.set_font_size(font_size);
-    let m = ctx.measure_text(label);
-    let lw = m.map(|t| t.width).unwrap_or(240.0);
-    let bw = lw + pad_x * 2.0;
-    let bx = rect.x + (rect.width - bw) / 2.0;
-    // Y-up: place the banner near the TOP of the playfield rect.
-    let by = rect.y + rect.height - bh - 8.0;
-    ctx.begin_path();
-    ctx.rounded_rect(bx, by, bw, bh, 6.0);
-    ctx.set_fill_color(bg);
-    ctx.fill();
-    ctx.begin_path();
-    ctx.rounded_rect(bx, by, bw, bh, 6.0);
-    ctx.set_stroke_color(border);
-    ctx.set_line_width(1.5);
-    ctx.stroke();
-    ctx.set_fill_color(fg);
-    if let Some(m) = ctx.measure_text(label) {
-        let baseline = by + m.centered_baseline_y(bh);
-        ctx.fill_text(label, bx + pad_x, baseline);
     }
 }
