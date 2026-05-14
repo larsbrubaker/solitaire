@@ -163,6 +163,36 @@ fn save_window_size(window: &Window, size: PhysicalSize<u32>) {
     state.save();
 }
 
+/// Returns true if at least a 100x100 patch of the saved window rect
+/// overlaps a currently-connected monitor. Used to drop a stale saved
+/// position from a monitor that's no longer attached (laptop undocked,
+/// external display unplugged) so the window doesn't open off-screen
+/// and become unreachable.
+///
+/// winit 0.30 only exposes monitor enumeration on `ActiveEventLoop` /
+/// `Window`, not on the pre-run `EventLoop`. We pass the freshly-created
+/// `Window` in and re-position it if validation fails.
+fn position_visible_on_any_monitor(window: &Window, state: &WindowState) -> bool {
+    let win_left = state.x;
+    let win_top = state.y;
+    let win_right = state.x.saturating_add(state.width as i32);
+    let win_bottom = state.y.saturating_add(state.height as i32);
+    for m in window.available_monitors() {
+        let mp = m.position();
+        let ms = m.size();
+        let m_left = mp.x;
+        let m_top = mp.y;
+        let m_right = mp.x.saturating_add(ms.width as i32);
+        let m_bottom = mp.y.saturating_add(ms.height as i32);
+        let overlap_w = win_right.min(m_right) - win_left.max(m_left);
+        let overlap_h = win_bottom.min(m_bottom) - win_top.max(m_top);
+        if overlap_w >= 100 && overlap_h >= 100 {
+            return true;
+        }
+    }
+    false
+}
+
 fn save_window_position(window: &Window, pos: PhysicalPosition<i32>) {
     let mut state = WindowState::load().unwrap_or_else(|| WindowState::from_window(window));
     state.fullscreen = window.fullscreen().is_some();
@@ -259,13 +289,16 @@ fn main() {
             saved_window.map_or(DEFAULT_WINDOW_W, |s| s.width),
             saved_window.map_or(DEFAULT_WINDOW_H, |s| s.height),
         ));
-    if let Some(state) = saved_window {
+    // Apply the saved position up-front; we'll validate it against the
+    // current monitor layout right after window creation and move the
+    // window if the saved rect is off-screen (winit 0.30 doesn't expose
+    // monitor enumeration before the event loop is active).
+    if let Some(state) = saved_window.filter(|s| !s.fullscreen) {
         window_attributes = window_attributes
             .with_position(Position::Physical(PhysicalPosition::new(state.x, state.y)));
-        if state.fullscreen {
-            window_attributes =
-                window_attributes.with_fullscreen(Some(Fullscreen::Borderless(None)));
-        }
+    }
+    if saved_window.is_some_and(|s| s.fullscreen) {
+        window_attributes = window_attributes.with_fullscreen(Some(Fullscreen::Borderless(None)));
     }
 
     let window = Arc::new(
@@ -273,6 +306,20 @@ fn main() {
             .create_window(window_attributes)
             .expect("create window"),
     );
+    // Recovery: if the saved position lands on a now-disconnected
+    // monitor, snap the window back onto the primary display so it
+    // doesn't open off-screen and become unreachable from the taskbar.
+    if let Some(state) = saved_window.filter(|s| !s.fullscreen) {
+        if !position_visible_on_any_monitor(&window, &state) {
+            if let Some(primary) = window.primary_monitor().or_else(|| window.current_monitor()) {
+                let mp = primary.position();
+                let ms = primary.size();
+                let cx = mp.x + ((ms.width as i32 - state.width as i32) / 2).max(0);
+                let cy = mp.y + ((ms.height as i32 - state.height as i32) / 2).max(0);
+                window.set_outer_position(PhysicalPosition::new(cx, cy));
+            }
+        }
+    }
     register_native_fullscreen_toggle(window.clone());
     agg_gui::set_device_scale(window.scale_factor());
     agg_gui::font_settings::set_lcd_enabled(agg_gui::device_scale() <= 1.25);
