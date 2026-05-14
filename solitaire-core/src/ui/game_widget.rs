@@ -32,6 +32,16 @@ fn playfield_rect(bounds: Rect) -> Rect {
     layout::compute(Size::new(bounds.width, bounds.height)).playfield_rect
 }
 
+/// Stroke a rounded yellow outline over a card-sized rect — used by the
+/// Spider Hint overlay to mark the recommended source run and destination.
+fn stroke_hint_rect(ctx: &mut dyn DrawCtx, x: f64, y: f64, w: f64, h: f64) {
+    ctx.begin_path();
+    ctx.rounded_rect(x, y, w, h, crate::consts::CARD_CORNER_R);
+    ctx.set_stroke_color(crate::render::HIGHLIGHT);
+    ctx.set_line_width(4.0);
+    ctx.stroke();
+}
+
 #[derive(Clone, Debug)]
 struct DragState {
     source_pile: PileId,
@@ -168,6 +178,7 @@ impl GameWidget {
                     now,
                     true,
                 );
+                model.spider_hint = None;
                 agg_gui::animation::request_draw();
                 return true;
             }
@@ -334,6 +345,7 @@ impl GameWidget {
             Some(HitResult::EmptySlot { pile }) => Some(pile),
             None => None,
         };
+        let mut applied = false;
         if let Some(to) = target_pile {
             if to != drag.source_pile {
                 let take = drag.cards.len() as u8;
@@ -362,12 +374,16 @@ impl GameWidget {
                         now,
                         false,
                     );
+                    applied = true;
                 }
             }
         }
         // Win check.
         if session.is_won() {
             model.screen = Screen::Won;
+        }
+        if applied {
+            model.spider_hint = None;
         }
         agg_gui::animation::request_draw();
     }
@@ -388,8 +404,62 @@ impl GameWidget {
         if session.is_won() {
             model.screen = Screen::Won;
         }
+        model.spider_hint = None;
         agg_gui::animation::request_draw();
         true
+    }
+
+    /// Paint the Spider Hint overlay: a yellow outline around the
+    /// recommended source run (or stock pile, for a stock-deal hint)
+    /// and the recommended destination. No-op when no hint is active
+    /// or the active game isn't Spider.
+    fn paint_spider_hint_overlay(&self, ctx: &mut dyn DrawCtx) {
+        let model = self.model.borrow();
+        let Some(hint) = model.spider_hint else {
+            return;
+        };
+        let Some(session) = model.session.as_ref() else {
+            return;
+        };
+        let piles = session.piles();
+        match hint {
+            crate::games::spider::SpiderHint::Move {
+                from,
+                start_idx,
+                take,
+                to,
+            } => {
+                let src = piles.get(from);
+                let take = take as usize;
+                if start_idx >= src.cards.len() || take == 0 {
+                    return;
+                }
+                let end_idx = (start_idx + take - 1).min(src.cards.len() - 1);
+                let (hx, hy) = src.position_for(start_idx);
+                let (_tx, ty) = src.position_for(end_idx);
+                let x = hx;
+                let y = ty;
+                let w = src.card_w;
+                let h = hy + src.card_h - ty;
+                stroke_hint_rect(ctx, x, y, w, h);
+                let dst = piles.get(to);
+                let (dx, dy, dw, dh) = if dst.is_empty() {
+                    dst.empty_slot_rect()
+                } else {
+                    dst.card_rect(dst.cards.len() - 1)
+                };
+                stroke_hint_rect(ctx, dx, dy, dw, dh);
+            }
+            crate::games::spider::SpiderHint::StockDeal { stock } => {
+                let pile = piles.get(stock);
+                let (sx, sy, sw, sh) = if pile.is_empty() {
+                    pile.empty_slot_rect()
+                } else {
+                    pile.card_rect(pile.cards.len() - 1)
+                };
+                stroke_hint_rect(ctx, sx, sy, sw, sh);
+            }
+        }
     }
 
     fn paint_dragged(&self, ctx: &mut dyn DrawCtx, drag: &DragState) {
@@ -479,6 +549,10 @@ impl Widget for GameWidget {
             }
         }
         drop(model);
+
+        // Spider Hint overlay sits above the static piles but under
+        // animations/drag so a moving card never gets a stale yellow halo.
+        self.paint_spider_hint_overlay(ctx);
 
         // Paint in-flight card animations on top of the static
         // piles. Each animation projects a 3-D Y-axis-rotated card

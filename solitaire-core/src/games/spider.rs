@@ -11,9 +11,25 @@ use rand::seq::SliceRandom;
 
 use crate::cards::{spider_deck, Card, Rank, Suit};
 use crate::piles::{PileId, PileKind, PileLayout, PileSet, PileSlot};
-use crate::session::Move;
+use crate::session::{apply_move, Move};
 
 use super::{GameRules, CARD_ASPECT};
+
+/// Hint surfaced by the HUD's Hint button. Either a recommended cascade
+/// move (source pile + start index + tail length + destination) or a
+/// recommendation to deal from the stock when no tableau move exists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SpiderHint {
+    Move {
+        from: PileId,
+        start_idx: usize,
+        take: u8,
+        to: PileId,
+    },
+    StockDeal {
+        stock: PileId,
+    },
+}
 
 const FOUND_FIRST: PileId = 0;
 const FOUND_LAST: PileId = 7;
@@ -378,6 +394,116 @@ impl GameRules for Spider {
         }
         None
     }
+}
+
+/// Stock deal is legal when stock has at least one card per cascade
+/// AND every cascade is non-empty (standard Spider rule the stock-click
+/// path also enforces).
+fn stock_deal_legal(piles: &PileSet) -> bool {
+    if piles.get(STOCK).len() < N_CASCADES {
+        return false;
+    }
+    for cid in CASCADE_FIRST..=CASCADE_LAST {
+        if piles.get(cid).is_empty() {
+            return false;
+        }
+    }
+    true
+}
+
+struct HintCandidate {
+    completes: bool,
+    exposes: bool,
+    dst_run_after: usize,
+    src_x: f64,
+    dst_x: f64,
+    src_id: PileId,
+    dst_id: PileId,
+    hint: SpiderHint,
+}
+
+/// Pick the highest-value Spider move for the current board, falling
+/// back to a stock deal when no cascade-to-cascade move is legal.
+///
+/// Ranking (higher is better, lexicographic):
+/// 1. Move completes a K→A suited run on the destination (auto-collapse).
+/// 2. Move exposes a face-down card on the source cascade.
+/// 3. Suited descending run length on the destination after the move.
+/// 4. Tie-breaks: leftmost source X, leftmost destination X, then pile ids.
+pub fn best_spider_hint(piles: &PileSet) -> Option<SpiderHint> {
+    let mut cands: Vec<HintCandidate> = Vec::new();
+    for src_id in CASCADE_FIRST..=CASCADE_LAST {
+        let src = piles.get(src_id);
+        let n = src.cards.len();
+        if n == 0 {
+            continue;
+        }
+        for start_idx in 0..n {
+            if !src.cards[start_idx].face_up {
+                continue;
+            }
+            let tail = &src.cards[start_idx..];
+            let take = tail.len();
+            if take > 1 && !is_suited_run(tail) {
+                continue;
+            }
+            let head_rank = tail[0].rank;
+            for dst_id in CASCADE_FIRST..=CASCADE_LAST {
+                if dst_id == src_id {
+                    continue;
+                }
+                let dst = piles.get(dst_id);
+                let legal = match dst.top() {
+                    None => true,
+                    Some(top) => Some(head_rank) == top.rank.next_down(),
+                };
+                if !legal {
+                    continue;
+                }
+                let exposes = start_idx > 0 && !src.cards[start_idx - 1].face_up;
+                let mut m = Move::simple(src_id, take as u8, dst_id);
+                if exposes {
+                    m = m.with_flip_source();
+                }
+                let mut sim = piles.clone();
+                apply_move(&mut sim, &m);
+                let dst_run_after = suited_run_len_on_top(sim.get(dst_id));
+                let completes = has_complete_run_on_top(sim.get(dst_id));
+                cands.push(HintCandidate {
+                    completes,
+                    exposes,
+                    dst_run_after,
+                    src_x: src.origin_x,
+                    dst_x: dst.origin_x,
+                    src_id,
+                    dst_id,
+                    hint: SpiderHint::Move {
+                        from: src_id,
+                        start_idx,
+                        take: take as u8,
+                        to: dst_id,
+                    },
+                });
+            }
+        }
+    }
+    cands.sort_by(|a, b| {
+        b.completes
+            .cmp(&a.completes)
+            .then_with(|| b.exposes.cmp(&a.exposes))
+            .then_with(|| b.dst_run_after.cmp(&a.dst_run_after))
+            .then_with(|| a.src_x.total_cmp(&b.src_x))
+            .then_with(|| a.dst_x.total_cmp(&b.dst_x))
+            .then_with(|| a.src_id.cmp(&b.src_id))
+            .then_with(|| a.dst_id.cmp(&b.dst_id))
+    });
+    if let Some(best) = cands.into_iter().next() {
+        return Some(best.hint);
+    }
+    if stock_deal_legal(piles) {
+        return Some(SpiderHint::StockDeal { stock: STOCK });
+    }
+    None
 }
 
 #[cfg(test)]

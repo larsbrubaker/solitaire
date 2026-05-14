@@ -13,7 +13,7 @@ use crate::cards::Suit;
 use crate::games::freecell::FreeCell;
 use crate::games::klondike::Klondike;
 use crate::games::moms::MomsSolitaire;
-use crate::games::spider::Spider;
+use crate::games::spider::{best_spider_hint, Spider, SpiderHint};
 use crate::games::GameKind;
 use crate::session::GameSession;
 use crate::settings::{PerfWindowState, UserSettings};
@@ -72,6 +72,10 @@ pub struct AppModel {
     /// `m_NumShuffles` in the C# original; surfaced on screen so the
     /// player can see how many shuffles the solve cost.
     pub moms_shuffles: u32,
+    /// Spider-only: most recent hint produced by the Hint button.
+    /// `None` when no hint is active. Cleared on every move/undo and
+    /// when the active game changes.
+    pub spider_hint: Option<SpiderHint>,
     /// Whether the Performance window (Mean CPU usage + sparkline) is
     /// currently open.  Held as `Rc<Cell<bool>>` so the agg-gui
     /// `Window` widget that hosts it can wire `with_visible_cell` to
@@ -121,6 +125,7 @@ impl AppModel {
             confirm: None,
             moms_waiting_king_at: None,
             moms_shuffles: 0,
+            spider_hint: None,
             show_performance_window: Rc::new(Cell::new(s.perf_window.visible)),
             perf_window_bounds: Rc::new(Cell::new(perf_bounds)),
             last_saved_perf_window: Cell::new((s.perf_window.visible, perf_bounds)),
@@ -250,6 +255,7 @@ impl AppModel {
         // shuffle count.
         self.moms_waiting_king_at = None;
         self.moms_shuffles = 0;
+        self.spider_hint = None;
     }
 
     /// Restart the current deal — same kind, same seed, fresh shuffle.
@@ -309,6 +315,31 @@ impl AppModel {
         self.confirm = None;
         self.moms_waiting_king_at = None;
         self.moms_shuffles = 0;
+        self.spider_hint = None;
+    }
+
+    /// Compute and store a Spider hint for the active board. No-op when
+    /// the active game isn't Spider.
+    pub fn show_spider_hint(&mut self) {
+        let is_spider = self
+            .session
+            .as_ref()
+            .map(|s| s.game_slug() == "spider")
+            .unwrap_or(false);
+        if !is_spider {
+            return;
+        }
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
+        self.spider_hint = best_spider_hint(session.piles());
+    }
+
+    /// Drop any pending Spider hint. Called by every move/undo path so
+    /// the highlight never lingers past the board state it was computed
+    /// for.
+    pub fn clear_spider_hint(&mut self) {
+        self.spider_hint = None;
     }
 
     /// Mom's Solitaire: shuffle the out-of-order cells in place,
@@ -569,6 +600,47 @@ mod tests {
         model.confirm_pending_action();
         assert_eq!(model.screen, Screen::Title);
         assert!(model.session.is_none());
+    }
+
+    #[test]
+    fn show_spider_hint_does_not_mutate_session() {
+        let _guard = install_test_storage();
+        let mut model = AppModel::new();
+        model.start_game_with_seed(GameKind::Spider, 123);
+
+        let snapshot: Vec<Vec<crate::cards::Card>> = model
+            .session
+            .as_ref()
+            .unwrap()
+            .piles()
+            .iter()
+            .map(|p| p.cards.clone())
+            .collect();
+
+        model.show_spider_hint();
+
+        let after: Vec<Vec<crate::cards::Card>> = model
+            .session
+            .as_ref()
+            .unwrap()
+            .piles()
+            .iter()
+            .map(|p| p.cards.clone())
+            .collect();
+        assert_eq!(snapshot, after, "Hint must not mutate piles");
+        assert!(
+            model.spider_hint.is_some(),
+            "Fresh Spider deal always has at least the stock deal hint"
+        );
+    }
+
+    #[test]
+    fn show_spider_hint_no_op_for_non_spider_games() {
+        let _guard = install_test_storage();
+        let mut model = AppModel::new();
+        model.start_game_with_seed(GameKind::Klondike, 1);
+        model.show_spider_hint();
+        assert!(model.spider_hint.is_none());
     }
 
     fn apply_spider_stock_deal(model: &mut AppModel) {
