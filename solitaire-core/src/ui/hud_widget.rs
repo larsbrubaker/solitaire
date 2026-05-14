@@ -31,6 +31,7 @@ const TXT: Color = Color::from_rgb8(0xff, 0xff, 0xff);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Btn {
+    Fullscreen,
     Undo,
     NewDeal,
     Shuffle,
@@ -77,18 +78,27 @@ impl HudWidget {
     /// widget — not duplicated here.
     fn btns(&self) -> Vec<Btn> {
         match self.model.borrow().kind {
-            Some(crate::games::GameKind::MomsSolitaire) => {
-                vec![Btn::Undo, Btn::NewDeal, Btn::Shuffle, Btn::Home]
-            }
-            Some(crate::games::GameKind::Spider) => {
-                vec![Btn::Undo, Btn::NewDeal, Btn::Hint, Btn::Home]
-            }
-            _ => vec![Btn::Undo, Btn::NewDeal, Btn::Home],
+            Some(crate::games::GameKind::MomsSolitaire) => vec![
+                Btn::Fullscreen,
+                Btn::Undo,
+                Btn::NewDeal,
+                Btn::Shuffle,
+                Btn::Home,
+            ],
+            Some(crate::games::GameKind::Spider) => vec![
+                Btn::Fullscreen,
+                Btn::Undo,
+                Btn::NewDeal,
+                Btn::Hint,
+                Btn::Home,
+            ],
+            _ => vec![Btn::Fullscreen, Btn::Undo, Btn::NewDeal, Btn::Home],
         }
     }
 
     fn btn_label(&self, b: Btn) -> &'static str {
         match b {
+            Btn::Fullscreen => "Full Screen",
             Btn::Undo => "Undo",
             Btn::NewDeal => "New Deal",
             Btn::Shuffle => "Shuffle",
@@ -145,6 +155,9 @@ impl HudWidget {
         };
         let mut model = self.model.borrow_mut();
         match b {
+            Btn::Fullscreen => {
+                crate::platform::request_toggle_fullscreen();
+            }
             Btn::Undo => {
                 if let Some(s) = model.session.as_mut() {
                     s.try_undo();
