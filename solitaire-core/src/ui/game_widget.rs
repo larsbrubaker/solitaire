@@ -12,11 +12,13 @@ mod pile_click;
 
 use std::sync::Arc;
 
+use agg_gui::color::Color;
 use agg_gui::draw_ctx::DrawCtx;
 use agg_gui::event::{Event, EventResult, MouseButton};
 use agg_gui::geometry::{Rect, Size};
 use agg_gui::text::Font;
 use agg_gui::widget::Widget;
+use agg_gui::{LineCap, LineJoin};
 
 use crate::cards::Card;
 use crate::piles::{HitResult, PileId, PileKind, FAN_DOWN_FACE_UP};
@@ -33,12 +35,53 @@ fn playfield_rect(bounds: Rect) -> Rect {
 }
 
 /// Stroke a rounded yellow outline over a card-sized rect — used by the
-/// Spider Hint overlay to mark the recommended source run and destination.
+/// Spider Hint overlay to mark the recommended destination (or stock
+/// pile when the recommended action is a stock deal).
 fn stroke_hint_rect(ctx: &mut dyn DrawCtx, x: f64, y: f64, w: f64, h: f64) {
     ctx.begin_path();
     ctx.rounded_rect(x, y, w, h, crate::consts::CARD_CORNER_R);
     ctx.set_stroke_color(crate::render::HIGHLIGHT);
     ctx.set_line_width(4.0);
+    ctx.stroke();
+}
+
+/// Spider Hint source marker: a fat black up-arrow whose tip sits just
+/// below the source card's bottom edge. Modelled on the `Green_Arrow_Up`
+/// public-domain SVG silhouette — fill is solid black, plus a stroke of
+/// the same color with rounded joins/caps so the tip and shaft corners
+/// soften into the rounded-point look the user asked for.
+fn paint_hint_arrow_up(ctx: &mut dyn DrawCtx, tip_x: f64, tip_y: f64, width: f64, height: f64) {
+    // Y-up: tip at the highest Y, body extends DOWN to (tip_y - height).
+    let cx = tip_x;
+    let top_y = tip_y;
+    let bottom_y = tip_y - height;
+    let head_h = height * 0.55;
+    let head_w = width;
+    let shaft_w = width * 0.45;
+    let mid_y = top_y - head_h;
+
+    ctx.begin_path();
+    ctx.move_to(cx, top_y);
+    ctx.line_to(cx + head_w / 2.0, mid_y);
+    ctx.line_to(cx + shaft_w / 2.0, mid_y);
+    ctx.line_to(cx + shaft_w / 2.0, bottom_y);
+    ctx.line_to(cx - shaft_w / 2.0, bottom_y);
+    ctx.line_to(cx - shaft_w / 2.0, mid_y);
+    ctx.line_to(cx - head_w / 2.0, mid_y);
+    ctx.line_to(cx, top_y);
+
+    let black = Color::from_rgb8(0, 0, 0);
+    ctx.set_fill_color(black);
+    ctx.fill();
+
+    // A second pass strokes the same outline with rounded joins/caps so
+    // the polygon's sharp corners (tip + shaft shoulders) bulge into
+    // smooth arcs. The stroke width is what controls how rounded the
+    // points look — anything thinner than ~4 px looks crisply polygonal.
+    ctx.set_line_join(LineJoin::Round);
+    ctx.set_line_cap(LineCap::Round);
+    ctx.set_stroke_color(black);
+    ctx.set_line_width(6.0);
     ctx.stroke();
 }
 
@@ -409,10 +452,10 @@ impl GameWidget {
         true
     }
 
-    /// Paint the Spider Hint overlay: a yellow outline around the
-    /// recommended source run (or stock pile, for a stock-deal hint)
-    /// and the recommended destination. No-op when no hint is active
-    /// or the active game isn't Spider.
+    /// Paint the Spider Hint overlay: a black up-arrow pointing at the
+    /// recommended source card and a yellow outline around the
+    /// recommended destination (or the stock pile for a stock-deal
+    /// hint). No-op when no hint is active.
     fn paint_spider_hint_overlay(&self, ctx: &mut dyn DrawCtx) {
         let model = self.model.borrow();
         let Some(hint) = model.spider_hint else {
@@ -434,14 +477,21 @@ impl GameWidget {
                 if start_idx >= src.cards.len() || take == 0 {
                     return;
                 }
-                let end_idx = (start_idx + take - 1).min(src.cards.len() - 1);
+                // Arrow tip touches the bottom-center of the head card
+                // being picked up (start_idx is the deepest card of the
+                // moved chunk, which sits HIGHEST in a fanned-down
+                // pile). Body extends down (lower Y) over the rest of
+                // the moved tail — those cards travel together so
+                // overlap is fine.
                 let (hx, hy) = src.position_for(start_idx);
-                let (_tx, ty) = src.position_for(end_idx);
-                let x = hx;
-                let y = ty;
-                let w = src.card_w;
-                let h = hy + src.card_h - ty;
-                stroke_hint_rect(ctx, x, y, w, h);
+                let card_w = src.card_w;
+                let card_h = src.card_h;
+                let arrow_w = (card_w * 0.55).min(50.0);
+                let arrow_h = (card_h * 0.45).min(54.0);
+                let tip_x = hx + card_w / 2.0;
+                let tip_y = hy;
+                paint_hint_arrow_up(ctx, tip_x, tip_y, arrow_w, arrow_h);
+
                 let dst = piles.get(to);
                 let (dx, dy, dw, dh) = if dst.is_empty() {
                     dst.empty_slot_rect()

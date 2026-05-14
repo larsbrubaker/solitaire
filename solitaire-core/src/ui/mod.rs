@@ -15,7 +15,6 @@ pub mod app_model;
 pub mod app_root;
 pub mod confirm_dialog;
 pub mod dyn_session;
-pub mod fullscreen_button;
 pub mod game_widget;
 pub mod help_content;
 pub mod help_widget;
@@ -29,7 +28,6 @@ pub mod title_widget;
 use app_model::{shared_model, SharedModel};
 use app_root::AppRootWidget;
 use confirm_dialog::ConfirmDialog;
-use fullscreen_button::FullscreenButton;
 use game_widget::GameWidget;
 use help_widget::HelpDialog;
 use hud_widget::HudWidget;
@@ -63,7 +61,6 @@ pub fn build_solitaire_app() -> (App, SharedModel) {
     let hud = HudWidget::new(model.clone(), font.clone());
     let menu = MenuBarHost::new(model.clone(), font.clone());
     let sidebar_menu = SidebarMenuHost::new(model.clone(), font.clone());
-    let fullscreen = FullscreenButton::new(font.clone());
     let help = HelpDialog::new(model.clone(), font.clone());
     let confirm = ConfirmDialog::new(model.clone(), font.clone());
     let perf_window = build_performance_window(&model, font.clone());
@@ -91,7 +88,6 @@ pub fn build_solitaire_app() -> (App, SharedModel) {
         .add(Box::new(hud))
         .add(Box::new(menu))
         .add(Box::new(sidebar_menu))
-        .add(Box::new(fullscreen))
         .add(Box::new(perf_window))
         .add(Box::new(help))
         .add(Box::new(confirm));
