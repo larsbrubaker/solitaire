@@ -175,6 +175,7 @@ impl GameWidget {
                 true,
             );
         }
+        model.spider_hint = None;
         agg_gui::animation::request_draw();
         true
     }

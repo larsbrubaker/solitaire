@@ -34,6 +34,7 @@ enum Btn {
     Undo,
     NewDeal,
     Shuffle,
+    Hint,
     Home,
 }
 
@@ -70,18 +71,19 @@ impl HudWidget {
     }
 
     /// Buttons to render. Mom's Solitaire gets an extra `Shuffle`
-    /// between New Deal and Main Menu; everything else gets the standard
-    /// three. The menu-bar / sidebar-menu actions (Restart, Draw 1/3,
-    /// Rules, About) live in the menu widget — not duplicated here.
+    /// between New Deal and Main Menu; Spider gets an extra `Hint`.
+    /// Everything else gets the standard three. The menu-bar / sidebar-
+    /// menu actions (Restart, Draw 1/3, Rules, About) live in the menu
+    /// widget — not duplicated here.
     fn btns(&self) -> Vec<Btn> {
-        let is_moms = matches!(
-            self.model.borrow().kind,
-            Some(crate::games::GameKind::MomsSolitaire)
-        );
-        if is_moms {
-            vec![Btn::Undo, Btn::NewDeal, Btn::Shuffle, Btn::Home]
-        } else {
-            vec![Btn::Undo, Btn::NewDeal, Btn::Home]
+        match self.model.borrow().kind {
+            Some(crate::games::GameKind::MomsSolitaire) => {
+                vec![Btn::Undo, Btn::NewDeal, Btn::Shuffle, Btn::Home]
+            }
+            Some(crate::games::GameKind::Spider) => {
+                vec![Btn::Undo, Btn::NewDeal, Btn::Hint, Btn::Home]
+            }
+            _ => vec![Btn::Undo, Btn::NewDeal, Btn::Home],
         }
     }
 
@@ -90,6 +92,7 @@ impl HudWidget {
             Btn::Undo => "Undo",
             Btn::NewDeal => "New Deal",
             Btn::Shuffle => "Shuffle",
+            Btn::Hint => "Hint",
             Btn::Home => "Main Menu",
         }
     }
@@ -146,6 +149,7 @@ impl HudWidget {
                 if let Some(s) = model.session.as_mut() {
                     s.try_undo();
                 }
+                model.clear_spider_hint();
             }
             Btn::NewDeal => {
                 if let Some(kind) = model.kind {
@@ -154,6 +158,9 @@ impl HudWidget {
             }
             Btn::Shuffle => {
                 model.try_moms_shuffle();
+            }
+            Btn::Hint => {
+                model.show_spider_hint();
             }
             Btn::Home => {
                 model.request_main_menu();

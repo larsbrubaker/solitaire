@@ -432,6 +432,112 @@ fn recording_reports_complete_run_collapse() {
 }
 
 #[test]
+fn hint_prefers_move_that_exposes_face_down() {
+    // Cascade 0 has a single face-up 6 (leftmost; no facedown to expose).
+    // Cascade 1 has [face-down 5♥, face-up 6♠] (exposing move).
+    // Cascade 2 has a 7♣ — both 6s can land on it.
+    // Hint must pick the exposing move, beating the leftmost tiebreaker.
+    let rules = Spider::four_suit();
+    let mut piles = PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
+    piles
+        .get_mut(CASCADE_FIRST)
+        .cards
+        .push(Card::new(Suit::Hearts, Rank::Six).face_up());
+    piles
+        .get_mut(CASCADE_FIRST + 1)
+        .cards
+        .push(Card::new(Suit::Hearts, Rank::Five));
+    piles
+        .get_mut(CASCADE_FIRST + 1)
+        .cards
+        .push(Card::new(Suit::Spades, Rank::Six).face_up());
+    piles
+        .get_mut(CASCADE_FIRST + 2)
+        .cards
+        .push(Card::new(Suit::Clubs, Rank::Seven).face_up());
+
+    let hint = best_spider_hint(&piles).expect("a legal move exists");
+    assert_eq!(
+        hint,
+        SpiderHint::Move {
+            from: CASCADE_FIRST + 1,
+            start_idx: 1,
+            take: 1,
+            to: CASCADE_FIRST + 2,
+        }
+    );
+}
+
+#[test]
+fn hint_prefers_extending_suited_run() {
+    // Two legal 6→7 moves; one creates a suited run (6♠ on 7♠), the
+    // other does not (6♥ on 7♠). Hint picks the suited one even
+    // though the alternative is leftmost.
+    let rules = Spider::four_suit();
+    let mut piles = PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
+    piles
+        .get_mut(CASCADE_FIRST)
+        .cards
+        .push(Card::new(Suit::Hearts, Rank::Six).face_up());
+    piles
+        .get_mut(CASCADE_FIRST + 1)
+        .cards
+        .push(Card::new(Suit::Spades, Rank::Six).face_up());
+    piles
+        .get_mut(CASCADE_FIRST + 2)
+        .cards
+        .push(Card::new(Suit::Spades, Rank::Seven).face_up());
+
+    let hint = best_spider_hint(&piles).expect("a legal move exists");
+    assert_eq!(
+        hint,
+        SpiderHint::Move {
+            from: CASCADE_FIRST + 1,
+            start_idx: 0,
+            take: 1,
+            to: CASCADE_FIRST + 2,
+        }
+    );
+}
+
+#[test]
+fn hint_falls_back_to_stock_deal_when_no_tableau_move() {
+    // Every cascade tops out at a King; Kings can only move to empty
+    // cascades and none are empty. Stock has enough cards to deal.
+    let rules = Spider::four_suit();
+    let mut piles = PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
+    for cid in CASCADE_FIRST..=CASCADE_LAST {
+        piles
+            .get_mut(cid)
+            .cards
+            .push(Card::new(Suit::Spades, Rank::King).face_up());
+    }
+    for _ in 0..N_CASCADES {
+        piles
+            .get_mut(STOCK)
+            .cards
+            .push(Card::new(Suit::Spades, Rank::Two));
+    }
+    let hint = best_spider_hint(&piles).expect("stock-deal fallback");
+    assert_eq!(hint, SpiderHint::StockDeal { stock: STOCK });
+}
+
+#[test]
+fn hint_returns_none_when_no_tableau_and_stock_illegal() {
+    // Same locked-Kings board, but stock has zero cards so the deal
+    // is illegal too. Hint must report no move at all.
+    let rules = Spider::four_suit();
+    let mut piles = PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
+    for cid in CASCADE_FIRST..=CASCADE_LAST {
+        piles
+            .get_mut(cid)
+            .cards
+            .push(Card::new(Suit::Spades, Rank::King).face_up());
+    }
+    assert!(best_spider_hint(&piles).is_none());
+}
+
+#[test]
 fn stock_click_blocked_when_any_cascade_empty() {
     let rules = Spider::four_suit();
     let mut piles = PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));

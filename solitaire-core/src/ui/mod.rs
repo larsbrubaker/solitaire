@@ -184,11 +184,11 @@ mod tests {
         let chain = type_chain_for_path(app.root(), &path);
 
         assert!(
-            chain.iter().any(|t| *t == "MenuBarHost"),
+            chain.contains(&"MenuBarHost"),
             "menu-strip click must reach MenuBarHost, but landed on {chain:?}"
         );
         assert!(
-            !chain.iter().any(|t| *t == "TitleWidget"),
+            !chain.contains(&"TitleWidget"),
             "menu-strip click must NOT be swallowed by TitleWidget, got {chain:?}"
         );
     }
@@ -210,7 +210,7 @@ mod tests {
         let chain = type_chain_for_path(app.root(), &path);
 
         assert!(
-            chain.iter().any(|t| *t == "TitleWidget"),
+            chain.contains(&"TitleWidget"),
             "title-body click must reach TitleWidget, got {chain:?}"
         );
     }
