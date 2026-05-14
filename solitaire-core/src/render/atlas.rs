@@ -140,7 +140,7 @@ mod tests {
         Arc::new(Font::from_slice(FONT_BYTES).expect("solitaire default font"))
     }
 
-    fn eager_like_old_build(px_w: u32, px_h: u32) -> usize {
+    fn render_all_cards_individually(px_w: u32, px_h: u32) -> usize {
         #[cfg(not(target_arch = "wasm32"))]
         let deck = DeckBitmap::build_lcd(px_w, px_h);
         #[cfg(target_arch = "wasm32")]
@@ -171,7 +171,7 @@ mod tests {
 
         // Exclude one-time gzip inflation from resize measurements; the
         // running app has already paid this after the first deck render.
-        black_box(eager_like_old_build(1, 1));
+        black_box(render_all_cards_individually(1, 1));
 
         let t0 = Instant::now();
         let atlas = CardSpriteAtlas::build(&font, card_w, card_h, dpr);
@@ -226,9 +226,9 @@ mod tests {
         let px_w = (card_w * dpr).round().max(1.0) as u32;
         let px_h = (card_h * dpr).round().max(1.0) as u32;
         let t0 = Instant::now();
-        let eager_bytes = eager_like_old_build(px_w, px_h);
+        let eager_bytes = render_all_cards_individually(px_w, px_h);
         println!(
-            "old eager-equivalent build: {:.2} ms ({} bytes)",
+            "render all cards individually: {:.2} ms ({} bytes)",
             elapsed_ms(t0),
             eager_bytes
         );

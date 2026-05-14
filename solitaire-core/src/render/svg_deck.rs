@@ -1,9 +1,8 @@
 //! CC0 SVG playing-card deck — bundled master file from Wikimedia Commons
 //! ("English pattern playing cards deck PLUS CC0", by Loren Osborn / Dmitry
 //! Fomin / Guy vandegrift, dedicated to the public domain). The single
-//! source SVG arranges all 54 cards in a 13 × 5 grid; we rasterize the
-//! whole thing once at the desired card pixel size and crop sub-rects
-//! into per-card sprites for the atlas.
+//! source SVG arranges all 54 cards in a 13 × 5 grid; we render the
+//! requested card's source rectangle directly into a card-sized sprite.
 //!
 //! Grid layout (per the Commons file's own `<dc:description>`):
 //! - Row 0 = Spades, Row 1 = Hearts, Row 2 = Diamonds, Row 3 = Clubs.
@@ -19,7 +18,9 @@ use std::io::Read;
 use std::sync::OnceLock;
 
 use agg_gui::framebuffer::unpremultiply_rgba_inplace;
-use agg_gui::svg::{parse_svg, render_svg_tree_to_framebuffer_at_size, SvgParseOptions};
+use agg_gui::svg::{
+    parse_svg, render_svg_tree_region_to_framebuffer_at_size, SvgParseOptions, SvgTree,
+};
 use flate2::read::GzDecoder;
 
 use crate::cards::{Rank, Suit};
@@ -62,8 +63,6 @@ const ROWS: u32 = 5;
 // adjacent cards (~31px source units), and cumulative pitch differs
 // from cell pitch enough that simple `master/13` cropping smears
 // adjacent-card content into the wrong sprite. Hence these constants.
-const SRC_MASTER_W: f64 = 5109.0;
-const SRC_MASTER_H: f64 = 2883.0;
 const SRC_CARD_W: f64 = 359.0;
 const SRC_CARD_H: f64 = 539.0;
 const SRC_LEFT_MARGIN: f64 = 39.0;
@@ -89,50 +88,42 @@ fn strip_background(svg: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Rasterized grid of `(COLS × ROWS)` cards at exactly `(card_px_w,
-/// card_px_h)` per cell. Rows are top-down, in straight-alpha RGBA8.
+/// Lazily-parsed, background-stripped SVG tree. Parsing the 7.6 MB source
+/// is expensive enough that card-at-a-time rendering must share the tree.
+fn deck_tree() -> &'static SvgTree {
+    static TREE: OnceLock<SvgTree> = OnceLock::new();
+    TREE.get_or_init(|| {
+        let svg = strip_background(master_svg());
+        parse_svg(&svg, &SvgParseOptions::default()).expect("bundled CC0 deck SVG parses")
+    })
+}
+
+/// Card-sized renderer for the bundled SVG deck.
 pub struct DeckBitmap {
-    pub pixels: Vec<u8>,
-    pub master_w: u32,
     pub card_px_w: u32,
     pub card_px_h: u32,
+    lcd_subpixel: bool,
 }
 
 impl DeckBitmap {
-    /// Parse the bundled SVG and rasterize at a resolution where each
-    /// card's source rect (359×539 units) maps to exactly the requested
-    /// `(card_px_w × card_px_h)` output pixels. The master rasterizes
-    /// at `≈card_px_w × 14.23` wide and `≈card_px_h × 5.35` tall so
-    /// every card's pixel bounds are the target sprite size — no
-    /// downsampling, no halo of master background bleeding into the
-    /// crop. The green felt rect is stripped first (see
-    /// `strip_background`) so transparent gutters between cards stay
-    /// transparent in the output.
+    /// Prepare a renderer where each card's source rect (359×539 units)
+    /// maps directly to the requested `(card_px_w × card_px_h)` output
+    /// pixels — no full-deck raster, no downsampling, and no unused backs
+    /// or jokers.
     // Native builds use `build_lcd` (RGB-stripe subpixel) and only
     // reach `build` from `#[cfg(test)]` code; suppress the resulting
     // dead-code warning on non-WASM targets.
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     pub fn build(card_px_w: u32, card_px_h: u32) -> Self {
-        let master_w = (card_px_w as f64 * SRC_MASTER_W / SRC_CARD_W).round() as u32;
-        let master_h = (card_px_h as f64 * SRC_MASTER_H / SRC_CARD_H).round() as u32;
-        let svg = strip_background(master_svg());
-        let tree =
-            parse_svg(&svg, &SvgParseOptions::default()).expect("bundled CC0 deck SVG parses");
-        let fb = render_svg_tree_to_framebuffer_at_size(&tree, master_w, master_h)
-            .expect("bundled CC0 deck SVG rasterizes");
-        let mut pixels = fb.pixels_flipped();
-        unpremultiply_rgba_inplace(&mut pixels);
-        debug_assert_eq!(pixels.len(), (master_w * master_h * 4) as usize);
         Self {
-            pixels,
-            master_w,
             card_px_w,
             card_px_h,
+            lcd_subpixel: false,
         }
     }
 
     /// LCD-subpixel build for RGB-stripe desktop displays. Rasterizes
-    /// the master SVG at 3× horizontal resolution into an "LCD-RGB back
+    /// each requested card at 3× horizontal resolution into an "LCD-RGB back
     /// buffer", then collapses to a normal-width RGBA8 atlas with
     /// per-channel offset sampling (R from subcolumn 3x, G from 3x+1,
     /// B from 3x+2) through a `[1, 4, 7, 4, 1] / 17` low-pass filter.
@@ -151,57 +142,62 @@ impl DeckBitmap {
     /// trickery) is the right choice.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn build_lcd(card_px_w: u32, card_px_h: u32) -> Self {
-        let master_w = (card_px_w as f64 * SRC_MASTER_W / SRC_CARD_W).round() as u32;
-        let master_h = (card_px_h as f64 * SRC_MASTER_H / SRC_CARD_H).round() as u32;
-        let wide_w = master_w
-            .checked_mul(3)
-            .expect("LCD wide-buffer width fits in u32");
-        let svg = strip_background(master_svg());
-        let tree =
-            parse_svg(&svg, &SvgParseOptions::default()).expect("bundled CC0 deck SVG parses");
-        let fb = render_svg_tree_to_framebuffer_at_size(&tree, wide_w, master_h)
-            .expect("bundled CC0 deck SVG rasterizes (LCD wide buffer)");
-        let mut wide = fb.pixels_flipped();
-        unpremultiply_rgba_inplace(&mut wide);
-        let pixels = lcd_subpixel_collapse(&wide, wide_w, master_h, master_w);
-        debug_assert_eq!(pixels.len(), (master_w * master_h * 4) as usize);
         Self {
-            pixels,
-            master_w,
             card_px_w,
             card_px_h,
+            lcd_subpixel: true,
         }
     }
 
-    /// Pixel position of card `(row, col)`'s top-left corner inside the
-    /// rasterized master, accounting for the SVG's per-card pitch and
+    /// Source position of card `(row, col)`'s top-left corner inside the
+    /// SVG master, accounting for the SVG's per-card pitch and
     /// margins (NOT a uniform `master/COLS × master/ROWS` cell grid).
-    fn card_px_origin(&self, row: u32, col: u32) -> (u32, u32) {
-        let scale_x = self.master_w as f64 / SRC_MASTER_W;
-        let scale_y = (self.master_pixels_h() as f64) / SRC_MASTER_H;
-        let x = (SRC_LEFT_MARGIN + col as f64 * SRC_PITCH_X) * scale_x;
-        let y = (SRC_TOP_MARGIN + row as f64 * SRC_PITCH_Y) * scale_y;
-        (x.round() as u32, y.round() as u32)
+    fn card_src_origin(row: u32, col: u32) -> (f64, f64) {
+        (
+            SRC_LEFT_MARGIN + col as f64 * SRC_PITCH_X,
+            SRC_TOP_MARGIN + row as f64 * SRC_PITCH_Y,
+        )
     }
 
-    fn master_pixels_h(&self) -> u32 {
-        (self.pixels.len() as u32) / (self.master_w * 4)
-    }
-
-    /// Copy the card at `(row, col)` into a fresh, owned RGBA8 sprite.
+    /// Render the card at `(row, col)` into a fresh, owned RGBA8 sprite.
     pub fn extract(&self, row: u32, col: u32) -> Vec<u8> {
         debug_assert!(row < ROWS && col < COLS, "({row}, {col}) outside grid");
-        let bpp = 4u32;
-        let (src_x, src_y) = self.card_px_origin(row, col);
-        let src_stride = self.master_w * bpp;
-        let dst_stride = self.card_px_w * bpp;
-        let mut out = vec![0u8; (self.card_px_w * self.card_px_h * bpp) as usize];
-        for y in 0..self.card_px_h {
-            let src_off = ((src_y + y) * src_stride + src_x * bpp) as usize;
-            let dst_off = (y * dst_stride) as usize;
-            out[dst_off..dst_off + dst_stride as usize]
-                .copy_from_slice(&self.pixels[src_off..src_off + dst_stride as usize]);
-        }
+        let (src_x, src_y) = Self::card_src_origin(row, col);
+        let mut out = if self.lcd_subpixel {
+            let wide_w = self
+                .card_px_w
+                .checked_mul(3)
+                .expect("LCD wide-buffer width fits in u32");
+            let fb = render_svg_tree_region_to_framebuffer_at_size(
+                deck_tree(),
+                src_x,
+                src_y,
+                SRC_CARD_W,
+                SRC_CARD_H,
+                wide_w,
+                self.card_px_h,
+            )
+            .expect("bundled CC0 card SVG region rasterizes (LCD wide buffer)");
+            let mut wide = fb.pixels_flipped();
+            unpremultiply_rgba_inplace(&mut wide);
+            lcd_subpixel_collapse(&wide, wide_w, self.card_px_h, self.card_px_w)
+        } else {
+            let fb = render_svg_tree_region_to_framebuffer_at_size(
+                deck_tree(),
+                src_x,
+                src_y,
+                SRC_CARD_W,
+                SRC_CARD_H,
+                self.card_px_w,
+                self.card_px_h,
+            )
+            .expect("bundled CC0 card SVG region rasterizes");
+            let mut pixels = fb.pixels_flipped();
+            unpremultiply_rgba_inplace(&mut pixels);
+            pixels
+        };
+
+        debug_assert_eq!(out.len(), (self.card_px_w * self.card_px_h * 4) as usize);
         paint_one_pixel_card_border(&mut out, self.card_px_w, self.card_px_h);
         out
     }
@@ -458,18 +454,39 @@ mod tests {
     #[ignore = "parses the 7.6 MB CC0 deck — opt in via `--ignored`"]
     fn deck_rasterizes_and_extracts() {
         let bmp = DeckBitmap::build(20, 28);
-        // Master is sized so that 359 source units map to card_px_w pixels.
-        let expected_master_w = (20.0 * SRC_MASTER_W / SRC_CARD_W).round() as u32;
-        let expected_master_h = (28.0 * SRC_MASTER_H / SRC_CARD_H).round() as u32;
-        assert_eq!(bmp.master_w, expected_master_w);
-        assert_eq!(
-            bmp.pixels.len(),
-            (expected_master_w * expected_master_h * 4) as usize
-        );
         let face = bmp.extract_face(Suit::Hearts, Rank::Queen);
         assert_eq!(face.len(), (20 * 28 * 4) as usize);
         let back = bmp.extract_back();
         assert_eq!(back.len(), (20 * 28 * 4) as usize);
+        assert_ne!(face, back);
+    }
+
+    #[test]
+    #[ignore = "parses the 7.6 MB CC0 deck — opt in via `--ignored`"]
+    fn face_sprite_contains_face_art() {
+        let bmp = DeckBitmap::build(90, 126);
+        let face = bmp.extract_face(Suit::Hearts, Rank::Queen);
+        let back = bmp.extract_back();
+        assert_ne!(face, back);
+
+        let face_whiteish = face
+            .chunks_exact(4)
+            .filter(|px| px[3] > 200 && px[0] > 220 && px[1] > 220 && px[2] > 220)
+            .count();
+        let face_redish = face
+            .chunks_exact(4)
+            .filter(|px| px[3] > 200 && px[0] > 120 && px[1] < 80 && px[2] < 80)
+            .count();
+        let back_whiteish = back
+            .chunks_exact(4)
+            .filter(|px| px[3] > 200 && px[0] > 220 && px[1] > 220 && px[2] > 220)
+            .count();
+        assert!(face_whiteish > 1000, "face should contain white card body");
+        assert!(face_redish > 20, "heart face should contain red art");
+        assert!(
+            face_whiteish > back_whiteish * 2,
+            "face should be much whiter than the blue card back"
+        );
     }
 
     /// Diagnostic: rasterize the master at source dims (≈5109×2883) and
@@ -480,25 +497,21 @@ mod tests {
     #[test]
     #[ignore = "diagnostic only — prints per-cell card bounds"]
     fn deck_layout_probe() {
-        // High-fidelity rasterize so card edges land cleanly: 13 × 393 = 5109,
-        // 5 × 577 = 2885 — close to source resolution.
         let card_px_w = 393u32;
         let card_px_h = 577u32;
         let bmp = DeckBitmap::build(card_px_w, card_px_h);
-        let stride = bmp.master_w * 4;
-        let master_h = card_px_h * ROWS;
+        let stride = card_px_w * 4;
 
         for r in 0..ROWS {
             for c in 0..COLS {
-                let cell_x0 = c * card_px_w;
-                let cell_y0 = r * card_px_h;
+                let pixels = bmp.extract(r, c);
                 let mut min_x = u32::MAX;
                 let mut max_x = 0u32;
                 let mut min_y = u32::MAX;
                 let mut max_y = 0u32;
-                for y in cell_y0..cell_y0 + card_px_h {
-                    for x in cell_x0..cell_x0 + card_px_w {
-                        let alpha = bmp.pixels[(y * stride + x * 4 + 3) as usize];
+                for y in 0..card_px_h {
+                    for x in 0..card_px_w {
+                        let alpha = pixels[(y * stride + x * 4 + 3) as usize];
                         if alpha > 200 {
                             if x < min_x {
                                 min_x = x;
@@ -518,16 +531,15 @@ mod tests {
                 if min_x == u32::MAX {
                     println!("r={r} c={c}: EMPTY CELL");
                 } else {
-                    let lx = (min_x - cell_x0) as f64 / card_px_w as f64;
-                    let rx = (max_x + 1 - cell_x0) as f64 / card_px_w as f64;
-                    let ty = (min_y - cell_y0) as f64 / card_px_h as f64;
-                    let by = (max_y + 1 - cell_y0) as f64 / card_px_h as f64;
+                    let lx = min_x as f64 / card_px_w as f64;
+                    let rx = (max_x + 1) as f64 / card_px_w as f64;
+                    let ty = min_y as f64 / card_px_h as f64;
+                    let by = (max_y + 1) as f64 / card_px_h as f64;
                     println!(
-                        "r={r} c={c}: cell=({cell_x0},{cell_y0})+{card_px_w}x{card_px_h}  bbox_in_cell=[{lx:.3},{ty:.3}..{rx:.3},{by:.3}]"
+                        "r={r} c={c}: card={card_px_w}x{card_px_h}  bbox=[{lx:.3},{ty:.3}..{rx:.3},{by:.3}]"
                     );
                 }
             }
         }
-        let _ = master_h;
     }
 }
