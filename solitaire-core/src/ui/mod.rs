@@ -6,7 +6,6 @@
 
 use std::sync::Arc;
 
-use agg_gui::geometry::Rect;
 use agg_gui::text::Font;
 use agg_gui::widgets::Window as AggWindow;
 use agg_gui::{App, PerformanceView};
@@ -93,23 +92,41 @@ pub fn build_solitaire_app() -> (App, SharedModel) {
 }
 
 /// Construct the floating window that wraps `agg_gui::PerformanceView`.
-/// Bound to `model.show_performance_window`; closing the window's ×
-/// button writes through to the same cell the Debug menu reads.
+///
+/// Visibility, position, and size are all wired into shared cells on
+/// the [`AppModel`] so persistence rides on the same write-on-change
+/// path that the Options menu uses for Klondike / Spider settings:
+///
+/// * `with_visible_cell` — the close × button writes through to the
+///   same cell the Debug menu's "Performance Window" toggle reads.
+/// * `with_position_cell` — every layout pass writes the live bounds
+///   back into `AppModel.perf_window_bounds`, which `AppRootWidget`
+///   diffs against the last-saved value to trigger a settings write
+///   when the user moves / resizes the window.
+///
+/// `with_live_redraw` is intentionally **off**: forcing a redraw every
+/// frame the window is visible defeats the reactive event loop the
+/// shells run for battery-friendly idle. `with_history_redraw(true)`
+/// is narrower: it asks for one redraw only when a new timing sample
+/// has been pushed and the graph has not painted that revision yet.
 fn build_performance_window(model: &SharedModel, font: Arc<Font>) -> AggWindow {
-    let (visible_cell, history) = {
+    let (visible_cell, position_cell, history, saved_bounds) = {
         let m = model.borrow();
-        (m.show_performance_window.clone(), m.frame_history.clone())
+        (
+            m.show_performance_window.clone(),
+            m.perf_window_bounds.clone(),
+            m.frame_history.clone(),
+            m.perf_window_bounds.get(),
+        )
     };
     let view = PerformanceView::new(font.clone(), history)
         .with_padding(12.0)
         .with_sparkline_height(80.0)
-        // Live readout — repaint every frame the window is open so the
-        // rolling mean + sparkline track new samples even while the
-        // game is otherwise idle.
-        .with_live_redraw(true);
+        .with_history_redraw(true);
     AggWindow::new("Performance", font, Box::new(view))
-        .with_bounds(Rect::new(60.0, 60.0, 320.0, 168.0))
+        .with_bounds(saved_bounds)
         .with_visible_cell(visible_cell)
+        .with_position_cell(position_cell)
         .with_resizable(true)
 }
 

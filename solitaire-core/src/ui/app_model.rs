@@ -3,6 +3,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use agg_gui::geometry::Rect;
 use agg_gui::{shared_frame_history, SharedFrameHistory};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -15,7 +16,7 @@ use crate::games::moms::MomsSolitaire;
 use crate::games::spider::Spider;
 use crate::games::GameKind;
 use crate::session::GameSession;
-use crate::settings::UserSettings;
+use crate::settings::{PerfWindowState, UserSettings};
 
 use super::dyn_session::DynGameSession;
 
@@ -70,6 +71,17 @@ pub struct AppModel {
     /// `set_performance_window_open` helper.  Both paths converge on
     /// one source of truth.
     pub show_performance_window: Rc<Cell<bool>>,
+    /// Live position + size of the Performance window.  Wired into the
+    /// `agg_gui::widgets::Window` via `with_position_cell` so the
+    /// widget writes the current bounds back here every layout pass.
+    /// `maybe_save_perf_window_settings` reads this to decide whether
+    /// the persisted blob needs an update.
+    pub perf_window_bounds: Rc<Cell<Rect>>,
+    /// Last-persisted snapshot of `(visible, bounds)`.  Used by
+    /// `maybe_save_perf_window_settings` to short-circuit when nothing
+    /// has changed — keeps `AppRootWidget::paint` from hitting the
+    /// disk on every frame.
+    last_saved_perf_window: Cell<(bool, Rect)>,
     /// Rolling buffer of recent frame times, fed by the platform shell
     /// (native winit loop or wasm `render` entry point) and read by
     /// the Performance window's `PerformanceView`.  Lives on the
@@ -87,6 +99,7 @@ impl AppModel {
         // absent or the stored blob doesn't parse, fall back to the
         // `UserSettings::default()` values.
         let s = UserSettings::load();
+        let perf_bounds = perf_state_to_rect(s.perf_window);
         Self {
             screen: Screen::Title,
             session: None,
@@ -98,7 +111,9 @@ impl AppModel {
             help: None,
             moms_waiting_king_at: None,
             moms_shuffles: 0,
-            show_performance_window: Rc::new(Cell::new(false)),
+            show_performance_window: Rc::new(Cell::new(s.perf_window.visible)),
+            perf_window_bounds: Rc::new(Cell::new(perf_bounds)),
+            last_saved_perf_window: Cell::new((s.perf_window.visible, perf_bounds)),
             frame_history: shared_frame_history(),
         }
     }
@@ -107,12 +122,40 @@ impl AppModel {
     /// platform store. Called from every setter that touches a
     /// persisted field. Failures are silent (no backend, etc.).
     fn save_settings(&self) {
+        let perf_window = rect_to_perf_state(
+            self.show_performance_window.get(),
+            self.perf_window_bounds.get(),
+        );
+        // Keep `last_saved_perf_window` in sync so the diff guard in
+        // `maybe_save_perf_window_settings` doesn't immediately fire a
+        // duplicate write the next time it ticks.
+        self.last_saved_perf_window
+            .set((perf_window.visible, self.perf_window_bounds.get()));
         UserSettings {
             klondike_draw_count: self.klondike_draw_count,
             spider_suit_count: self.spider_suit_count,
             spider_one_suit: self.spider_one_suit,
+            perf_window,
         }
         .save();
+    }
+
+    /// Diff-gated persistence for the Debug → Performance window.  The
+    /// `agg_gui::widgets::Window` widget rewrites `perf_window_bounds`
+    /// every layout pass and the close-button writes
+    /// `show_performance_window` directly, so we just compare against
+    /// the last-saved snapshot.  Called from `AppRootWidget::paint` so
+    /// it runs once per frame the app actually repaints — which, with
+    /// the reactive event loop, is exactly when state can have
+    /// changed.  No-op when nothing differs (the common case once the
+    /// user stops dragging).
+    pub fn maybe_save_perf_window_settings(&self) {
+        let visible = self.show_performance_window.get();
+        let bounds = self.perf_window_bounds.get();
+        if self.last_saved_perf_window.get() == (visible, bounds) {
+            return;
+        }
+        self.save_settings();
     }
 
     /// Open / close the Performance window.  Both the Debug menu's
@@ -124,6 +167,10 @@ impl AppModel {
             return;
         }
         self.show_performance_window.set(open);
+        // Persist the visibility change immediately — the window may
+        // not get a layout pass before the user closes the app, so
+        // waiting for the AppRoot tick would lose the toggle.
+        self.save_settings();
     }
 
     pub fn start_game(&mut self, kind: GameKind) {
@@ -246,15 +293,21 @@ impl AppModel {
         self.toast = Some((msg.into(), Instant::now()));
     }
 
-    /// Drop a stale toast (older than 3 s).
+    /// Drop a stale toast (older than [`TOAST_LIFETIME`]).
     pub fn tick_toast(&mut self) {
         if let Some((_, started)) = &self.toast {
-            if started.elapsed().as_secs_f64() > 3.0 {
+            if started.elapsed() > TOAST_LIFETIME {
                 self.toast = None;
             }
         }
     }
 }
+
+/// How long a toast banner stays visible before [`AppModel::tick_toast`]
+/// drops it.  Exported so widgets that want to schedule a wake-up at
+/// the toast expiry (`next_draw_deadline`) can reuse the same value
+/// without forking a magic number.
+pub const TOAST_LIFETIME: std::time::Duration = std::time::Duration::from_secs(3);
 
 impl Default for AppModel {
     fn default() -> Self {
@@ -272,6 +325,25 @@ fn wallclock_seed() -> u64 {
     let now = Instant::now();
     let nanos = now.elapsed().as_nanos() as u64;
     nanos.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0xCAFEBABE
+}
+
+/// Convert the persisted flat-record form to the `Rect` the agg-gui
+/// `Window` widget consumes (and writes back into `position_cell`).
+fn perf_state_to_rect(s: PerfWindowState) -> Rect {
+    Rect::new(s.x, s.y, s.width, s.height)
+}
+
+/// Inverse of [`perf_state_to_rect`].  Drops `bounds.width / height`
+/// to a sane floor so a zeroed cell (the value before the Window's
+/// first layout pass) doesn't silently overwrite a saved valid size.
+fn rect_to_perf_state(visible: bool, bounds: Rect) -> PerfWindowState {
+    PerfWindowState {
+        visible,
+        x: bounds.x,
+        y: bounds.y,
+        width: bounds.width.max(120.0),
+        height: bounds.height.max(80.0),
+    }
 }
 
 #[cfg(test)]
@@ -311,6 +383,7 @@ mod tests {
             klondike_draw_count: 3,
             spider_suit_count: 1,
             spider_one_suit: Suit::Spades,
+            perf_window: PerfWindowState::default(),
         }
         .save();
 
@@ -325,5 +398,53 @@ mod tests {
             let top = session.piles().get(cid).top().unwrap();
             assert_eq!(top.suit, Suit::Spades);
         }
+    }
+
+    #[test]
+    fn perf_window_state_round_trips_through_settings() {
+        let _guard = install_test_storage();
+
+        // Seed the settings store with a non-default perf window
+        // layout (open + offset + resized).
+        UserSettings {
+            klondike_draw_count: 1,
+            spider_suit_count: 1,
+            spider_one_suit: Suit::Spades,
+            perf_window: PerfWindowState {
+                visible: true,
+                x: 240.0,
+                y: 180.0,
+                width: 480.0,
+                height: 240.0,
+            },
+        }
+        .save();
+
+        // First model load must surface the saved perf window.
+        let model = AppModel::new();
+        assert!(model.show_performance_window.get());
+        assert_eq!(
+            model.perf_window_bounds.get(),
+            Rect::new(240.0, 180.0, 480.0, 240.0)
+        );
+
+        // Simulate the agg-gui Window writing fresh bounds back into
+        // the position cell after the user dragged the window — the
+        // model should detect the diff and persist on the next tick.
+        model
+            .perf_window_bounds
+            .set(Rect::new(300.0, 220.0, 480.0, 240.0));
+        model.maybe_save_perf_window_settings();
+        let reloaded = UserSettings::load().perf_window;
+        assert_eq!(reloaded.x, 300.0);
+        assert_eq!(reloaded.y, 220.0);
+        assert!(reloaded.visible);
+
+        // Subsequent ticks with no further changes are no-ops (the
+        // diff guard short-circuits before touching the storage
+        // backend) — verify by re-reading the same blob.
+        model.maybe_save_perf_window_settings();
+        let again = UserSettings::load().perf_window;
+        assert_eq!(again, reloaded);
     }
 }

@@ -299,9 +299,11 @@ impl Widget for HelpDialog {
         EventResult::Ignored
     }
 
-    fn needs_draw(&self) -> bool {
-        // Repaint while open so child markdown selection / hover
-        // updates land on screen even when no other widget changes.
-        self.is_visible()
-    }
+    // No `needs_draw` override — fall through to the default
+    // implementation that returns `false` and lets the framework
+    // poll children individually (the inner `MarkdownView` /
+    // `ScrollView` already call `request_draw()` from their own event
+    // handlers when hover, selection, scroll position, or focus
+    // change).  Forcing a redraw every frame just because the dialog
+    // is open prevented the reactive event loop from going idle.
 }

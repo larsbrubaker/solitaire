@@ -18,11 +18,48 @@ use crate::platform;
 /// format change can be detected via a parse failure.
 const STORAGE_KEY: &str = "solitaire:settings:v1";
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Persisted layout for the Debug → Performance window.
+///
+/// Stored as a flat record (not `agg_gui::geometry::Rect`) so the JSON
+/// blob stays stable even if the geometry types shuffle.  All fields
+/// are `f64` so position / size restore exactly across launches.
+/// `visible` records the last open/closed state of the window so
+/// devs who left it open across a session don't have to re-open it
+/// after restarting.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PerfWindowState {
+    pub visible: bool,
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+impl Default for PerfWindowState {
+    fn default() -> Self {
+        // Match the spawn position used by `build_performance_window`
+        // so first-launch and "restored from defaults" produce the
+        // same window placement.
+        Self {
+            visible: false,
+            x: 60.0,
+            y: 60.0,
+            width: 320.0,
+            height: 168.0,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct UserSettings {
     pub klondike_draw_count: u8,
     pub spider_suit_count: u8,
     pub spider_one_suit: Suit,
+    /// Persisted Debug → Performance window state (visible + last
+    /// position/size).  `serde(default)` keeps stored blobs from
+    /// pre-`PerfWindowState` versions parseable.
+    #[serde(default)]
+    pub perf_window: PerfWindowState,
 }
 
 impl Default for UserSettings {
@@ -31,6 +68,7 @@ impl Default for UserSettings {
             klondike_draw_count: 1,
             spider_suit_count: 1,
             spider_one_suit: Suit::Spades,
+            perf_window: PerfWindowState::default(),
         }
     }
 }
@@ -107,6 +145,13 @@ mod tests {
             klondike_draw_count: 3,
             spider_suit_count: 1,
             spider_one_suit: Suit::Hearts,
+            perf_window: PerfWindowState {
+                visible: true,
+                x: 100.0,
+                y: 200.0,
+                width: 400.0,
+                height: 220.0,
+            },
         };
         s.save();
         assert_eq!(UserSettings::load(), s);

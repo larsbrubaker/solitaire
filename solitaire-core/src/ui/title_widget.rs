@@ -252,7 +252,17 @@ impl Widget for TitleWidget {
         }
     }
 
-    fn needs_draw(&self) -> bool {
-        self.model.borrow().toast.is_some()
+    // Toast is a static (non-animating) overlay that disappears 3 s
+    // after `show_toast` was called.  We don't want a continuous
+    // 60 fps repaint while it sits on screen — that would defeat the
+    // reactive event loop the platform shells run for battery life.
+    // Instead, surface the expiry as a `next_draw_deadline` so the
+    // host wakes the loop exactly once when the toast should clear.
+    fn next_draw_deadline(&self) -> Option<web_time::Instant> {
+        self.model
+            .borrow()
+            .toast
+            .as_ref()
+            .map(|(_, started)| *started + super::app_model::TOAST_LIFETIME)
     }
 }

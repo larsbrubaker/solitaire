@@ -13,7 +13,6 @@ use super::app_model::SharedModel;
 pub struct AppRootWidget {
     bounds: Rect,
     children: Vec<Box<dyn Widget>>,
-    #[allow(dead_code)]
     model: SharedModel,
 }
 
@@ -53,6 +52,17 @@ impl Widget for AppRootWidget {
         ctx.rect(0.0, 0.0, b.width, b.height);
         ctx.set_fill_color(FELT_GREEN);
         ctx.fill();
+
+        // Persist Performance window state on idle.  This widget paints
+        // first (bottom of the OverlayStack) but it runs AFTER the
+        // current frame's `App::layout` pass — by which time the
+        // agg-gui `Window` has already written its current bounds into
+        // `AppModel.perf_window_bounds` and any close-button click
+        // has flipped `AppModel.show_performance_window`.  The model
+        // diffs against the last-saved snapshot internally, so this
+        // is a cheap no-op on every frame except the ones where the
+        // user actually moved / resized / closed the window.
+        self.model.borrow().maybe_save_perf_window_settings();
     }
 
     fn on_event(&mut self, _event: &Event) -> EventResult {

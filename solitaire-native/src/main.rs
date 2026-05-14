@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use solitaire_core::ui::build_solitaire_app;
 use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize, Position};
 use winit::event::{ElementState, Event, MouseScrollDelta, WindowEvent};
-use winit::event_loop::EventLoop;
+use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::{Fullscreen, Window, WindowAttributes};
 
 const WINDOW_STATE_KEY: &str = "solitaire-native:window-state:v1";
@@ -281,6 +281,7 @@ fn main() {
 
     let (mut app, shared_model) = build_solitaire_app();
     let frame_history = shared_model.borrow().frame_history.clone();
+    let perf_window_visible = shared_model.borrow().show_performance_window.clone();
     let mut wgpu_ctx = WgpuGfxCtx::new(
         Arc::clone(&gpu.device),
         Arc::clone(&gpu.queue),
@@ -294,6 +295,8 @@ fn main() {
     let mut cursor_x = 0.0_f64;
     let mut cursor_y = 0.0_f64;
     let mut current_mods = Modifiers::default();
+    let mut pending_render_ms: Option<f32> = None;
+    let mut perf_sample_flush_needed = false;
 
     event_loop
         .run(move |event, elwt| match event {
@@ -406,19 +409,65 @@ fn main() {
                 event: WindowEvent::RedrawRequested,
                 ..
             } => {
-                let render_start = Instant::now();
-                paint_frame(&gpu, &mut wgpu_ctx, &mut app, win_w, win_h);
-                let render_ms = render_start.elapsed().as_secs_f64() * 1000.0;
-                // Feed the shared model's `FrameHistory` so the in-app
-                // Performance window (Debug menu → "Performance Window")
-                // can render the rolling mean + sparkline.  No console
-                // print: the on-screen widget is the supported way to
-                // inspect frame timing now.
-                frame_history.borrow_mut().push(render_ms as f32);
+                // OS-driven redraw (e.g. after a Resize, expose, or a
+                // platform `request_redraw` call).  `AboutToWait` paints
+                // unconditionally too — but only when `wants_draw()`
+                // says we have something to render — so duplicate paints
+                // are bounded to one frame.
+                let drew = paint_frame(
+                    &gpu,
+                    &mut wgpu_ctx,
+                    &mut app,
+                    win_w,
+                    win_h,
+                    &frame_history,
+                    &mut pending_render_ms,
+                );
+                if drew && perf_window_visible.get() {
+                    perf_sample_flush_needed = true;
+                }
             }
 
             Event::AboutToWait => {
-                window.request_redraw();
+                // Reactive event loop, mirrored from agg-gui's demo-native
+                // shell.  We only paint when the widget tree (or any
+                // running `agg_gui::animation::Tween`) reports it
+                // actually needs a fresh frame.  When idle we set
+                // `ControlFlow::Wait` so the OS sleeps the loop until
+                // the next input event — critical for battery life on
+                // mobile where the alternative is "render at vsync
+                // forever".  `WaitUntil(t)` covers timed animations
+                // (e.g. cursor blink, window fade-in) so we wake up
+                // exactly when a tween's next sample is due.
+                let wants_draw = app.wants_draw();
+                if wants_draw || perf_sample_flush_needed {
+                    let flush_only = perf_sample_flush_needed && !wants_draw;
+                    let drew = paint_frame(
+                        &gpu,
+                        &mut wgpu_ctx,
+                        &mut app,
+                        win_w,
+                        win_h,
+                        &frame_history,
+                        &mut pending_render_ms,
+                    );
+                    // A normal UI-driven draw records a sample after the
+                    // PerformanceView has already painted, so schedule one
+                    // follow-up frame while the Performance window is open
+                    // to make that just-recorded sample visible.  A
+                    // flush-only frame also records its own duration, but we
+                    // intentionally do NOT schedule another flush from it;
+                    // otherwise the measurement display would keep the app
+                    // rendering forever.
+                    perf_sample_flush_needed = drew && !flush_only && perf_window_visible.get();
+                }
+                elwt.set_control_flow(if app.wants_draw() || perf_sample_flush_needed {
+                    ControlFlow::Poll
+                } else if let Some(deadline) = app.next_draw_deadline() {
+                    ControlFlow::WaitUntil(deadline)
+                } else {
+                    ControlFlow::Wait
+                });
             }
 
             _ => {}
@@ -426,13 +475,30 @@ fn main() {
         .expect("event loop");
 }
 
-fn paint_frame(gpu: &Gpu, ctx: &mut WgpuGfxCtx, app: &mut App, win_w: u32, win_h: u32) {
+fn paint_frame(
+    gpu: &Gpu,
+    ctx: &mut WgpuGfxCtx,
+    app: &mut App,
+    win_w: u32,
+    win_h: u32,
+    frame_history: &agg_gui::SharedFrameHistory,
+    pending_render_ms: &mut Option<f32>,
+) -> bool {
     if win_w == 0 || win_h == 0 {
-        return;
+        return false;
     }
     let Some(frame) = acquire_frame(gpu) else {
-        return;
+        return false;
     };
+    // Display the last completed frame's measurement during this draw.
+    // Measuring has to finish after a frame is painted, but the graph is
+    // painted during the frame; carrying the sample forward by one draw
+    // keeps every completed draw represented without forcing continuous
+    // redraws just to update the graph.
+    if let Some(ms) = pending_render_ms.take() {
+        frame_history.borrow_mut().push(ms);
+    }
+    let render_start = Instant::now();
     let view = frame
         .texture
         .create_view(&wgpu::TextureViewDescriptor::default());
@@ -444,6 +510,9 @@ fn paint_frame(gpu: &Gpu, ctx: &mut WgpuGfxCtx, app: &mut App, win_w: u32, win_h
     app.paint(ctx);
     ctx.end_frame();
     frame.present();
+    let render_ms = render_start.elapsed().as_secs_f64() * 1000.0;
+    *pending_render_ms = Some(render_ms as f32);
+    true
 }
 
 fn acquire_frame(gpu: &Gpu) -> Option<wgpu::SurfaceTexture> {
