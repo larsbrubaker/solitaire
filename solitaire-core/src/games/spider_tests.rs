@@ -34,8 +34,7 @@ fn cascades_use_uniform_fanned_spacing() {
 #[test]
 fn descending_any_suit_legal_single_card_to_cascade() {
     let rules = Spider::four_suit();
-    let mut piles =
-        PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
+    let mut piles = PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
     piles
         .get_mut(CASCADE_FIRST)
         .cards
@@ -52,8 +51,7 @@ fn descending_any_suit_legal_single_card_to_cascade() {
 #[test]
 fn multi_card_move_requires_suited_tail() {
     let rules = Spider::four_suit();
-    let mut piles =
-        PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
+    let mut piles = PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
     let src = CASCADE_FIRST;
     // 7♠ 6♥ — descending but mixed suit → multi-card move illegal.
     piles
@@ -76,8 +74,7 @@ fn multi_card_move_requires_suited_tail() {
 #[test]
 fn single_click_move_picks_leftmost_legal_destination() {
     let rules = Spider::four_suit();
-    let mut piles =
-        PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
+    let mut piles = PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
     for cid in CASCADE_FIRST..=CASCADE_LAST {
         piles
             .get_mut(cid)
@@ -112,8 +109,7 @@ fn single_click_move_picks_leftmost_legal_destination() {
 #[test]
 fn single_click_move_prefers_longest_destination_run() {
     let rules = Spider::one_suit();
-    let mut piles =
-        PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
+    let mut piles = PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
     for cid in CASCADE_FIRST..=CASCADE_LAST {
         piles
             .get_mut(cid)
@@ -155,8 +151,7 @@ fn single_click_move_prefers_longest_destination_run() {
 #[test]
 fn complete_run_auto_collapses_to_foundation() {
     let rules = Spider::four_suit();
-    let mut piles =
-        PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
+    let mut piles = PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
     // Build a K→A suited spades run on cascade 0.
     let cid = CASCADE_FIRST;
     for r in [
@@ -191,8 +186,7 @@ fn suited_multi_card_move_to_empty_cascade_is_legal() {
     // EMPTY cascade should land. (Reported as "I can't move a group
     // of cards to a new pile" — the rule allows it; verifying.)
     let rules = Spider::four_suit();
-    let mut piles =
-        PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
+    let mut piles = PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
     let src = CASCADE_FIRST;
     for r in [Rank::Eight, Rank::Seven, Rank::Six] {
         piles
@@ -211,8 +205,7 @@ fn suited_multi_card_move_to_empty_cascade_is_legal() {
 fn suited_multi_card_move_onto_higher_card_is_legal() {
     // Same suited tail (8♠ 7♠ 6♠) onto a 9 of any suit lands.
     let rules = Spider::four_suit();
-    let mut piles =
-        PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
+    let mut piles = PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
     let src = CASCADE_FIRST;
     for r in [Rank::Eight, Rank::Seven, Rank::Six] {
         piles
@@ -238,8 +231,7 @@ fn one_suit_long_descending_tail_relocates_legally() {
     // re-organises an already-suited tail under a higher card. The
     // resulting cascade 1 becomes a clean 8→A suited run.
     let rules = Spider::one_suit();
-    let mut piles =
-        PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
+    let mut piles = PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
     let src = CASCADE_FIRST;
     for r in [
         Rank::Six,
@@ -442,8 +434,7 @@ fn recording_reports_complete_run_collapse() {
 #[test]
 fn stock_click_blocked_when_any_cascade_empty() {
     let rules = Spider::four_suit();
-    let mut piles =
-        PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
+    let mut piles = PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
     for _ in 0..50 {
         piles
             .get_mut(STOCK)

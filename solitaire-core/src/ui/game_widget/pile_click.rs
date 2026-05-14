@@ -5,9 +5,7 @@
 use crate::cards::Card;
 use crate::piles::{HitResult, PileId};
 
-use crate::ui::animation::{
-    build_stripe_texture, deck_thickness_for, CardAnim, DeckFlipAnim,
-};
+use crate::ui::animation::{build_stripe_texture, deck_thickness_for, CardAnim, DeckFlipAnim};
 
 use super::animations;
 use super::GameWidget;

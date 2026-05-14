@@ -222,10 +222,12 @@ fn options_menu(model: &AppModel, kind: Option<GameKind>) -> TopMenu {
 fn debug_menu(model: &AppModel) -> MenuItem {
     MenuItem::submenu(
         "Debug",
-        vec![MenuItem::action("Performance Window", "toggle-performance-window")
-            .radio(model.show_performance_window.get())
-            .keep_open()
-            .into()],
+        vec![
+            MenuItem::action("Performance Window", "toggle-performance-window")
+                .radio(model.show_performance_window.get())
+                .keep_open()
+                .into(),
+        ],
     )
 }
 

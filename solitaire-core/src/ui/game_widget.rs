@@ -175,7 +175,7 @@ impl GameWidget {
         false
     }
 
-    /// Rebuild the sprite atlas when the current card dimensions
+    /// Replace the sprite cache when the current card dimensions
     /// change (window resize → game's `pile_layout` returned a
     /// different `card_w/card_h`) or the device pixel ratio changes.
     /// Atlas pixel resolution = `card_w * DPR` so each sprite blits
@@ -198,7 +198,7 @@ impl GameWidget {
         let t0 = web_time::Instant::now();
         self.atlas = CardSpriteAtlas::build(&self.font, card_w, card_h, dpr);
         eprintln!(
-            "solitaire: rebuilt atlas for {}×{} cards at DPR {:.2} ({}×{} px) in {:.1} ms",
+            "solitaire: reset lazy atlas for {}×{} cards at DPR {:.2} ({}×{} px) in {:.1} ms",
             card_w,
             card_h,
             dpr,

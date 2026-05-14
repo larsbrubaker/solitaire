@@ -49,9 +49,9 @@ fn load_default_font() -> Arc<Font> {
 pub fn build_solitaire_app() -> (App, SharedModel) {
     let model = shared_model();
     let font = load_default_font();
-    // Pre-rasterise a stand-in atlas at default card dimensions. The
-    // first `GameWidget::paint` after a session starts rebuilds it at
-    // the active variant's actual screen-space card size.
+    // Seed an empty stand-in atlas at default card dimensions. The
+    // first `GameWidget::paint` after a session starts replaces it with
+    // one matching the active variant's actual screen-space card size.
     let atlas = CardSpriteAtlas::build(&font, 90.0, 126.0, 1.0);
 
     let title = TitleWidget::new(model.clone(), font.clone());
@@ -197,8 +197,8 @@ mod tests {
         // Mid-viewport, clear of the 26 px menu strip at the top and
         // any HUD strip at the bottom (HUD is hidden on Title anyway).
         let click = Point::new(viewport.width * 0.5, viewport.height * 0.5);
-        let path = hit_test_subtree(app.root(), click)
-            .expect("title-body click must hit something");
+        let path =
+            hit_test_subtree(app.root(), click).expect("title-body click must hit something");
         let chain = type_chain_for_path(app.root(), &path);
 
         assert!(

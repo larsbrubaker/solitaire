@@ -1,6 +1,7 @@
 //! Card rendering — the active deck is the bundled CC0 SVG ("English
 //! pattern playing cards deck PLUS CC0", from Wikimedia Commons),
-//! rasterised through agg-gui's SVG renderer at atlas-build time.
+//! rasterised through agg-gui's SVG renderer when cards are first drawn
+//! at a given size.
 //! `card_face.rs` and `card_back.rs` retain procedural fallbacks that
 //! aren't currently wired into the atlas; keep them around as reference
 //! art and as a starting point for future deck themes.

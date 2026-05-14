@@ -479,8 +479,8 @@ pub(super) fn queue_recorded_move_animations(
                     // we don't double-draw with it; the rest of the run
                     // appears immediately to cover the static cascade
                     // that the session has already emptied.
-                    let needs_hold = previous_move.is_some_and(|prev| prev.to == record.m.from)
-                        && cursor > now;
+                    let needs_hold =
+                        previous_move.is_some_and(|prev| prev.to == record.m.from) && cursor > now;
                     let late_hold = if needs_hold {
                         previous_move
                             .map(|prev| prev.take as usize)

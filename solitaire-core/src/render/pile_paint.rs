@@ -1,11 +1,11 @@
-//! Pile painter — blits cached card sprites from the `CardSpriteAtlas`
-//! via `DrawCtx::draw_image_rgba_arc`. The wgpu backend keys textures
-//! by `Arc::as_ptr`, so the 53 unique sprites upload ONCE and every
-//! per-frame draw is a textured quad.
+//! Pile painter — blits lazily-cached card sprites from the
+//! `CardSpriteAtlas` via `DrawCtx::draw_image_rgba_arc`. The wgpu
+//! backend keys textures by `Arc::as_ptr`, so each visible unique sprite
+//! uploads once and every later per-frame draw is a textured quad.
 //!
 //! ## 1:1 pixel-perfect blits
 //!
-//! The atlas pre-rasterises sprites at exactly `(CARD_W × target,
+//! The atlas rasterises requested sprites at exactly `(CARD_W × target,
 //! CARD_H × target)` device pixels, where `target = playfield_scale ×
 //! device_scale`. By paint time, the framework's outer scale (device
 //! scale) plus this widget's `ctx.scale(playfield_scale, _)` make the

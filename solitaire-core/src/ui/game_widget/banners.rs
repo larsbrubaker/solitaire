@@ -33,12 +33,7 @@ pub(super) fn paint_win_banner(ctx: &mut dyn DrawCtx, font: &Arc<Font>, rect: Re
 /// Status banner for Mom's Solitaire's "select a King for the empty
 /// slot" prompt. Painted near the top of the playfield, similar in
 /// style to the C# original's instruction banner.
-pub(super) fn paint_moms_prompt(
-    ctx: &mut dyn DrawCtx,
-    font: &Arc<Font>,
-    rect: Rect,
-    label: &str,
-) {
+pub(super) fn paint_moms_prompt(ctx: &mut dyn DrawCtx, font: &Arc<Font>, rect: Rect, label: &str) {
     use agg_gui::color::Color;
     let bg = Color::from_rgba8(0xf8, 0x89, 0x78, 0xf0);
     let border = Color::from_rgb8(0x20, 0x20, 0x20);
