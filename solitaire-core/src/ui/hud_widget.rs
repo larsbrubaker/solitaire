@@ -1,4 +1,4 @@
-//! HUD widget — Undo / New Deal / (Shuffle) / Title buttons plus the
+//! HUD widget — Undo / New Deal / (Shuffle) / Main Menu buttons plus the
 //! Mom's-Solitaire shuffle counter. Visible whenever a game is active.
 //!
 //! Paints in viewport coordinates rather than the virtual playfield
@@ -70,7 +70,7 @@ impl HudWidget {
     }
 
     /// Buttons to render. Mom's Solitaire gets an extra `Shuffle`
-    /// between New Deal and Title; everything else gets the standard
+    /// between New Deal and Main Menu; everything else gets the standard
     /// three. The menu-bar / sidebar-menu actions (Restart, Draw 1/3,
     /// Rules, About) live in the menu widget — not duplicated here.
     fn btns(&self) -> Vec<Btn> {
@@ -90,7 +90,7 @@ impl HudWidget {
             Btn::Undo => "Undo",
             Btn::NewDeal => "New Deal",
             Btn::Shuffle => "Shuffle",
-            Btn::Home => "Title",
+            Btn::Home => "Main Menu",
         }
     }
 
@@ -149,14 +149,14 @@ impl HudWidget {
             }
             Btn::NewDeal => {
                 if let Some(kind) = model.kind {
-                    model.start_game(kind);
+                    model.request_new_deal(kind);
                 }
             }
             Btn::Shuffle => {
                 model.try_moms_shuffle();
             }
             Btn::Home => {
-                model.back_to_title();
+                model.request_main_menu();
             }
         }
         agg_gui::animation::request_draw();

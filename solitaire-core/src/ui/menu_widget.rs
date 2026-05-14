@@ -133,7 +133,7 @@ fn game_menu() -> TopMenu {
                 .into(),
             MenuItem::action("Restart this Deal", "restart").into(),
             MenuEntry::Separator,
-            MenuItem::action("Back to Title", "title").into(),
+            MenuItem::action("Back to Main Menu", "title").into(),
         ],
     )
 }
@@ -246,11 +246,11 @@ fn handle_action(model: &mut AppModel, action: &str) {
     match action {
         "new-deal" => {
             if let Some(kind) = model.kind {
-                model.start_game(kind);
+                model.request_new_deal(kind);
             }
         }
         "restart" => model.restart_current_deal(),
-        "title" => model.back_to_title(),
+        "title" => model.request_main_menu(),
         "draw-1" => model.set_klondike_draw_count(1),
         "draw-3" => model.set_klondike_draw_count(3),
         "spider-2-suit" => model.set_spider_suit_count(2),

@@ -37,6 +37,12 @@ pub enum HelpKind {
     About(GameKind),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConfirmAction {
+    NewDeal(GameKind),
+    MainMenu,
+}
+
 pub struct AppModel {
     pub screen: Screen,
     pub session: Option<Box<dyn DynGameSession>>,
@@ -54,6 +60,9 @@ pub struct AppModel {
     /// Open Help dialog, if any. The `HelpDialog` widget reads this and
     /// paints the corresponding markdown content as a modal overlay.
     pub help: Option<HelpKind>,
+    /// Destructive action waiting for user confirmation. The
+    /// `ConfirmDialog` widget reads this and executes/cancels it.
+    pub confirm: Option<ConfirmAction>,
     /// Mom's Solitaire state: when the player clicks an Ace gap at
     /// column 0, that gap's pile id lands here and the game waits for
     /// the next click to land on a King — that King will be swapped
@@ -109,6 +118,7 @@ impl AppModel {
             spider_suit_count: s.spider_suit_count,
             spider_one_suit: s.spider_one_suit,
             help: None,
+            confirm: None,
             moms_waiting_king_at: None,
             moms_shuffles: 0,
             show_performance_window: Rc::new(Cell::new(s.perf_window.visible)),
@@ -177,6 +187,44 @@ impl AppModel {
         self.start_game_with_seed(kind, wallclock_seed());
     }
 
+    pub fn request_new_deal(&mut self, kind: GameKind) {
+        if self.game_in_progress_has_moves() {
+            self.confirm = Some(ConfirmAction::NewDeal(kind));
+        } else {
+            self.start_game(kind);
+        }
+    }
+
+    pub fn request_main_menu(&mut self) {
+        if self.game_in_progress_has_moves() {
+            self.confirm = Some(ConfirmAction::MainMenu);
+        } else {
+            self.back_to_title();
+        }
+    }
+
+    pub fn confirm_pending_action(&mut self) {
+        let Some(action) = self.confirm.take() else {
+            return;
+        };
+        match action {
+            ConfirmAction::NewDeal(kind) => self.start_game(kind),
+            ConfirmAction::MainMenu => self.back_to_title(),
+        }
+    }
+
+    pub fn cancel_pending_action(&mut self) {
+        self.confirm = None;
+    }
+
+    fn game_in_progress_has_moves(&self) -> bool {
+        self.screen == Screen::Game
+            && self
+                .session
+                .as_ref()
+                .is_some_and(|session| session.has_moves())
+    }
+
     pub fn start_game_with_seed(&mut self, kind: GameKind, seed: u64) {
         let session: Box<dyn DynGameSession> = match kind {
             GameKind::Klondike => Box::new(GameSession::new(
@@ -196,6 +244,7 @@ impl AppModel {
         self.session = Some(session);
         self.kind = Some(kind);
         self.screen = Screen::Game;
+        self.confirm = None;
         // Any Mom's-specific UI state is per-game; reset so a new
         // Klondike doesn't inherit a stale "waiting for king" or
         // shuffle count.
@@ -257,6 +306,7 @@ impl AppModel {
         self.session = None;
         self.kind = None;
         self.screen = Screen::Title;
+        self.confirm = None;
         self.moms_waiting_king_at = None;
         self.moms_shuffles = 0;
     }
@@ -446,5 +496,86 @@ mod tests {
         model.maybe_save_perf_window_settings();
         let again = UserSettings::load().perf_window;
         assert_eq!(again, reloaded);
+    }
+
+    #[test]
+    fn new_deal_request_on_fresh_game_skips_confirmation() {
+        let _guard = install_test_storage();
+        let mut model = AppModel::new();
+        model.start_game_with_seed(GameKind::Spider, 123);
+        let original_seed = model.session.as_ref().unwrap().seed();
+
+        model.request_new_deal(GameKind::Spider);
+
+        assert_eq!(model.confirm, None);
+        assert_eq!(model.screen, Screen::Game);
+        assert_ne!(model.session.as_ref().unwrap().seed(), original_seed);
+    }
+
+    #[test]
+    fn new_deal_request_after_move_requires_confirmation() {
+        let _guard = install_test_storage();
+        let mut model = AppModel::new();
+        model.start_game_with_seed(GameKind::Spider, 123);
+        let original_seed = model.session.as_ref().unwrap().seed();
+        apply_spider_stock_deal(&mut model);
+
+        model.request_new_deal(GameKind::Spider);
+
+        assert_eq!(
+            model.confirm,
+            Some(ConfirmAction::NewDeal(GameKind::Spider))
+        );
+        assert_eq!(model.session.as_ref().unwrap().seed(), original_seed);
+
+        model.confirm_pending_action();
+
+        assert_eq!(model.confirm, None);
+        assert_eq!(model.screen, Screen::Game);
+        assert_ne!(model.session.as_ref().unwrap().seed(), original_seed);
+    }
+
+    #[test]
+    fn main_menu_request_on_fresh_game_skips_confirmation() {
+        let _guard = install_test_storage();
+        let mut model = AppModel::new();
+        model.start_game_with_seed(GameKind::Spider, 456);
+
+        model.request_main_menu();
+
+        assert_eq!(model.confirm, None);
+        assert_eq!(model.screen, Screen::Title);
+        assert!(model.session.is_none());
+    }
+
+    #[test]
+    fn main_menu_request_after_move_requires_confirmation() {
+        let _guard = install_test_storage();
+        let mut model = AppModel::new();
+        model.start_game_with_seed(GameKind::Spider, 456);
+        apply_spider_stock_deal(&mut model);
+
+        model.request_main_menu();
+
+        assert_eq!(model.confirm, Some(ConfirmAction::MainMenu));
+        assert_eq!(model.screen, Screen::Game);
+        assert!(model.session.is_some());
+
+        model.cancel_pending_action();
+        assert_eq!(model.confirm, None);
+        assert_eq!(model.screen, Screen::Game);
+
+        model.request_main_menu();
+        model.confirm_pending_action();
+        assert_eq!(model.screen, Screen::Title);
+        assert!(model.session.is_none());
+    }
+
+    fn apply_spider_stock_deal(model: &mut AppModel) {
+        let session = model.session.as_mut().expect("test starts a game");
+        let moves = session.on_pile_click(8);
+        assert!(!moves.is_empty(), "fresh Spider stock should deal");
+        assert!(session.try_apply_batch(moves));
+        assert!(session.has_moves());
     }
 }

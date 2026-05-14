@@ -29,6 +29,7 @@ pub trait DynGameSession {
     fn is_won(&self) -> bool;
     fn game_slug(&self) -> &'static str;
     fn seed(&self) -> u64;
+    fn has_moves(&self) -> bool;
     /// Re-run the active rules' `pile_layout` for `rect` and apply
     /// the resulting positions / sizes to the existing piles. Card
     /// stacks are preserved.
@@ -77,6 +78,9 @@ impl<R: GameRules> DynGameSession for GameSession<R> {
     }
     fn seed(&self) -> u64 {
         self.seed
+    }
+    fn has_moves(&self) -> bool {
+        !self.undo.is_empty()
     }
     fn relayout(&mut self, rect: Rect) {
         GameSession::relayout(self, rect);
