@@ -195,17 +195,7 @@ impl GameWidget {
         if scale_unchanged && dims_unchanged {
             return;
         }
-        let t0 = web_time::Instant::now();
         self.atlas = CardSpriteAtlas::build(&self.font, card_w, card_h, dpr);
-        eprintln!(
-            "solitaire: reset lazy atlas for {}×{} cards at DPR {:.2} ({}×{} px) in {:.1} ms",
-            card_w,
-            card_h,
-            dpr,
-            self.atlas.px_w,
-            self.atlas.px_h,
-            t0.elapsed().as_secs_f64() * 1000.0
-        );
     }
 
     fn is_moms(&self) -> bool {

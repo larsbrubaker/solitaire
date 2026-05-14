@@ -39,10 +39,15 @@ pub(super) fn paint_card_animation(
     ctx.draw_image_rgba_corners(&sprite, atlas.px_w, atlas.px_h, q.corners);
 }
 
-/// `hide_from` index for `pile_id` while any in-flight animation
-/// targets it — `None` means draw all cards normally. Multiple
-/// animations targeting the same pile collapse to the lowest
-/// `dst_hide_from` so all of them are correctly suppressed.
+/// `hide_from` index for `pile_id` while any queued/in-flight animation
+/// targets it — `None` means draw all cards normally. Multiple animations
+/// targeting the same pile collapse to the lowest `dst_hide_from` so all
+/// of them are correctly suppressed.
+///
+/// Hiding starts when the animation is queued, not when it starts painting.
+/// The session state mutates immediately, so staggered deals (Spider stock
+/// dispense) would otherwise show every newly-dealt destination card in its
+/// final static position until each card's turn to animate.
 pub(super) fn hide_from_for(
     animations: &[CardAnim],
     deck_animations: &[DeckFlipAnim],
@@ -50,7 +55,6 @@ pub(super) fn hide_from_for(
 ) -> Option<usize> {
     let card_min = animations
         .iter()
-        .filter(|a| a.should_paint_now())
         .filter(|a| a.dst_pile == pile_id)
         .map(|a| a.dst_hide_from)
         .min();
@@ -544,5 +548,36 @@ pub(super) fn queue_recorded_move_animations(
             cursor += auto_followup_pause;
         }
         previous_move = Some(record.m);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::cards::{Rank, Suit};
+
+    #[test]
+    fn future_staggered_animation_hides_destination_before_painting() {
+        let now = Instant::now();
+        let anim = CardAnim {
+            card: Card::new(Suit::Spades, Rank::Ace).face_up(),
+            src_x: 0.0,
+            src_y: 0.0,
+            dst_x: 10.0,
+            dst_y: 10.0,
+            card_w: 90.0,
+            card_h: 126.0,
+            start_at: now + Duration::from_secs(1),
+            duration: Duration::from_millis(220),
+            dst_pile: 42,
+            dst_hide_from: 6,
+            flip: true,
+            hold_before_start: false,
+            late_appear_at: None,
+        };
+
+        assert!(!anim.should_paint_now());
+        assert_eq!(hide_from_for(&[anim], &[], 42), Some(6));
     }
 }
