@@ -1,7 +1,7 @@
 //! Spider — 10 cascades, 8 foundations, 1 stock, 2 decks (104 cards).
 //!
-//! Suit count is configurable (1 / 2 / 4); 4-suit is the default and
-//! hardest variant. Multi-card tableau moves require a SUITED
+//! Suit count is configurable (1 / 2 / 4); 1-suit Spades is the default
+//! beginner variant. Multi-card tableau moves require a SUITED
 //! descending tail. Complete K→A suited runs at the top of any cascade
 //! auto-collapse to a foundation via `after_move`.
 
@@ -75,7 +75,7 @@ impl Spider {
 
 impl Default for Spider {
     fn default() -> Self {
-        Self::four_suit()
+        Self::one_suit()
     }
 }
 

@@ -29,7 +29,7 @@ impl Default for UserSettings {
     fn default() -> Self {
         Self {
             klondike_draw_count: 1,
-            spider_suit_count: 4,
+            spider_suit_count: 1,
             spider_one_suit: Suit::Spades,
         }
     }
@@ -96,6 +96,8 @@ mod tests {
         let _guard = install_test_storage();
         let s = UserSettings::load();
         assert_eq!(s, UserSettings::default());
+        assert_eq!(s.spider_suit_count, 1);
+        assert_eq!(s.spider_one_suit, Suit::Spades);
     }
 
     #[test]

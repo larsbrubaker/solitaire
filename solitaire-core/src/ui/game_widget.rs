@@ -460,7 +460,6 @@ impl Widget for GameWidget {
     }
 
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
-        let t0 = web_time::Instant::now();
         self.ensure_atlas_for_session();
         // Drop completed animations BEFORE this frame's paint so a
         // landed card lights up in the same frame the in-flight one
@@ -583,11 +582,6 @@ impl Widget for GameWidget {
         }
         if self.model.borrow().moms_waiting_king_at.is_some() {
             banners::paint_moms_prompt(ctx, &self.font, pf, "Select a King for the empty slot");
-        }
-
-        let ms = t0.elapsed().as_secs_f64() * 1000.0;
-        if ms > 30.0 {
-            eprintln!("solitaire: GameWidget paint took {:.1} ms", ms);
         }
     }
 

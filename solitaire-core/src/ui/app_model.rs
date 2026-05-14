@@ -1,8 +1,9 @@
 //! Shared mutable state for every Solitaire widget.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use agg_gui::{shared_frame_history, SharedFrameHistory};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use web_time::Instant;
@@ -61,6 +62,20 @@ pub struct AppModel {
     /// `m_NumShuffles` in the C# original; surfaced on screen so the
     /// player can see how many shuffles the solve cost.
     pub moms_shuffles: u32,
+    /// Whether the Performance window (Mean CPU usage + sparkline) is
+    /// currently open.  Held as `Rc<Cell<bool>>` so the agg-gui
+    /// `Window` widget that hosts it can wire `with_visible_cell` to
+    /// the same backing cell — a click on the window's × button writes
+    /// the cell directly, and the menu toggle writes through the
+    /// `set_performance_window_open` helper.  Both paths converge on
+    /// one source of truth.
+    pub show_performance_window: Rc<Cell<bool>>,
+    /// Rolling buffer of recent frame times, fed by the platform shell
+    /// (native winit loop or wasm `render` entry point) and read by
+    /// the Performance window's `PerformanceView`.  Lives on the
+    /// model so the platform shell can grab a clone via
+    /// [`SharedModel`] borrow without an extra plumbing layer.
+    pub frame_history: SharedFrameHistory,
 }
 
 impl AppModel {
@@ -83,6 +98,8 @@ impl AppModel {
             help: None,
             moms_waiting_king_at: None,
             moms_shuffles: 0,
+            show_performance_window: Rc::new(Cell::new(false)),
+            frame_history: shared_frame_history(),
         }
     }
 
@@ -96,6 +113,17 @@ impl AppModel {
             spider_one_suit: self.spider_one_suit,
         }
         .save();
+    }
+
+    /// Open / close the Performance window.  Both the Debug menu's
+    /// "Performance Window" toggle and the window's own × button write
+    /// through the shared `Rc<Cell<bool>>`, so this setter just keeps
+    /// the API symmetric with the other model setters.
+    pub fn set_performance_window_open(&mut self, open: bool) {
+        if self.show_performance_window.get() == open {
+            return;
+        }
+        self.show_performance_window.set(open);
     }
 
     pub fn start_game(&mut self, kind: GameKind) {

@@ -23,7 +23,7 @@ use agg_gui::widgets::menu::{MenuBar, MenuEntry, MenuItem, MenuOrientation, TopM
 use crate::cards::Suit;
 use crate::games::GameKind;
 
-use super::app_model::{AppModel, HelpKind, Screen, SharedModel};
+use super::app_model::{AppModel, HelpKind, SharedModel};
 use super::layout::{self, ChromeMode, SIDEBAR_MENU_H, SIDEBAR_W};
 
 /// Snapshot of every `AppModel` field that affects the menu's text or
@@ -38,6 +38,9 @@ struct MenuSnapshot {
     klondike_draw_count: u8,
     spider_suit_count: u8,
     spider_one_suit: Suit,
+    /// Performance-window visibility: drives the radio-dot indicator
+    /// on the "Performance Window" menu item.
+    show_performance_window: bool,
 }
 
 impl MenuSnapshot {
@@ -47,6 +50,7 @@ impl MenuSnapshot {
             klondike_draw_count: model.klondike_draw_count,
             spider_suit_count: model.spider_suit_count,
             spider_one_suit: model.spider_one_suit,
+            show_performance_window: model.show_performance_window.get(),
         }
     }
 }
@@ -112,17 +116,12 @@ fn build_menu_bar(model: SharedModel, font: Arc<Font>, orientation: MenuOrientat
 }
 
 /// Build the menu structure for the variant currently in `model`. The
-/// Game and Help menus are universal; the Options menu is per-variant.
+/// Game and Help menus are universal; the Options menu is per-variant
+/// for variant-specific rules (Klondike draw count, Spider suits) but
+/// always carries Toggle Fullscreen + the Debug submenu so the
+/// player can always reach those even on the title screen.
 fn build_menus(model: &AppModel) -> Vec<TopMenu> {
-    let kind = model.kind;
-    let mut out = vec![game_menu(), options_menu(model, kind), help_menu()];
-    // Title screen — no variant selected. Drop the Options menu since
-    // every entry is per-variant. (Toggle Fullscreen will reappear once
-    // the player picks a game.)
-    if kind.is_none() {
-        out.remove(1);
-    }
-    out
+    vec![game_menu(), options_menu(model, model.kind), help_menu()]
 }
 
 fn game_menu() -> TopMenu {
@@ -211,7 +210,23 @@ fn options_menu(model: &AppModel, kind: Option<GameKind>) -> TopMenu {
         _ => {}
     }
     items.push(MenuItem::action("Toggle Fullscreen", "toggle-fullscreen").into());
+    items.push(MenuEntry::Separator);
+    items.push(debug_menu(model).into());
     TopMenu::new("Options", items)
+}
+
+/// Developer-only submenu nested under Options.  Currently hosts a
+/// single toggle for the Performance window (Mean CPU usage +
+/// sparkline); future debug overlays should slot in as additional
+/// entries here so they all live behind one parent label.
+fn debug_menu(model: &AppModel) -> MenuItem {
+    MenuItem::submenu(
+        "Debug",
+        vec![MenuItem::action("Performance Window", "toggle-performance-window")
+            .radio(model.show_performance_window.get())
+            .keep_open()
+            .into()],
+    )
 }
 
 fn spider_one_suit_item(model: &AppModel, suit: Suit, label: &str, action: &str) -> MenuEntry {
@@ -245,6 +260,10 @@ fn handle_action(model: &mut AppModel, action: &str) {
         "help-rules" => model.help = model.kind.map(HelpKind::Rules),
         "help-about" => model.help = model.kind.map(HelpKind::About),
         "toggle-fullscreen" => crate::platform::request_toggle_fullscreen(),
+        "toggle-performance-window" => {
+            let now_open = model.show_performance_window.get();
+            model.set_performance_window_open(!now_open)
+        }
         _ => {}
     }
 }
@@ -340,12 +359,11 @@ impl Widget for MenuBarHost {
         available
     }
     fn is_visible(&self) -> bool {
-        let s = self.model.borrow().screen;
-        if !matches!(s, Screen::Game | Screen::Won) {
-            return false;
-        }
-        // Hide the horizontal menu bar in sidebar mode — the same
-        // actions are exposed by `SidebarMenuHost` in the left column.
+        // Visible on every screen — the title screen wants the same
+        // Options/Help menus the gameplay screens get (so e.g. the
+        // Debug submenu and Toggle Fullscreen are always reachable).
+        // Hide only when the chrome layout is in sidebar mode, where
+        // the same actions live in the vertical `SidebarMenuHost`.
         let chrome = layout::compute(Size::new(self.bounds.width, self.bounds.height));
         chrome.mode != ChromeMode::Sidebar
     }
@@ -405,10 +423,10 @@ impl Widget for SidebarMenuHost {
         available
     }
     fn is_visible(&self) -> bool {
-        let s = self.model.borrow().screen;
-        if !matches!(s, Screen::Game | Screen::Won) {
-            return false;
-        }
+        // Mirror the menu-on-every-screen rule from `MenuBarHost`: the
+        // sidebar variant only kicks in for landscape-mobile-shaped
+        // viewports, so visibility just gates on chrome mode (not on
+        // whether a game is in progress).
         let chrome = layout::compute(Size::new(self.bounds.width, self.bounds.height));
         chrome.mode == ChromeMode::Sidebar
     }
@@ -478,7 +496,9 @@ mod tests {
     fn spider_suit_count_change_during_spider_re_deals() {
         let mut m = AppModel::new();
         m.start_game_with_seed(GameKind::Spider, 7);
-        assert_eq!(m.spider_suit_count, 4);
+        assert_eq!(m.spider_suit_count, 1);
+        m.set_spider_suit_count(2);
+        assert_eq!(m.spider_suit_count, 2);
         m.set_spider_suit_count(1);
         assert_eq!(m.spider_suit_count, 1);
         // Same seed, so the same shuffle slots are filled — but the
@@ -496,12 +516,72 @@ mod tests {
     }
 
     #[test]
-    fn picking_spider_one_suit_switches_to_one_suit_mode() {
+    fn picking_spider_one_suit_changes_active_one_suit() {
         let mut m = AppModel::new();
         m.start_game_with_seed(GameKind::Spider, 11);
-        assert_eq!(m.spider_suit_count, 4);
+        assert_eq!(m.spider_suit_count, 1);
         handle_action(&mut m, "spider-suit-hearts");
         assert_eq!(m.spider_suit_count, 1);
         assert_eq!(m.spider_one_suit, Suit::Hearts);
+    }
+
+    #[test]
+    fn options_menu_always_present_even_on_title_screen() {
+        let m = AppModel::new();
+        assert!(
+            m.kind.is_none(),
+            "fresh AppModel must start on the title screen"
+        );
+        let menus = build_menus(&m);
+        let titles: Vec<&str> = menus.iter().map(|t| t.label.as_str()).collect();
+        assert!(
+            titles.contains(&"Options"),
+            "Options menu should be visible on the title screen, got {titles:?}"
+        );
+    }
+
+    #[test]
+    fn debug_submenu_exposes_performance_window_toggle() {
+        let mut m = AppModel::new();
+        // The Debug submenu hosts a single "Performance Window" entry
+        // (no separate Debug Mode gate — opening the window IS the
+        // debug intent).  Visible on every screen, including the title.
+        let menu = options_menu(&m, m.kind);
+        let debug = find_submenu(&menu, "Debug").expect("Debug submenu");
+        assert_eq!(visible_action_labels(&debug), vec!["Performance Window"]);
+        assert!(!m.show_performance_window.get());
+
+        // Triggering the Performance Window action flips the model cell.
+        handle_action(&mut m, "toggle-performance-window");
+        assert!(m.show_performance_window.get());
+        handle_action(&mut m, "toggle-performance-window");
+        assert!(!m.show_performance_window.get());
+    }
+
+    /// Walk a top-level menu's entries and return a clone of the
+    /// nested submenu whose label matches `title`.  Used by the Debug-
+    /// menu tests above to assert what the user sees.
+    fn find_submenu(menu: &TopMenu, title: &str) -> Option<MenuItem> {
+        for entry in &menu.items {
+            if let MenuEntry::Item(item) = entry {
+                if item.label == title && item.has_submenu() {
+                    return Some(item.clone());
+                }
+            }
+        }
+        None
+    }
+
+    /// Collect the action-row labels in a submenu (skips separators
+    /// and any nested submenus).  Test helper.
+    fn visible_action_labels(submenu: &MenuItem) -> Vec<String> {
+        submenu
+            .submenu
+            .iter()
+            .filter_map(|e| match e {
+                MenuEntry::Item(item) if !item.has_submenu() => Some(item.label.clone()),
+                _ => None,
+            })
+            .collect()
     }
 }

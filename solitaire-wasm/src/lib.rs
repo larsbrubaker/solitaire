@@ -12,14 +12,17 @@
 use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 
-use agg_gui::{App, Modifiers, MouseButton};
+use agg_gui::{App, Modifiers, MouseButton, SharedFrameHistory};
 use demo_wgpu::{begin_frame, WgpuGfxCtx};
+use solitaire_core::ui::app_model::SharedModel;
 use solitaire_core::ui::build_solitaire_app;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 
 thread_local! {
     static APP: RefCell<Option<App>> = const { RefCell::new(None) };
+    static MODEL: RefCell<Option<SharedModel>> = const { RefCell::new(None) };
+    static FRAME_HISTORY: RefCell<Option<SharedFrameHistory>> = const { RefCell::new(None) };
     static WGPU_INIT: RefCell<Option<WgpuInit>> = const { RefCell::new(None) };
     static WGPU_CTX: RefCell<Option<WgpuGfxCtx>> = const { RefCell::new(None) };
     static NEEDS_DRAW: Cell<bool> = const { Cell::new(true) };
@@ -176,7 +179,11 @@ fn ensure_app() {
         if cell.borrow().is_some() {
             return;
         }
-        *cell.borrow_mut() = Some(build_solitaire_app());
+        let (app, model) = build_solitaire_app();
+        let history = model.borrow().frame_history.clone();
+        FRAME_HISTORY.with(|fh| *fh.borrow_mut() = Some(history));
+        MODEL.with(|m| *m.borrow_mut() = Some(model));
+        *cell.borrow_mut() = Some(app);
     });
 }
 
@@ -219,11 +226,24 @@ fn resize_surface_if_needed(width: u32, height: u32) {
 }
 
 #[wasm_bindgen]
-pub fn render(width: u32, height: u32, _frame_ms: f64) {
+pub fn render(width: u32, height: u32, frame_ms: f64) {
     if !WGPU_INIT.with(|cell| cell.borrow().is_some()) {
         return;
     }
     ensure_app();
+    // Feed the shared model's `FrameHistory` so the in-app Performance
+    // window (Debug menu → "Performance Window") renders the rolling
+    // mean + sparkline.  `frame_ms` is the JS-provided wall time
+    // between `requestAnimationFrame` callbacks; close enough to "what
+    // a user sees" to drive the readout without instrumenting the
+    // wasm-side render itself.
+    if frame_ms.is_finite() && frame_ms > 0.0 {
+        FRAME_HISTORY.with(|cell| {
+            if let Some(h) = cell.borrow().as_ref() {
+                h.borrow_mut().push(frame_ms as f32);
+            }
+        });
+    }
     ensure_wgpu_ctx(width as f32, height as f32);
     resize_surface_if_needed(width, height);
 

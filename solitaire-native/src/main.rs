@@ -19,7 +19,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use agg_gui::{winit_adapter, App, Modifiers, Size};
 use demo_wgpu::{begin_frame, WgpuGfxCtx};
@@ -279,7 +279,8 @@ fn main() {
 
     let mut gpu = Gpu::new(window.clone());
 
-    let mut app = build_solitaire_app();
+    let (mut app, shared_model) = build_solitaire_app();
+    let frame_history = shared_model.borrow().frame_history.clone();
     let mut wgpu_ctx = WgpuGfxCtx::new(
         Arc::clone(&gpu.device),
         Arc::clone(&gpu.queue),
@@ -293,15 +294,6 @@ fn main() {
     let mut cursor_x = 0.0_f64;
     let mut cursor_y = 0.0_f64;
     let mut current_mods = Modifiers::default();
-
-    // Roll-up of paint-only render times (i.e. the `paint_frame` call
-    // duration, NOT the wall-clock interval between frames). Reported
-    // every `RENDER_REPORT_INTERVAL`; aggregated to keep stdout quiet.
-    const RENDER_REPORT_INTERVAL: Duration = Duration::from_secs(3);
-    let mut render_ms_sum: f64 = 0.0;
-    let mut render_ms_max: f64 = 0.0;
-    let mut render_frames: u32 = 0;
-    let mut render_window_start = Instant::now();
 
     event_loop
         .run(move |event, elwt| match event {
@@ -417,21 +409,12 @@ fn main() {
                 let render_start = Instant::now();
                 paint_frame(&gpu, &mut wgpu_ctx, &mut app, win_w, win_h);
                 let render_ms = render_start.elapsed().as_secs_f64() * 1000.0;
-                render_ms_sum += render_ms;
-                if render_ms > render_ms_max {
-                    render_ms_max = render_ms;
-                }
-                render_frames += 1;
-                if render_window_start.elapsed() >= RENDER_REPORT_INTERVAL && render_frames > 0 {
-                    let avg = render_ms_sum / render_frames as f64;
-                    eprintln!(
-                        "solitaire: render avg {avg:.2} ms (peak {render_ms_max:.2} ms) over last {render_frames} frames"
-                    );
-                    render_ms_sum = 0.0;
-                    render_ms_max = 0.0;
-                    render_frames = 0;
-                    render_window_start = Instant::now();
-                }
+                // Feed the shared model's `FrameHistory` so the in-app
+                // Performance window (Debug menu → "Performance Window")
+                // can render the rolling mean + sparkline.  No console
+                // print: the on-screen widget is the supported way to
+                // inspect frame timing now.
+                frame_history.borrow_mut().push(render_ms as f32);
             }
 
             Event::AboutToWait => {
