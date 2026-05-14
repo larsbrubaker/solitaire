@@ -117,7 +117,7 @@ impl GameWidget {
                 side_tex_h: side_h,
             });
         } else if let Some((m, sources, compact_sources)) = single_move_animation {
-            if animations::is_klondike_stock_to_waste_draw(session.piles(), &m) && m.take > 1 {
+            if animations::is_klondike_stock_to_waste_draw(session.piles(), &m) {
                 animations::queue_klondike_draw_animations(
                     &mut self.animations,
                     &sources,

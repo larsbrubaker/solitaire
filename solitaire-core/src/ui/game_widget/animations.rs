@@ -354,19 +354,37 @@ pub(super) fn queue_klondike_draw_animations(
         return;
     }
     let draw_start = waste.cards.len() - take;
-    let hide_from = compact_sources
-        .first()
-        .map(|(idx, _, _, _)| *idx)
+
+    // For each pre-existing fan card, compute its post position and
+    // keep only the ones that actually move. Animating non-movers to
+    // origin (the old behavior) made take<3 draws look like the fan
+    // collapsed and then popped back. The remaining pre-fan cards
+    // slide to their new fan slot.
+    let mut shifted: Vec<(usize, Card, f64, f64, f64, f64)> = Vec::new();
+    for &(idx, card, src_x, src_y) in compact_sources {
+        if idx >= waste.cards.len() || waste.cards[idx] != card {
+            continue;
+        }
+        let (dst_x, dst_y) = waste.position_for(idx);
+        if (src_x - dst_x).abs() < 0.5 && (src_y - dst_y).abs() < 0.5 {
+            continue;
+        }
+        shifted.push((idx, card, src_x, src_y, dst_x, dst_y));
+    }
+    let hide_from = shifted
+        .iter()
+        .map(|(idx, ..)| *idx)
+        .min()
         .unwrap_or(draw_start);
 
     let compact_duration = Duration::from_millis(140);
-    for &(_, card, src_x, src_y) in compact_sources {
+    for &(_, card, src_x, src_y, dst_x, dst_y) in &shifted {
         animations.push(CardAnim {
             card,
             src_x,
             src_y,
-            dst_x: waste.origin_x,
-            dst_y: waste.origin_y,
+            dst_x,
+            dst_y,
             card_w: waste.card_w,
             card_h: waste.card_h,
             start_at: now,
@@ -380,11 +398,11 @@ pub(super) fn queue_klondike_draw_animations(
     }
 
     // Only push the deal back behind the compaction when there IS
-    // a compaction. Empty-waste first deal has no fan to slide, so
-    // a `compact_duration` gap here would render the just-applied
-    // waste cards unhidden (no anim is `should_paint_now` yet) for
-    // 140 ms before they get hidden and re-flown — a visible flash.
-    let deal_start = if compact_sources.is_empty() {
+    // a shift. No-shift draws (empty waste, or fan already fits)
+    // would otherwise render the just-applied waste cards unhidden
+    // (no anim is `should_paint_now` yet) for 140 ms before they
+    // get hidden and re-flown — a visible flash.
+    let deal_start = if shifted.is_empty() {
         now
     } else {
         now + compact_duration
