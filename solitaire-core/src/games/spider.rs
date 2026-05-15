@@ -461,6 +461,23 @@ pub fn best_spider_hint(piles: &PileSet) -> Option<SpiderHint> {
                     continue;
                 }
                 let exposes = start_idx > 0 && !src.cards[start_idx - 1].face_up;
+                // "Sterile shuffle" filter: when the source's parent
+                // (the card the move leaves on top of source) is the
+                // SAME card identity as the destination's current top,
+                // the moved tail just trades one parent for an
+                // identical one — visibly no progress. Skip unless the
+                // move exposes a facedown or completes a run, both of
+                // which we still want even with a duplicate parent.
+                if start_idx > 0 {
+                    let src_pred = &src.cards[start_idx - 1];
+                    if src_pred.face_up {
+                        if let Some(dst_top) = dst.top() {
+                            if dst_top.rank == src_pred.rank && dst_top.suit == src_pred.suit {
+                                continue;
+                            }
+                        }
+                    }
+                }
                 let mut m = Move::simple(src_id, take as u8, dst_id);
                 if exposes {
                     m = m.with_flip_source();

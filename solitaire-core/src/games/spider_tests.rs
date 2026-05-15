@@ -523,6 +523,67 @@ fn hint_falls_back_to_stock_deal_when_no_tableau_move() {
 }
 
 #[test]
+fn hint_skips_sterile_duplicate_parent_shuffle() {
+    // Regression (user report): one cascade tops out at Q-J (suited
+    // spades), another at Q-J-10-9-...-A (suited spades). Moving the
+    // 10-down-to-A onto the lone J just relocates the suited tail
+    // under an identical J — no facedown exposed, no run completed,
+    // no real progress. Hint must NOT recommend this move.
+    let rules = Spider::one_suit();
+    let mut piles = PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
+    let short = CASCADE_FIRST;
+    for r in [Rank::Queen, Rank::Jack] {
+        piles
+            .get_mut(short)
+            .cards
+            .push(Card::new(Suit::Spades, r).face_up());
+    }
+    let long = CASCADE_FIRST + 1;
+    for r in [
+        Rank::Queen,
+        Rank::Jack,
+        Rank::Ten,
+        Rank::Nine,
+        Rank::Eight,
+        Rank::Seven,
+        Rank::Six,
+        Rank::Five,
+        Rank::Four,
+        Rank::Three,
+        Rank::Two,
+        Rank::Ace,
+    ] {
+        piles
+            .get_mut(long)
+            .cards
+            .push(Card::new(Suit::Spades, r).face_up());
+    }
+    // Keep the remaining cascades non-empty + stock primed so the
+    // legal-fallback paths exist; the test only asserts that the
+    // sterile shuffle isn't picked.
+    for cid in (CASCADE_FIRST + 2)..=CASCADE_LAST {
+        piles
+            .get_mut(cid)
+            .cards
+            .push(Card::new(Suit::Spades, Rank::King).face_up());
+    }
+    for _ in 0..N_CASCADES {
+        piles
+            .get_mut(STOCK)
+            .cards
+            .push(Card::new(Suit::Spades, Rank::Two));
+    }
+
+    let hint = best_spider_hint(&piles).expect("stock-deal fallback at minimum");
+    if let SpiderHint::Move { from, to, .. } = hint {
+        assert!(
+            !(from == long && to == short),
+            "Hint must not pick the J\u{2192}J duplicate-parent shuffle"
+        );
+    }
+}
+
+#[test]
 fn hint_returns_none_when_no_tableau_and_stock_illegal() {
     // Same locked-Kings board, but stock has zero cards so the deal
     // is illegal too. Hint must report no move at all.
