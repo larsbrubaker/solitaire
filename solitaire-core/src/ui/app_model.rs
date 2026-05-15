@@ -275,45 +275,38 @@ impl AppModel {
         self.start_game_with_seed(kind, seed);
     }
 
-    /// Apply a new Klondike draw count. If a Klondike game is in progress,
-    /// re-deal it with the same seed under the new rules so the user sees
-    /// the change immediately.
+    /// Apply a new Klondike draw count. The change is persisted
+    /// immediately so the next deal uses it, but the **active** game
+    /// keeps running under the rules it was dealt with — the player's
+    /// progress is never silently discarded by an Options-menu pick.
     pub fn set_klondike_draw_count(&mut self, n: u8) {
         if self.klondike_draw_count == n {
             return;
         }
         self.klondike_draw_count = n;
         self.save_settings();
-        if matches!(self.kind, Some(GameKind::Klondike)) {
-            self.restart_current_deal();
-        }
     }
 
-    /// Apply a new Spider suit count (1 / 2 / 4). Same restart-with-same-
-    /// seed semantics as `set_klondike_draw_count`.
+    /// Apply a new Spider suit count (1 / 2 / 4). Settings persist
+    /// immediately; the active deal keeps running unchanged so the
+    /// player doesn't lose progress by tweaking Options mid-game.
+    /// The new suit count takes effect on the next New Deal.
     pub fn set_spider_suit_count(&mut self, n: u8) {
         if self.spider_suit_count == n {
             return;
         }
         self.spider_suit_count = n;
         self.save_settings();
-        if matches!(self.kind, Some(GameKind::Spider)) {
-            self.restart_current_deal();
-        }
     }
 
-    /// Apply a new active suit for 1-suit Spider. No-op (other than
-    /// the model field update) when the active game isn't 1-suit
-    /// Spider, since no on-screen card would change.
+    /// Apply a new active suit for 1-suit Spider. Settings persist
+    /// immediately; the active deal keeps running unchanged.
     pub fn set_spider_one_suit(&mut self, suit: Suit) {
         if self.spider_one_suit == suit {
             return;
         }
         self.spider_one_suit = suit;
         self.save_settings();
-        if matches!(self.kind, Some(GameKind::Spider)) && self.spider_suit_count == 1 {
-            self.restart_current_deal();
-        }
     }
 
     pub fn back_to_title(&mut self) {

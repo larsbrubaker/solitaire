@@ -509,17 +509,33 @@ mod tests {
     }
 
     #[test]
-    fn draw_count_change_during_klondike_restarts_with_same_seed() {
+    fn draw_count_change_during_klondike_does_not_disturb_active_deal() {
+        // Options changes must never blow away the player's progress.
+        // Changing draw count mid-game saves the setting but the active
+        // session keeps the rules it was dealt with; the new count
+        // applies on the next New Deal.
         let mut m = AppModel::new();
         m.start_game_with_seed(GameKind::Klondike, 42);
         let pre_seed = m.session.as_ref().unwrap().seed();
+        let pre_waste_fan = m
+            .session
+            .as_ref()
+            .unwrap()
+            .piles()
+            .get(crate::games::klondike::KLONDIKE_WASTE)
+            .fan_top_n;
         m.set_klondike_draw_count(3);
-        let post_seed = m.session.as_ref().unwrap().seed();
-        assert_eq!(pre_seed, post_seed);
-        // Waste pile fan should now be active because draw_count = 3.
-        let session = m.session.as_ref().unwrap();
-        let waste = session.piles().get(crate::games::klondike::KLONDIKE_WASTE);
-        assert_eq!(waste.fan_top_n, 3);
+        assert_eq!(m.klondike_draw_count, 3, "setting persists");
+        let post_session = m.session.as_ref().unwrap();
+        assert_eq!(post_session.seed(), pre_seed, "same session, not redealt");
+        assert_eq!(
+            post_session
+                .piles()
+                .get(crate::games::klondike::KLONDIKE_WASTE)
+                .fan_top_n,
+            pre_waste_fan,
+            "active deal keeps its original draw-count rules"
+        );
     }
 
     #[test]
@@ -535,36 +551,54 @@ mod tests {
     }
 
     #[test]
-    fn spider_suit_count_change_during_spider_re_deals() {
+    fn spider_suit_count_change_does_not_disturb_active_deal() {
+        // Same no-progress-loss rule as Klondike draw count.
         let mut m = AppModel::new();
         m.start_game_with_seed(GameKind::Spider, 7);
-        assert_eq!(m.spider_suit_count, 1);
+        let pre_seed = m.session.as_ref().unwrap().seed();
+        let pre_piles: Vec<Vec<_>> = m
+            .session
+            .as_ref()
+            .unwrap()
+            .piles()
+            .iter()
+            .map(|p| p.cards.clone())
+            .collect();
         m.set_spider_suit_count(2);
-        assert_eq!(m.spider_suit_count, 2);
-        m.set_spider_suit_count(1);
-        assert_eq!(m.spider_suit_count, 1);
-        // Same seed, so the same shuffle slots are filled — but the
-        // deck only has one suit's cards in it now.
-        let session = m.session.as_ref().unwrap();
-        assert_eq!(session.seed(), 7);
-        // Verify the deck composition: every face-up card in the
-        // cascade tops should be the same suit as the configured
-        // `spider_one_suit` (Spades by default).
-        let piles = session.piles();
-        for cid in 9..=18u8 {
-            let top = piles.get(cid).top().unwrap();
-            assert_eq!(top.suit, m.spider_one_suit);
-        }
+        assert_eq!(m.spider_suit_count, 2, "setting persists");
+        let post = m.session.as_ref().unwrap();
+        assert_eq!(post.seed(), pre_seed, "active session not re-dealt");
+        let post_piles: Vec<Vec<_>> = post.piles().iter().map(|p| p.cards.clone()).collect();
+        assert_eq!(pre_piles, post_piles, "active piles unchanged");
     }
 
     #[test]
-    fn picking_spider_one_suit_changes_active_one_suit() {
+    fn picking_spider_one_suit_changes_setting_but_not_active_deal() {
         let mut m = AppModel::new();
         m.start_game_with_seed(GameKind::Spider, 11);
         assert_eq!(m.spider_suit_count, 1);
+        let pre_piles: Vec<Vec<_>> = m
+            .session
+            .as_ref()
+            .unwrap()
+            .piles()
+            .iter()
+            .map(|p| p.cards.clone())
+            .collect();
         handle_action(&mut m, "spider-suit-hearts");
-        assert_eq!(m.spider_suit_count, 1);
-        assert_eq!(m.spider_one_suit, Suit::Hearts);
+        assert_eq!(m.spider_one_suit, Suit::Hearts, "setting persists");
+        let post_piles: Vec<Vec<_>> = m
+            .session
+            .as_ref()
+            .unwrap()
+            .piles()
+            .iter()
+            .map(|p| p.cards.clone())
+            .collect();
+        assert_eq!(
+            pre_piles, post_piles,
+            "active Spider deal keeps its original suit"
+        );
     }
 
     #[test]
