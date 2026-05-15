@@ -4,9 +4,12 @@
 
 pub mod freecell;
 pub mod klondike;
+pub mod klondike_solver;
 pub mod ms_freecell;
 pub mod moms;
+pub mod seed_generator;
 pub mod spider;
+pub mod spider_solver;
 pub mod winnable_seeds;
 
 #[cfg(test)]
