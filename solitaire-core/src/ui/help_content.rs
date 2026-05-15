@@ -302,6 +302,25 @@ card-rendering pipeline, one event loop, and one set of game-
 agnostic services (undo, settings persistence, hints). Pick a
 variant from the title screen; the menu bar's **Game** and
 **Options** entries adapt to whichever game is in play.
+
+## Winnable deals only
+
+Every variant ships with an Options-menu toggle **Winnable deals
+only**, on by default. With the toggle on:
+
+- **FreeCell** uses Microsoft's classic Jim Horne game numbers
+  (1..1,000,000), drawing the canonical deal for each. Eight of
+  the million — including the famous #11982 — are unwinnable and
+  filtered out. Players who know a favourite Microsoft FreeCell
+  game number can replay the exact deal they remember.
+- **Spider** and **Klondike** draw from bundled lists of seeds
+  whose deals have been verified by a depth-first solver. Each
+  active deal shows its identifier in the HUD next to a small ✓
+  glyph; trade deal numbers with friends to compare strategies on
+  the same board.
+
+Turning the toggle off opens the random pool — every shuffle is
+possible, including the genuinely unwinnable ones.
 "#,
     SHARED_CREDITS
 );

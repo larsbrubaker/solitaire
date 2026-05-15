@@ -23,6 +23,7 @@ pub mod icons;
 pub mod layout;
 pub mod menu_widget;
 pub mod overlay_stack;
+pub mod play_deal_dialog;
 pub mod title_widget;
 pub mod toast;
 
@@ -30,6 +31,7 @@ use app_model::{shared_model, SharedModel};
 use app_root::AppRootWidget;
 use confirm_dialog::ConfirmDialog;
 use game_widget::GameWidget;
+use play_deal_dialog::PlayDealDialog;
 use help_widget::HelpDialog;
 use hud_widget::HudWidget;
 use menu_widget::{MenuBarHost, SidebarMenuHost};
@@ -64,6 +66,7 @@ pub fn build_solitaire_app() -> (App, SharedModel) {
     let sidebar_menu = SidebarMenuHost::new(model.clone(), font.clone());
     let help = HelpDialog::new(model.clone(), font.clone());
     let confirm = ConfirmDialog::new(model.clone(), font.clone());
+    let play_deal = PlayDealDialog::new(model.clone(), font.clone());
     let perf_window = build_performance_window(&model, font.clone());
     let root = AppRootWidget::new(model.clone());
 
@@ -91,7 +94,8 @@ pub fn build_solitaire_app() -> (App, SharedModel) {
         .add(Box::new(sidebar_menu))
         .add(Box::new(perf_window))
         .add(Box::new(help))
-        .add(Box::new(confirm));
+        .add(Box::new(confirm))
+        .add(Box::new(play_deal));
 
     (App::new(Box::new(stack)), model)
 }

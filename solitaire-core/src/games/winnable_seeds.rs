@@ -13,17 +13,23 @@
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-/// Microsoft FreeCell game number that Don Woods' 1994 sweep proved
-/// unwinnable. The remaining 31,999 of the original 32,000 numbered
-/// deals are verified solvable.
-pub const MS_FREECELL_UNWINNABLE: u32 = 11982;
+/// Microsoft FreeCell game numbers known to be unwinnable. Don
+/// Woods' 1994 sweep validated all of the original 32,000 except
+/// #11982; the remaining seven are the additional unwinnables
+/// found inside Microsoft Solitaire Collection's 1..1,000,000
+/// range — i.e. **eight unwinnable games out of a million**, every
+/// other deal solves.
+pub const MS_FREECELL_UNWINNABLE_LIST: &[u32] =
+    &[11_982, 146_692, 186_216, 455_889, 495_505, 512_118, 517_776, 781_948];
+
+/// Legacy alias: the single unwinnable in the classic 32k set.
+pub const MS_FREECELL_UNWINNABLE: u32 = 11_982;
 
 /// Highest Microsoft FreeCell game number we hand out from the
-/// winnable pool. The classic Windows FreeCell ranged 1..32_000;
-/// Microsoft Solitaire Collection later extended to 1..1_000_000,
-/// but only the original 32k window has comprehensive third-party
-/// winnability data, so we cap here.
-pub const MS_FREECELL_MAX: u32 = 32_000;
+/// winnable pool. Microsoft Solitaire Collection's range
+/// (1..1,000,000) is the wide pool — only eight deals in that
+/// range fail, and we blocklist every one of them.
+pub const MS_FREECELL_MAX: u32 = 1_000_000;
 
 /// Raw little-endian `u64`s, eight bytes per seed.
 const SPIDER_SEEDS_BIN: &[u8] = include_bytes!("../../assets/spider_winnable_seeds.bin");
@@ -70,16 +76,23 @@ fn pick_from(bytes: &[u8], fallback_seed: u64) -> u64 {
 }
 
 /// Pick a Microsoft FreeCell game number in `[1, MS_FREECELL_MAX]`
-/// excluding `#11982`. Uses `fallback_seed` as RNG state so the
-/// pick is reproducible from a wallclock seed for testing.
+/// excluding every known-unwinnable from
+/// `MS_FREECELL_UNWINNABLE_LIST`. Uses `fallback_seed` as RNG state
+/// so the pick is reproducible.
 pub fn pick_ms_freecell_winnable(fallback_seed: u64) -> u32 {
     let mut rng = StdRng::seed_from_u64(fallback_seed);
     loop {
         let n = rng.gen_range(1..=MS_FREECELL_MAX);
-        if n != MS_FREECELL_UNWINNABLE {
+        if !MS_FREECELL_UNWINNABLE_LIST.contains(&n) {
             return n;
         }
     }
+}
+
+/// Returns true if `n` is in the published list of unwinnable
+/// Microsoft FreeCell deals.
+pub fn is_ms_freecell_unwinnable(n: u32) -> bool {
+    MS_FREECELL_UNWINNABLE_LIST.contains(&n)
 }
 
 #[cfg(test)]
@@ -106,13 +119,20 @@ mod tests {
 
     #[test]
     fn ms_freecell_picker_skips_known_unwinnable() {
-        // 200 iterations on a deterministic seed is more than enough
-        // to hit every neighbouring number of #11982 without ever
-        // returning it.
         for trial in 0..200 {
             let n = pick_ms_freecell_winnable(trial);
-            assert_ne!(n, MS_FREECELL_UNWINNABLE);
+            assert!(!MS_FREECELL_UNWINNABLE_LIST.contains(&n));
             assert!((1..=MS_FREECELL_MAX).contains(&n));
         }
+    }
+
+    #[test]
+    fn ms_freecell_unwinnable_list_contains_known_examples() {
+        // The classic 32k set's lone unwinnable.
+        assert!(is_ms_freecell_unwinnable(11_982));
+        // One from the extended 1M-deal Microsoft Solitaire Collection.
+        assert!(is_ms_freecell_unwinnable(781_948));
+        // Known-winnable Game #1 should NOT be on the blocklist.
+        assert!(!is_ms_freecell_unwinnable(1));
     }
 }
