@@ -30,8 +30,6 @@ const BTN_BG_DISABLED: Color = Color::from_rgba8(0x1f, 0x4d, 0x2e, 0x80);
 const BTN_BORDER: Color = Color::from_rgb8(0xff, 0xd7, 0x00);
 const BTN_TEXT: Color = Color::from_rgb8(0xff, 0xff, 0xff);
 const TITLE_COLOR: Color = Color::from_rgb8(0xff, 0xd7, 0x00);
-const TOAST_BG: Color = Color::from_rgba8(0x10, 0x10, 0x10, 0xc0);
-const TOAST_TEXT: Color = Color::from_rgb8(0xff, 0xff, 0xff);
 
 pub struct TitleWidget {
     bounds: Rect,
@@ -166,21 +164,16 @@ impl TitleWidget {
 
     fn paint_toast(&self, ctx: &mut dyn DrawCtx) {
         let toast = self.model.borrow().toast.clone();
-        let Some((msg, _)) = toast else { return };
-        let pad = 16.0;
-        ctx.set_font(self.font.clone());
-        ctx.set_font_size(20.0);
-        let m = ctx.measure_text(&msg);
-        let tw = m.map(|t| t.width).unwrap_or(220.0) + pad * 2.0;
-        let th = 40.0;
-        let x = self.bounds.x + (self.bounds.width - tw) / 2.0;
-        let y = self.bounds.y + 80.0;
-        ctx.begin_path();
-        ctx.rounded_rect(x, y, tw, th, 8.0);
-        ctx.set_fill_color(TOAST_BG);
-        ctx.fill();
-        ctx.set_fill_color(TOAST_TEXT);
-        ctx.fill_text(&msg, x + pad, y + (th - 20.0) / 2.0);
+        let Some((msg, started)) = toast else { return };
+        super::toast::paint_toast(
+            ctx,
+            &self.font,
+            self.bounds.x,
+            self.bounds.y + 80.0,
+            self.bounds.width,
+            &msg,
+            started,
+        );
     }
 }
 

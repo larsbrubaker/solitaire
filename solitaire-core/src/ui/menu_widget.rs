@@ -41,6 +41,9 @@ struct MenuSnapshot {
     /// Performance-window visibility: drives the radio-dot indicator
     /// on the "Performance Window" menu item.
     show_performance_window: bool,
+    /// Whether a game is currently being played — drives whether
+    /// Undo / Hint / Shuffle appear in the Game menu.
+    in_game: bool,
 }
 
 impl MenuSnapshot {
@@ -51,6 +54,7 @@ impl MenuSnapshot {
             spider_suit_count: model.spider_suit_count,
             spider_one_suit: model.spider_one_suit,
             show_performance_window: model.show_performance_window.get(),
+            in_game: model.session.is_some(),
         }
     }
 }
@@ -121,21 +125,37 @@ fn build_menu_bar(model: SharedModel, font: Arc<Font>, orientation: MenuOrientat
 /// always carries Toggle Fullscreen + the Debug submenu so the
 /// player can always reach those even on the title screen.
 fn build_menus(model: &AppModel) -> Vec<TopMenu> {
-    vec![game_menu(), options_menu(model, model.kind), help_menu()]
+    vec![game_menu(model), options_menu(model, model.kind), help_menu()]
 }
 
-fn game_menu() -> TopMenu {
-    TopMenu::new(
-        "Game",
-        vec![
-            MenuItem::action("New Deal", "new-deal")
-                .shortcut("F2")
+fn game_menu(model: &AppModel) -> TopMenu {
+    let mut items: Vec<MenuEntry> = Vec::new();
+    if model.session.is_some() {
+        items.push(
+            MenuItem::action("Undo", "undo")
+                .shortcut("U / Ctrl+Z")
                 .into(),
-            MenuItem::action("Restart this Deal", "restart").into(),
-            MenuEntry::Separator,
-            MenuItem::action("Back to Main Menu", "title").into(),
-        ],
-    )
+        );
+        match model.kind {
+            Some(GameKind::Spider) => {
+                items.push(MenuItem::action("Hint", "hint").shortcut("H").into());
+            }
+            Some(GameKind::MomsSolitaire) => {
+                items.push(MenuItem::action("Shuffle", "shuffle").into());
+            }
+            _ => {}
+        }
+        items.push(MenuEntry::Separator);
+    }
+    items.push(
+        MenuItem::action("New Deal", "new-deal")
+            .shortcut("F2")
+            .into(),
+    );
+    items.push(MenuItem::action("Restart this Deal", "restart").into());
+    items.push(MenuEntry::Separator);
+    items.push(MenuItem::action("Back to Main Menu", "title").into());
+    TopMenu::new("Game", items)
 }
 
 fn help_menu() -> TopMenu {
@@ -244,6 +264,16 @@ fn spider_one_suit_item(model: &AppModel, suit: Suit, label: &str, action: &str)
 
 fn handle_action(model: &mut AppModel, action: &str) {
     match action {
+        "undo" => {
+            if let Some(s) = model.session.as_mut() {
+                s.try_undo();
+            }
+            model.clear_spider_hint();
+        }
+        "hint" => model.show_spider_hint(),
+        "shuffle" => {
+            model.try_moms_shuffle();
+        }
         "new-deal" => {
             if let Some(kind) = model.kind {
                 model.request_new_deal(kind);

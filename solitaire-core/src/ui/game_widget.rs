@@ -791,6 +791,25 @@ impl Widget for GameWidget {
         if self.model.borrow().moms_waiting_king_at.is_some() {
             banners::paint_moms_prompt(ctx, &self.font, pf, "Select a King for the empty slot");
         }
+
+        // Transient status banner (e.g. "No moves" after a fruitless
+        // Hint press). `tick_toast` drops it after the lifetime.
+        self.model.borrow_mut().tick_toast();
+        let toast = self.model.borrow().toast.clone();
+        if let Some((msg, started)) = toast {
+            // Sit the toast just below the top edge of the playfield so
+            // it doesn't collide with the menu bar or the win banner.
+            let toast_y = pf.y + pf.height - 80.0;
+            super::toast::paint_toast(
+                ctx,
+                &self.font,
+                pf.x,
+                toast_y,
+                pf.width,
+                &msg,
+                started,
+            );
+        }
     }
 
     fn on_event(&mut self, event: &Event) -> EventResult {
@@ -867,5 +886,6 @@ impl Widget for GameWidget {
             || !self.animations.is_empty()
             || !self.deck_animations.is_empty()
             || self.hint_anim.as_ref().is_some_and(|a| !a.done())
+            || self.model.borrow().toast.is_some()
     }
 }

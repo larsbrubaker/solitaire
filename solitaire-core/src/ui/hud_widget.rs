@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use agg_gui::color::Color;
 use agg_gui::draw_ctx::DrawCtx;
-use agg_gui::event::{Event, EventResult, MouseButton};
+use agg_gui::event::{Event, EventResult, Key, Modifiers, MouseButton};
 use agg_gui::geometry::{Point, Rect, Size};
 use agg_gui::text::Font;
 use agg_gui::widget::Widget;
@@ -335,6 +335,50 @@ impl Widget for HudWidget {
                     agg_gui::animation::request_draw();
                 }
                 EventResult::Ignored
+            }
+            _ => EventResult::Ignored,
+        }
+    }
+
+    /// Game-screen hotkeys. The framework only calls this if no
+    /// focused widget consumed the key first, so dialogs (Confirm,
+    /// Help) and menu popups still win.
+    fn on_unconsumed_key(&mut self, key: &Key, modifiers: Modifiers) -> EventResult {
+        if !self.is_visible() {
+            return EventResult::Ignored;
+        }
+        let Key::Char(c) = key else {
+            return EventResult::Ignored;
+        };
+        let kind = self.model.borrow().kind;
+        let lower = c.to_ascii_lowercase();
+        match lower {
+            'u' if !modifiers.ctrl && !modifiers.alt && !modifiers.meta => {
+                let mut model = self.model.borrow_mut();
+                if let Some(s) = model.session.as_mut() {
+                    s.try_undo();
+                }
+                model.clear_spider_hint();
+                agg_gui::animation::request_draw();
+                EventResult::Consumed
+            }
+            'z' if modifiers.ctrl => {
+                let mut model = self.model.borrow_mut();
+                if let Some(s) = model.session.as_mut() {
+                    s.try_undo();
+                }
+                model.clear_spider_hint();
+                agg_gui::animation::request_draw();
+                EventResult::Consumed
+            }
+            'h' if matches!(kind, Some(crate::games::GameKind::Spider))
+                && !modifiers.ctrl
+                && !modifiers.alt
+                && !modifiers.meta =>
+            {
+                self.model.borrow_mut().show_spider_hint();
+                agg_gui::animation::request_draw();
+                EventResult::Consumed
             }
             _ => EventResult::Ignored,
         }
