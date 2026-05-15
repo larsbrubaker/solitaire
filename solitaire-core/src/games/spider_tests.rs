@@ -647,7 +647,11 @@ fn hint_returns_none_when_no_tableau_and_stock_illegal() {
 }
 
 #[test]
-fn stock_click_blocked_when_any_cascade_empty() {
+fn stock_click_deals_even_with_empty_cascade() {
+    // We deviate from classic Spider's "all cascades must be non-empty"
+    // rule: a board that's run out of productive moves but still has
+    // rows in the stock should be able to deal. Empty cascades just
+    // get one face-up card each from the deal.
     let rules = Spider::four_suit();
     let mut piles = PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
     for _ in 0..50 {
@@ -656,8 +660,33 @@ fn stock_click_blocked_when_any_cascade_empty() {
             .cards
             .push(Card::new(Suit::Spades, Rank::Two));
     }
-    // Cascade 0 left empty → click should yield no moves.
+    // Cascade 0 left empty; other cascades populated.
     for cid in CASCADE_FIRST + 1..=CASCADE_LAST {
+        piles
+            .get_mut(cid)
+            .cards
+            .push(Card::new(Suit::Spades, Rank::Two).face_up());
+    }
+    let moves = rules.on_pile_click(&piles, STOCK);
+    assert_eq!(moves.len(), N_CASCADES, "deal still fires");
+    // The first dealt move targets the empty cascade — that's the
+    // whole point of relaxing the rule.
+    assert_eq!(moves[0].to, CASCADE_FIRST);
+}
+
+#[test]
+fn stock_click_still_blocked_when_stock_too_short() {
+    // The relaxation only covers empty cascades; if the stock can't
+    // cover all ten cascades we still refuse to deal a partial row.
+    let rules = Spider::four_suit();
+    let mut piles = PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
+    for _ in 0..(N_CASCADES - 1) {
+        piles
+            .get_mut(STOCK)
+            .cards
+            .push(Card::new(Suit::Spades, Rank::Two));
+    }
+    for cid in CASCADE_FIRST..=CASCADE_LAST {
         piles
             .get_mut(cid)
             .cards
