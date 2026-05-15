@@ -12,13 +12,11 @@ mod pile_click;
 
 use std::sync::Arc;
 
-use agg_gui::color::Color;
 use agg_gui::draw_ctx::DrawCtx;
 use agg_gui::event::{Event, EventResult, MouseButton};
 use agg_gui::geometry::{Rect, Size};
 use agg_gui::text::Font;
 use agg_gui::widget::Widget;
-use agg_gui::{LineCap, LineJoin};
 
 use crate::cards::Card;
 use crate::piles::{HitResult, PileId, PileKind, FAN_DOWN_FACE_UP};
@@ -35,8 +33,8 @@ fn playfield_rect(bounds: Rect) -> Rect {
 }
 
 /// Stroke a rounded yellow outline over a card-sized rect — used by the
-/// Spider Hint overlay to mark the recommended destination (or stock
-/// pile when the recommended action is a stock deal).
+/// Spider Hint overlay to mark the recommended source run, destination,
+/// or stock pile when the recommended action is a stock deal.
 fn stroke_hint_rect(ctx: &mut dyn DrawCtx, x: f64, y: f64, w: f64, h: f64) {
     ctx.begin_path();
     ctx.rounded_rect(x, y, w, h, crate::consts::CARD_CORNER_R);
@@ -45,44 +43,43 @@ fn stroke_hint_rect(ctx: &mut dyn DrawCtx, x: f64, y: f64, w: f64, h: f64) {
     ctx.stroke();
 }
 
-/// Spider Hint source marker: a fat black up-arrow whose tip sits just
-/// below the source card's bottom edge. Modelled on the `Green_Arrow_Up`
-/// public-domain SVG silhouette — fill is solid black, plus a stroke of
-/// the same color with rounded joins/caps so the tip and shaft corners
-/// soften into the rounded-point look the user asked for.
-fn paint_hint_arrow_up(ctx: &mut dyn DrawCtx, tip_x: f64, tip_y: f64, width: f64, height: f64) {
-    // Y-up: tip at the highest Y, body extends DOWN to (tip_y - height).
-    let cx = tip_x;
-    let top_y = tip_y;
-    let bottom_y = tip_y - height;
-    let head_h = height * 0.55;
-    let head_w = width;
-    let shaft_w = width * 0.45;
-    let mid_y = top_y - head_h;
+/// One-shot ghost preview kicked off by the Hint button — snapshots
+/// the source cards plus their src + dst bottom-left positions, then
+/// the widget interpolates the stack from src to dst and fades it out.
+#[derive(Clone, Debug)]
+struct HintAnim {
+    cards: Vec<Card>,
+    src_x: f64,
+    src_y: f64,
+    dst_x: f64,
+    dst_y: f64,
+    card_w: f64,
+    card_h: f64,
+    start_at: web_time::Instant,
+    slide_dur: std::time::Duration,
+    fade_dur: std::time::Duration,
+}
 
-    ctx.begin_path();
-    ctx.move_to(cx, top_y);
-    ctx.line_to(cx + head_w / 2.0, mid_y);
-    ctx.line_to(cx + shaft_w / 2.0, mid_y);
-    ctx.line_to(cx + shaft_w / 2.0, bottom_y);
-    ctx.line_to(cx - shaft_w / 2.0, bottom_y);
-    ctx.line_to(cx - shaft_w / 2.0, mid_y);
-    ctx.line_to(cx - head_w / 2.0, mid_y);
-    ctx.line_to(cx, top_y);
+impl HintAnim {
+    /// Returns the cards' bottom-left for this frame and the alpha to
+    /// paint them at. Once `done()` flips true the animation is dead.
+    fn current(&self) -> (f64, f64, f64) {
+        let el = self.start_at.elapsed().as_secs_f64().max(0.0);
+        let slide_s = self.slide_dur.as_secs_f64();
+        let fade_s = self.fade_dur.as_secs_f64();
+        let slide_t = (el / slide_s).clamp(0.0, 1.0);
+        // Ease-out cubic so the stack decelerates as it lands.
+        let eased = 1.0 - (1.0 - slide_t).powi(3);
+        let bx = self.src_x + (self.dst_x - self.src_x) * eased;
+        let by = self.src_y + (self.dst_y - self.src_y) * eased;
+        let fade_t = ((el - slide_s) / fade_s).clamp(0.0, 1.0);
+        let alpha = 0.6 * (1.0 - fade_t);
+        (bx, by, alpha)
+    }
 
-    let black = Color::from_rgb8(0, 0, 0);
-    ctx.set_fill_color(black);
-    ctx.fill();
-
-    // A second pass strokes the same outline with rounded joins/caps so
-    // the polygon's sharp corners (tip + shaft shoulders) bulge into
-    // smooth arcs. The stroke width is what controls how rounded the
-    // points look — anything thinner than ~4 px looks crisply polygonal.
-    ctx.set_line_join(LineJoin::Round);
-    ctx.set_line_cap(LineCap::Round);
-    ctx.set_stroke_color(black);
-    ctx.set_line_width(6.0);
-    ctx.stroke();
+    fn done(&self) -> bool {
+        self.start_at.elapsed() >= self.slide_dur + self.fade_dur
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -132,6 +129,15 @@ pub struct GameWidget {
     /// waste→stock recycle, where the entire waste pile flips back
     /// onto the stock as one 3-D thick box.
     deck_animations: Vec<DeckFlipAnim>,
+    /// Current Spider Hint ghost-preview animation, if any. Lives
+    /// alongside the static yellow rect highlight that
+    /// `paint_spider_hint_overlay` draws — the rects say "here are the
+    /// source / destination" and the ghost animates the move once.
+    hint_anim: Option<HintAnim>,
+    /// Last `AppModel::spider_hint_seq` value this widget noticed. Used
+    /// to detect a fresh Hint-button press (including re-clicks with
+    /// the same recommended move) so we can re-trigger the preview.
+    last_hint_seq: u64,
 }
 
 impl GameWidget {
@@ -146,6 +152,8 @@ impl GameWidget {
             last_click: None,
             animations: Vec::new(),
             deck_animations: Vec::new(),
+            hint_anim: None,
+            last_hint_seq: 0,
         }
     }
 
@@ -452,10 +460,11 @@ impl GameWidget {
         true
     }
 
-    /// Paint the Spider Hint overlay: a black up-arrow pointing at the
-    /// recommended source card and a yellow outline around the
-    /// recommended destination (or the stock pile for a stock-deal
-    /// hint). No-op when no hint is active.
+    /// Paint the Spider Hint overlay: yellow outlines around the
+    /// recommended source run and destination (or just the stock pile
+    /// for a stock-deal hint). The companion ghost-card preview that
+    /// animates source → destination on every Hint button press is
+    /// painted by `paint_hint_animation`.
     fn paint_spider_hint_overlay(&self, ctx: &mut dyn DrawCtx) {
         let model = self.model.borrow();
         let Some(hint) = model.spider_hint else {
@@ -477,21 +486,14 @@ impl GameWidget {
                 if start_idx >= src.cards.len() || take == 0 {
                     return;
                 }
-                // Arrow tip touches the bottom-center of the head card
-                // being picked up (start_idx is the deepest card of the
-                // moved chunk, which sits HIGHEST in a fanned-down
-                // pile). Body extends down (lower Y) over the rest of
-                // the moved tail — those cards travel together so
-                // overlap is fine.
+                let end_idx = (start_idx + take - 1).min(src.cards.len() - 1);
                 let (hx, hy) = src.position_for(start_idx);
-                let card_w = src.card_w;
-                let card_h = src.card_h;
-                let arrow_w = (card_w * 0.55).min(50.0);
-                let arrow_h = (card_h * 0.45).min(54.0);
-                let tip_x = hx + card_w / 2.0;
-                let tip_y = hy;
-                paint_hint_arrow_up(ctx, tip_x, tip_y, arrow_w, arrow_h);
-
+                let (_tx, ty) = src.position_for(end_idx);
+                let x = hx;
+                let y = ty;
+                let w = src.card_w;
+                let h = hy + src.card_h - ty;
+                stroke_hint_rect(ctx, x, y, w, h);
                 let dst = piles.get(to);
                 let (dx, dy, dw, dh) = if dst.is_empty() {
                     dst.empty_slot_rect()
@@ -510,6 +512,92 @@ impl GameWidget {
                 stroke_hint_rect(ctx, sx, sy, sw, sh);
             }
         }
+    }
+
+    /// Detect a fresh Hint button press (via `AppModel::spider_hint_seq`
+    /// bumping) and snapshot the source/destination positions for a
+    /// new ghost preview animation. Called every paint; cheap when
+    /// nothing changed.
+    fn tick_hint_animation(&mut self) {
+        let model = self.model.borrow();
+        let seq = model.spider_hint_seq;
+        if seq == self.last_hint_seq {
+            // Drop a finished one-shot.
+            if self.hint_anim.as_ref().is_some_and(HintAnim::done) {
+                self.hint_anim = None;
+            }
+            return;
+        }
+        self.last_hint_seq = seq;
+        self.hint_anim = None;
+
+        let Some(hint) = model.spider_hint else {
+            return;
+        };
+        let crate::games::spider::SpiderHint::Move {
+            from,
+            start_idx,
+            take,
+            to,
+        } = hint
+        else {
+            // Stock-deal hint: skip the ghost preview, the yellow rect
+            // on the stock pile communicates the action well enough.
+            return;
+        };
+        let Some(session) = model.session.as_ref() else {
+            return;
+        };
+        let piles = session.piles();
+        let src = piles.get(from);
+        let take = take as usize;
+        if start_idx >= src.cards.len() || take == 0 {
+            return;
+        }
+        let cards: Vec<Card> = src.cards[start_idx..start_idx + take].to_vec();
+        let (sx, sy) = src.position_for(start_idx);
+        let dst = piles.get(to);
+        // Where the head card would land after the move — Pile's
+        // position_for evaluates the next slot using the dst's current
+        // top card as `prev`, so it returns the right fan position for
+        // both empty and non-empty destinations.
+        let (dx, dy) = dst.position_for(dst.cards.len());
+        self.hint_anim = Some(HintAnim {
+            cards,
+            src_x: sx,
+            src_y: sy,
+            dst_x: dx,
+            dst_y: dy,
+            card_w: src.card_w,
+            card_h: src.card_h,
+            start_at: web_time::Instant::now(),
+            slide_dur: std::time::Duration::from_millis(550),
+            fade_dur: std::time::Duration::from_millis(300),
+        });
+        agg_gui::animation::request_draw();
+    }
+
+    /// Paint the ghost-card preview at its current interpolated
+    /// position with the in-flight alpha. No-op when no hint animation
+    /// is active.
+    fn paint_hint_animation(&self, ctx: &mut dyn DrawCtx) {
+        let Some(anim) = self.hint_anim.as_ref() else {
+            return;
+        };
+        if anim.done() {
+            return;
+        }
+        let (bx, by, alpha) = anim.current();
+        if alpha <= 0.0 {
+            return;
+        }
+        let fan = anim.card_h * crate::piles::FAN_DOWN_FACE_UP;
+        ctx.set_global_alpha(alpha);
+        for (i, card) in anim.cards.iter().enumerate() {
+            let y = by - i as f64 * fan;
+            paint_card_at(ctx, card, bx, y, anim.card_w, anim.card_h, &self.atlas);
+        }
+        ctx.set_global_alpha(1.0);
     }
 
     fn paint_dragged(&self, ctx: &mut dyn DrawCtx, drag: &DragState) {
@@ -576,6 +664,9 @@ impl Widget for GameWidget {
         // would otherwise still draw.
         self.animations.retain(|a| !a.done());
         self.deck_animations.retain(|a| !a.done());
+        // Spider Hint: detect a fresh Hint button press and snapshot
+        // a new ghost preview before we paint anything.
+        self.tick_hint_animation();
 
         // Paint piles directly — pile origins are already in screen
         // coordinates (set by `set_bounds` → `relayout`).
@@ -603,6 +694,9 @@ impl Widget for GameWidget {
         // Spider Hint overlay sits above the static piles but under
         // animations/drag so a moving card never gets a stale yellow halo.
         self.paint_spider_hint_overlay(ctx);
+        // The one-shot ghost preview rides on top of the static
+        // highlight; it fades to 0 alpha and the widget drops it.
+        self.paint_hint_animation(ctx);
 
         // Paint in-flight card animations on top of the static
         // piles. Each animation projects a 3-D Y-axis-rotated card
@@ -769,6 +863,9 @@ impl Widget for GameWidget {
     }
 
     fn needs_draw(&self) -> bool {
-        self.drag.is_some() || !self.animations.is_empty() || !self.deck_animations.is_empty()
+        self.drag.is_some()
+            || !self.animations.is_empty()
+            || !self.deck_animations.is_empty()
+            || self.hint_anim.as_ref().is_some_and(|a| !a.done())
     }
 }
