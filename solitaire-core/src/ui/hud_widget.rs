@@ -219,6 +219,74 @@ impl HudWidget {
         ctx.fill_text(label, lx, ly);
     }
 
+    /// Compute the deal-badge label + verified-winnable flag for the
+    /// active session, or `None` when there's no live game.
+    /// FreeCell with the MS toggle on shows the game number in
+    /// decimal so players can share / recall a familiar
+    /// `Game #11234`. Every other variant shows the raw `u64` seed
+    /// in hex — it's not as memorable but it's the only honest way
+    /// to identify a non-Microsoft deal.
+    fn deal_badge(&self) -> Option<(String, bool)> {
+        let model = self.model.borrow();
+        let seed = model.session.as_ref()?.seed();
+        let (label, verified) = match model.kind? {
+            crate::games::GameKind::FreeCell if model.freecell_winnable_only => {
+                (format!("Game #{}", seed), true)
+            }
+            crate::games::GameKind::Spider if model.spider_winnable_only => {
+                (format!("Deal #{:016x}", seed), true)
+            }
+            crate::games::GameKind::Klondike if model.klondike_winnable_only => {
+                (format!("Deal #{:016x}", seed), true)
+            }
+            _ => (format!("Deal #{:016x}", seed), false),
+        };
+        Some((label, verified))
+    }
+
+    /// Paint the deal-number badge near the trailing edge of the HUD
+    /// — opposite side from the Mom's shuffles counter so they never
+    /// collide. A small ✓ glyph after the number marks deals drawn
+    /// from a verified-winnable pool.
+    fn paint_deal_badge(&self, ctx: &mut dyn DrawCtx) {
+        let Some((label, verified)) = self.deal_badge() else {
+            return;
+        };
+        let badge = if verified {
+            format!("{}  \u{2713}", label)
+        } else {
+            label
+        };
+        let chrome = self.chrome();
+        let hud = chrome.hud_rect;
+        ctx.set_fill_color(TXT);
+        ctx.set_font(self.font.clone());
+        ctx.set_font_size(14.0);
+        let Some(m) = ctx.measure_text(&badge) else {
+            return;
+        };
+        match chrome.mode {
+            ChromeMode::Standard => {
+                // Trailing edge: HUD is a horizontal strip across the
+                // bottom of the viewport; pin the badge to the right
+                // of the strip with the same vertical inset the Mom's
+                // counter uses on the left.
+                let baseline = hud.y + m.centered_baseline_y(hud.height);
+                let lx = hud.x + hud.width - m.width - 18.0;
+                ctx.fill_text(&badge, lx, baseline);
+            }
+            ChromeMode::Sidebar => {
+                // Sidebar: drop it near the BOTTOM of the column so
+                // it doesn't fight the button stack at the top. Mom's
+                // shuffles is above this on the same axis, so place
+                // ours lower.
+                let baseline_y = hud.y + 30.0;
+                let lx = hud.x + (hud.width - m.width) / 2.0;
+                ctx.fill_text(&badge, lx, baseline_y);
+            }
+        }
+    }
+
     /// Position + paint the Mom's-Solitaire shuffle counter. Tucked
     /// against the leading edge of the HUD in Standard mode and below
     /// the button stack in Sidebar mode so it never collides with the
@@ -303,6 +371,7 @@ impl Widget for HudWidget {
             self.paint_btn(ctx, i, *b, n);
         }
         self.paint_moms_counter(ctx);
+        self.paint_deal_badge(ctx);
     }
 
     fn on_event(&mut self, event: &Event) -> EventResult {

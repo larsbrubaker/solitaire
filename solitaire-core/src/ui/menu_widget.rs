@@ -278,6 +278,19 @@ fn options_menu(model: &AppModel, kind: Option<GameKind>) -> TopMenu {
 /// sparkline); future debug overlays should slot in as additional
 /// entries here so they all live behind one parent label.
 fn debug_menu(model: &AppModel) -> MenuItem {
+    let _ = model;
+    let spider_busy = crate::games::seed_generator::spider_generation_running();
+    let klondike_busy = crate::games::seed_generator::klondike_generation_running();
+    let spider_label = if spider_busy {
+        "Generate Spider Seeds\u{2026} (running)"
+    } else {
+        "Generate Spider Seeds\u{2026}"
+    };
+    let klondike_label = if klondike_busy {
+        "Generate Klondike Seeds\u{2026} (running)"
+    } else {
+        "Generate Klondike Seeds\u{2026}"
+    };
     MenuItem::submenu(
         "Debug",
         vec![
@@ -285,6 +298,9 @@ fn debug_menu(model: &AppModel) -> MenuItem {
                 .radio(model.show_performance_window.get())
                 .keep_open()
                 .into(),
+            MenuEntry::Separator,
+            MenuItem::action(spider_label, "generate-spider-seeds").into(),
+            MenuItem::action(klondike_label, "generate-klondike-seeds").into(),
         ],
     )
 }
@@ -337,6 +353,14 @@ fn handle_action(model: &mut AppModel, action: &str) {
         "toggle-performance-window" => {
             let now_open = model.show_performance_window.get();
             model.set_performance_window_open(!now_open)
+        }
+        "generate-spider-seeds" => {
+            crate::games::seed_generator::start_spider_generation();
+            model.show_toast("Generating Spider seeds\u{2026} (see console)");
+        }
+        "generate-klondike-seeds" => {
+            crate::games::seed_generator::start_klondike_generation();
+            model.show_toast("Generating Klondike seeds\u{2026} (see console)");
         }
         _ => {}
     }
@@ -723,7 +747,14 @@ mod tests {
         // debug intent).  Visible on every screen, including the title.
         let menu = options_menu(&m, m.kind);
         let debug = find_submenu(&menu, "Debug").expect("Debug submenu");
-        assert_eq!(visible_action_labels(&debug), vec!["Performance Window"]);
+        assert_eq!(
+            visible_action_labels(&debug),
+            vec![
+                "Performance Window",
+                "Generate Spider Seeds\u{2026}",
+                "Generate Klondike Seeds\u{2026}",
+            ]
+        );
         assert!(!m.show_performance_window.get());
 
         // Triggering the Performance Window action flips the model cell.

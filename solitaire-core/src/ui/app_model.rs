@@ -95,6 +95,10 @@ pub struct AppModel {
     /// Destructive action waiting for user confirmation. The
     /// `ConfirmDialog` widget reads this and executes/cancels it.
     pub confirm: Option<ConfirmAction>,
+    /// True while the "Play deal number…" modal is open. The dialog
+    /// widget reads this for visibility and writes it on cancel /
+    /// commit.
+    pub play_deal_dialog_open: bool,
     /// Mom's Solitaire state: when the player clicks an Ace gap at
     /// column 0, that gap's pile id lands here and the game waits for
     /// the next click to land on a King — that King will be swapped
@@ -163,6 +167,7 @@ impl AppModel {
             klondike_winnable_only: s.klondike_winnable_only,
             help: None,
             confirm: None,
+            play_deal_dialog_open: false,
             moms_waiting_king_at: None,
             moms_shuffles: 0,
             spider_hint: None,
@@ -315,6 +320,44 @@ impl AppModel {
 
     pub fn cancel_pending_action(&mut self) {
         self.confirm = None;
+    }
+
+    /// Open the "Play deal number…" modal. No-op when no game is
+    /// active (the user reaches it from the Game menu).
+    pub fn open_play_deal_dialog(&mut self) {
+        if self.session.is_some() {
+            self.play_deal_dialog_open = true;
+        }
+    }
+
+    pub fn cancel_play_deal_dialog(&mut self) {
+        self.play_deal_dialog_open = false;
+    }
+
+    /// Parse + apply a deal-number string. Returns `Ok(())` on a
+    /// successful jump (dialog closes), `Err(msg)` to display in
+    /// the dialog when the input doesn't fit the active variant.
+    pub fn commit_play_deal_dialog(&mut self, input: &str) -> Result<(), &'static str> {
+        let Some(kind) = self.kind else {
+            return Err("No active game");
+        };
+        let trimmed = input.trim();
+        if trimmed.is_empty() {
+            return Err("Enter a deal number");
+        }
+        let seed = parse_deal_input(trimmed).ok_or("Couldn't read that number")?;
+        if matches!(kind, GameKind::FreeCell) && self.freecell_winnable_only {
+            if !(1..=MS_FREECELL_MAX_U64).contains(&seed) {
+                return Err("Game number out of range");
+            }
+            if seed == crate::games::winnable_seeds::MS_FREECELL_UNWINNABLE as u64 {
+                return Err("Game #11982 is unwinnable");
+            }
+        }
+        self.play_deal_dialog_open = false;
+        self.confirm = None;
+        self.start_game_with_seed(kind, seed);
+        Ok(())
     }
 
     fn game_in_progress_has_moves(&self) -> bool {
@@ -609,6 +652,18 @@ pub type SharedModel = Rc<RefCell<AppModel>>;
 
 pub fn shared_model() -> SharedModel {
     Rc::new(RefCell::new(AppModel::new()))
+}
+
+/// Parse a deal-number user input — accepts plain decimal
+/// (`12345`) or hex with the `0x` prefix (`0xdeadbeef`). Used by
+/// the Play-deal-number dialog and the seed picker.
+fn parse_deal_input(s: &str) -> Option<u64> {
+    let trimmed = s.trim();
+    if let Some(rest) = trimmed.strip_prefix("0x").or(trimmed.strip_prefix("0X")) {
+        u64::from_str_radix(rest, 16).ok()
+    } else {
+        trimmed.parse::<u64>().ok()
+    }
 }
 
 fn wallclock_seed() -> u64 {
