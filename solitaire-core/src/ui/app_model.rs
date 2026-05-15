@@ -76,6 +76,11 @@ pub struct AppModel {
     /// `None` when no hint is active. Cleared on every move/undo and
     /// when the active game changes.
     pub spider_hint: Option<SpiderHint>,
+    /// Monotonic counter bumped on every Hint button press. The
+    /// `GameWidget` tracks the last-seen value and re-plays the ghost
+    /// preview animation whenever this changes, so a second press
+    /// with the same recommended move still replays the slide.
+    pub spider_hint_seq: u64,
     /// Whether the Performance window (Mean CPU usage + sparkline) is
     /// currently open.  Held as `Rc<Cell<bool>>` so the agg-gui
     /// `Window` widget that hosts it can wire `with_visible_cell` to
@@ -126,6 +131,7 @@ impl AppModel {
             moms_waiting_king_at: None,
             moms_shuffles: 0,
             spider_hint: None,
+            spider_hint_seq: 0,
             show_performance_window: Rc::new(Cell::new(s.perf_window.visible)),
             perf_window_bounds: Rc::new(Cell::new(perf_bounds)),
             last_saved_perf_window: Cell::new((s.perf_window.visible, perf_bounds)),
@@ -333,6 +339,10 @@ impl AppModel {
             return;
         };
         self.spider_hint = best_spider_hint(session.piles());
+        // Bump even when the recommended move is unchanged so the
+        // GameWidget re-plays the ghost preview animation on every
+        // press.
+        self.spider_hint_seq = self.spider_hint_seq.wrapping_add(1);
     }
 
     /// Drop any pending Spider hint. Called by every move/undo path so
