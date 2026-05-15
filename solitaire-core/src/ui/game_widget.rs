@@ -104,15 +104,22 @@ impl HintAnim {
     }
 }
 
-/// One-shot fade-up-then-down attention pulse for the hint highlight.
-/// The pulse multiplies the rect's stroke alpha by `sin(pi * t)` so
-/// the rect ramps from invisible to full brightness and back over a
-/// short window, then resumes the static `HIGHLIGHT` colour.
+/// One-shot attention pulse for the hint highlight. Three-phase
+/// envelope so the rect fades up to peak, fades back down to
+/// near-invisible, then fades back up to the static resting
+/// brightness — matching the alpha of `crate::render::HIGHLIGHT`
+/// (~0.5) at the end so the hand-off to the steady-state rect
+/// drawn after `done()` is seamless (no pop).
 #[derive(Clone, Debug)]
 struct HintPulse {
     start_at: web_time::Instant,
     duration: std::time::Duration,
 }
+
+/// Effective alpha of the static `crate::render::HIGHLIGHT` colour —
+/// the value the pulse must land on so the transition into the
+/// steady-state rect is invisible.
+const HINT_REST_ALPHA: f64 = 0x80 as f64 / 255.0;
 
 impl HintPulse {
     fn alpha_factor(&self) -> Option<f64> {
@@ -122,7 +129,22 @@ impl HintPulse {
             return None;
         }
         let t = (el / dur).clamp(0.0, 1.0);
-        Some((std::f64::consts::PI * t).sin())
+        // Phase splits — picked so the up/down beat is the dominant
+        // motion and the recovery is a quick settle.
+        const UP_END: f64 = 0.35;
+        const DOWN_END: f64 = 0.70;
+        let alpha = if t < UP_END {
+            // 0 → 1.
+            t / UP_END
+        } else if t < DOWN_END {
+            // 1 → 0.
+            1.0 - (t - UP_END) / (DOWN_END - UP_END)
+        } else {
+            // 0 → resting alpha.
+            let u = (t - DOWN_END) / (1.0 - DOWN_END);
+            HINT_REST_ALPHA * u
+        };
+        Some(alpha.clamp(0.0, 1.0))
     }
 
     fn done(&self) -> bool {
