@@ -35,12 +35,34 @@ fn playfield_rect(bounds: Rect) -> Rect {
 /// Stroke a rounded yellow outline over a card-sized rect — used by the
 /// Spider Hint overlay to mark the recommended source run, destination,
 /// or stock pile when the recommended action is a stock deal.
-fn stroke_hint_rect(ctx: &mut dyn DrawCtx, x: f64, y: f64, w: f64, h: f64) {
+///
+/// `pulse_alpha = Some(a)` swaps the translucent `HIGHLIGHT` colour for
+/// a fully-opaque yellow modulated by `global_alpha = a`. Drives the
+/// fade-up-then-down attention pulse fired on every Hint press; once
+/// the pulse is done callers pass `None` and the rect reverts to the
+/// quieter static `HIGHLIGHT`.
+fn stroke_hint_rect(
+    ctx: &mut dyn DrawCtx,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    pulse_alpha: Option<f64>,
+) {
     ctx.begin_path();
     ctx.rounded_rect(x, y, w, h, crate::consts::CARD_CORNER_R);
-    ctx.set_stroke_color(crate::render::HIGHLIGHT);
+    let pulse = pulse_alpha.is_some();
+    if let Some(alpha) = pulse_alpha {
+        ctx.set_global_alpha(alpha.clamp(0.0, 1.0));
+        ctx.set_stroke_color(agg_gui::color::Color::from_rgb8(0xff, 0xd7, 0x00));
+    } else {
+        ctx.set_stroke_color(crate::render::HIGHLIGHT);
+    }
     ctx.set_line_width(4.0);
     ctx.stroke();
+    if pulse {
+        ctx.set_global_alpha(1.0);
+    }
 }
 
 /// One-shot ghost preview kicked off by the Hint button — snapshots
@@ -79,6 +101,32 @@ impl HintAnim {
 
     fn done(&self) -> bool {
         self.start_at.elapsed() >= self.slide_dur + self.fade_dur
+    }
+}
+
+/// One-shot fade-up-then-down attention pulse for the hint highlight.
+/// The pulse multiplies the rect's stroke alpha by `sin(pi * t)` so
+/// the rect ramps from invisible to full brightness and back over a
+/// short window, then resumes the static `HIGHLIGHT` colour.
+#[derive(Clone, Debug)]
+struct HintPulse {
+    start_at: web_time::Instant,
+    duration: std::time::Duration,
+}
+
+impl HintPulse {
+    fn alpha_factor(&self) -> Option<f64> {
+        let el = self.start_at.elapsed().as_secs_f64();
+        let dur = self.duration.as_secs_f64();
+        if el >= dur {
+            return None;
+        }
+        let t = (el / dur).clamp(0.0, 1.0);
+        Some((std::f64::consts::PI * t).sin())
+    }
+
+    fn done(&self) -> bool {
+        self.start_at.elapsed() >= self.duration
     }
 }
 
@@ -138,6 +186,12 @@ pub struct GameWidget {
     /// to detect a fresh Hint-button press (including re-clicks with
     /// the same recommended move) so we can re-trigger the preview.
     last_hint_seq: u64,
+    /// One-shot fade-up-then-down pulse on the hint rect — kicked off
+    /// every time the Hint button fires so the player's eye snaps to
+    /// the highlight even when the static rect alone is too quiet
+    /// (e.g. the StockDeal recommendation, which has no ghost
+    /// preview to back it up).
+    hint_pulse: Option<HintPulse>,
 }
 
 impl GameWidget {
@@ -154,6 +208,7 @@ impl GameWidget {
             deck_animations: Vec::new(),
             hint_anim: None,
             last_hint_seq: 0,
+            hint_pulse: None,
         }
     }
 
@@ -474,6 +529,7 @@ impl GameWidget {
             return;
         };
         let piles = session.piles();
+        let pulse_alpha = self.hint_pulse.as_ref().and_then(HintPulse::alpha_factor);
         match hint {
             crate::games::spider::SpiderHint::Move {
                 from,
@@ -493,14 +549,14 @@ impl GameWidget {
                 let y = ty;
                 let w = src.card_w;
                 let h = hy + src.card_h - ty;
-                stroke_hint_rect(ctx, x, y, w, h);
+                stroke_hint_rect(ctx, x, y, w, h, pulse_alpha);
                 let dst = piles.get(to);
                 let (dx, dy, dw, dh) = if dst.is_empty() {
                     dst.empty_slot_rect()
                 } else {
                     dst.card_rect(dst.cards.len() - 1)
                 };
-                stroke_hint_rect(ctx, dx, dy, dw, dh);
+                stroke_hint_rect(ctx, dx, dy, dw, dh, pulse_alpha);
             }
             crate::games::spider::SpiderHint::StockDeal { stock } => {
                 let pile = piles.get(stock);
@@ -509,7 +565,7 @@ impl GameWidget {
                 } else {
                     pile.card_rect(pile.cards.len() - 1)
                 };
-                stroke_hint_rect(ctx, sx, sy, sw, sh);
+                stroke_hint_rect(ctx, sx, sy, sw, sh, pulse_alpha);
             }
         }
     }
@@ -522,18 +578,31 @@ impl GameWidget {
         let model = self.model.borrow();
         let seq = model.spider_hint_seq;
         if seq == self.last_hint_seq {
-            // Drop a finished one-shot.
+            // Drop finished one-shots.
             if self.hint_anim.as_ref().is_some_and(HintAnim::done) {
                 self.hint_anim = None;
+            }
+            if self.hint_pulse.as_ref().is_some_and(HintPulse::done) {
+                self.hint_pulse = None;
             }
             return;
         }
         self.last_hint_seq = seq;
         self.hint_anim = None;
+        self.hint_pulse = None;
 
         let Some(hint) = model.spider_hint else {
             return;
         };
+        // Every fresh hint kicks off the attention pulse so the rect
+        // visibly fades up and back down once. Move hints also get
+        // the ghost-card preview; StockDeal hints rely on pulse +
+        // toast alone (there's no useful flight path for "click the
+        // stock pile").
+        self.hint_pulse = Some(HintPulse {
+            start_at: web_time::Instant::now(),
+            duration: std::time::Duration::from_millis(1100),
+        });
         let crate::games::spider::SpiderHint::Move {
             from,
             start_idx,
@@ -541,8 +610,7 @@ impl GameWidget {
             to,
         } = hint
         else {
-            // Stock-deal hint: skip the ghost preview, the yellow rect
-            // on the stock pile communicates the action well enough.
+            agg_gui::animation::request_draw();
             return;
         };
         let Some(session) = model.session.as_ref() else {
@@ -886,6 +954,7 @@ impl Widget for GameWidget {
             || !self.animations.is_empty()
             || !self.deck_animations.is_empty()
             || self.hint_anim.as_ref().is_some_and(|a| !a.done())
+            || self.hint_pulse.as_ref().is_some_and(|p| !p.done())
             || self.model.borrow().toast.is_some()
     }
 }
