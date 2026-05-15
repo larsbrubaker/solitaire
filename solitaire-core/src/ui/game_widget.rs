@@ -34,35 +34,18 @@ fn playfield_rect(bounds: Rect) -> Rect {
 
 /// Stroke a rounded yellow outline over a card-sized rect — used by the
 /// Spider Hint overlay to mark the recommended source run, destination,
-/// or stock pile when the recommended action is a stock deal.
-///
-/// `pulse_alpha = Some(a)` swaps the translucent `HIGHLIGHT` colour for
-/// a fully-opaque yellow modulated by `global_alpha = a`. Drives the
-/// fade-up-then-down attention pulse fired on every Hint press; once
-/// the pulse is done callers pass `None` and the rect reverts to the
-/// quieter static `HIGHLIGHT`.
-fn stroke_hint_rect(
-    ctx: &mut dyn DrawCtx,
-    x: f64,
-    y: f64,
-    w: f64,
-    h: f64,
-    pulse_alpha: Option<f64>,
-) {
+/// or stock pile when the recommended action is a stock deal. `alpha`
+/// is the effective opacity for this frame; the rect is painted in
+/// fully-opaque yellow modulated through `global_alpha` so the pulse
+/// and fade-out animations both ride on a single knob.
+fn stroke_hint_rect(ctx: &mut dyn DrawCtx, x: f64, y: f64, w: f64, h: f64, alpha: f64) {
+    ctx.set_global_alpha(alpha.clamp(0.0, 1.0));
     ctx.begin_path();
     ctx.rounded_rect(x, y, w, h, crate::consts::CARD_CORNER_R);
-    let pulse = pulse_alpha.is_some();
-    if let Some(alpha) = pulse_alpha {
-        ctx.set_global_alpha(alpha.clamp(0.0, 1.0));
-        ctx.set_stroke_color(agg_gui::color::Color::from_rgb8(0xff, 0xd7, 0x00));
-    } else {
-        ctx.set_stroke_color(crate::render::HIGHLIGHT);
-    }
+    ctx.set_stroke_color(agg_gui::color::Color::from_rgb8(0xff, 0xd7, 0x00));
     ctx.set_line_width(4.0);
     ctx.stroke();
-    if pulse {
-        ctx.set_global_alpha(1.0);
-    }
+    ctx.set_global_alpha(1.0);
 }
 
 /// One-shot ghost preview kicked off by the Hint button — snapshots
@@ -114,6 +97,18 @@ impl HintAnim {
 struct HintPulse {
     start_at: web_time::Instant,
     duration: std::time::Duration,
+}
+
+/// Smooth tail-off animation kicked off when the user touches the
+/// board (mouse-down on the playfield) or commits a move/undo while
+/// a hint highlight is still visible. Captures whatever alpha the
+/// rect was painting at the moment of interruption so the fade
+/// starts from the current brightness rather than snapping.
+#[derive(Clone, Debug)]
+struct HintFadeOut {
+    start_at: web_time::Instant,
+    duration: std::time::Duration,
+    starting_alpha: f64,
 }
 
 /// Effective alpha of the static `crate::render::HIGHLIGHT` colour —
@@ -214,6 +209,15 @@ pub struct GameWidget {
     /// (e.g. the StockDeal recommendation, which has no ghost
     /// preview to back it up).
     hint_pulse: Option<HintPulse>,
+    /// Smooth fade-out applied to the hint rect when the user
+    /// interacts (mouse-down on the playfield, applies a move, undoes).
+    /// Once finished, `displayed_hint` clears.
+    hint_fade_out: Option<HintFadeOut>,
+    /// The hint the widget is actually painting. Tracks
+    /// `model.spider_hint` while the rect is being shown, but stays
+    /// non-`None` through the fade-out tail so the rect doesn't
+    /// disappear in a single frame when the model clears the hint.
+    displayed_hint: Option<crate::games::spider::SpiderHint>,
 }
 
 impl GameWidget {
@@ -231,7 +235,56 @@ impl GameWidget {
             hint_anim: None,
             last_hint_seq: 0,
             hint_pulse: None,
+            hint_fade_out: None,
+            displayed_hint: None,
         }
+    }
+
+    /// Resolve the alpha the hint rect should paint at this frame.
+    /// `None` means "no rect at all" (no displayed hint or fade
+    /// completed). Layer priority is fade-out → pulse → resting alpha.
+    fn current_hint_alpha(&self) -> Option<f64> {
+        self.displayed_hint?;
+        if let Some(fade) = self.hint_fade_out.as_ref() {
+            let el = fade.start_at.elapsed().as_secs_f64();
+            let dur = fade.duration.as_secs_f64().max(1e-6);
+            if el >= fade.duration.as_secs_f64() {
+                return None;
+            }
+            let t = (el / dur).clamp(0.0, 1.0);
+            return Some(fade.starting_alpha * (1.0 - t));
+        }
+        if let Some(pulse) = self.hint_pulse.as_ref() {
+            return Some(pulse.alpha_factor().unwrap_or(HINT_REST_ALPHA));
+        }
+        Some(HINT_REST_ALPHA)
+    }
+
+    /// Begin a fade-out from whatever alpha the rect was painting at
+    /// just now. Idempotent — re-entry while a fade is already in
+    /// flight is a no-op. Also clears `model.spider_hint` so other
+    /// observers see the hint gone immediately; only the widget's
+    /// `displayed_hint` lingers, just long enough for the fade.
+    fn start_hint_fade_out(&mut self) {
+        if self.displayed_hint.is_none() || self.hint_fade_out.is_some() {
+            return;
+        }
+        let starting_alpha = if let Some(pulse) = self.hint_pulse.as_ref() {
+            pulse.alpha_factor().unwrap_or(HINT_REST_ALPHA)
+        } else {
+            HINT_REST_ALPHA
+        };
+        self.hint_fade_out = Some(HintFadeOut {
+            start_at: web_time::Instant::now(),
+            duration: std::time::Duration::from_millis(400),
+            starting_alpha,
+        });
+        // Cancel the in-flight pulse + ghost slide so they don't
+        // re-brighten the rect while we're trying to fade it down.
+        self.hint_pulse = None;
+        self.hint_anim = None;
+        self.model.borrow_mut().spider_hint = None;
+        agg_gui::animation::request_draw();
     }
 
     fn is_double_click(&self, vx: f64, vy: f64) -> bool {
@@ -544,14 +597,16 @@ impl GameWidget {
     /// painted by `paint_hint_animation`.
     fn paint_spider_hint_overlay(&self, ctx: &mut dyn DrawCtx) {
         let model = self.model.borrow();
-        let Some(hint) = model.spider_hint else {
+        let Some(hint) = self.displayed_hint else {
+            return;
+        };
+        let Some(alpha) = self.current_hint_alpha() else {
             return;
         };
         let Some(session) = model.session.as_ref() else {
             return;
         };
         let piles = session.piles();
-        let pulse_alpha = self.hint_pulse.as_ref().and_then(HintPulse::alpha_factor);
         match hint {
             crate::games::spider::SpiderHint::Move {
                 from,
@@ -571,14 +626,14 @@ impl GameWidget {
                 let y = ty;
                 let w = src.card_w;
                 let h = hy + src.card_h - ty;
-                stroke_hint_rect(ctx, x, y, w, h, pulse_alpha);
+                stroke_hint_rect(ctx, x, y, w, h, alpha);
                 let dst = piles.get(to);
                 let (dx, dy, dw, dh) = if dst.is_empty() {
                     dst.empty_slot_rect()
                 } else {
                     dst.card_rect(dst.cards.len() - 1)
                 };
-                stroke_hint_rect(ctx, dx, dy, dw, dh, pulse_alpha);
+                stroke_hint_rect(ctx, dx, dy, dw, dh, alpha);
             }
             crate::games::spider::SpiderHint::StockDeal { stock } => {
                 let pile = piles.get(stock);
@@ -587,7 +642,7 @@ impl GameWidget {
                 } else {
                     pile.card_rect(pile.cards.len() - 1)
                 };
-                stroke_hint_rect(ctx, sx, sy, sw, sh, pulse_alpha);
+                stroke_hint_rect(ctx, sx, sy, sw, sh, alpha);
             }
         }
     }
@@ -607,11 +662,30 @@ impl GameWidget {
             if self.hint_pulse.as_ref().is_some_and(HintPulse::done) {
                 self.hint_pulse = None;
             }
+            // Model cleared the hint (move/undo) without bumping seq —
+            // fade the rect out instead of letting it pop off.
+            if model.spider_hint.is_none()
+                && self.displayed_hint.is_some()
+                && self.hint_fade_out.is_none()
+            {
+                drop(model);
+                self.start_hint_fade_out();
+                return;
+            }
+            // Retire a finished fade.
+            if let Some(fade) = self.hint_fade_out.as_ref() {
+                if fade.start_at.elapsed() >= fade.duration {
+                    self.hint_fade_out = None;
+                    self.displayed_hint = None;
+                }
+            }
             return;
         }
         self.last_hint_seq = seq;
         self.hint_anim = None;
         self.hint_pulse = None;
+        self.hint_fade_out = None;
+        self.displayed_hint = model.spider_hint;
 
         let Some(hint) = model.spider_hint else {
             return;
@@ -917,6 +991,9 @@ impl Widget for GameWidget {
                 let (vx, vy) = (pos.x, pos.y);
                 let is_double = self.is_double_click(vx, vy);
                 self.last_click = Some((web_time::Instant::now(), vx, vy));
+                // Touching the playfield retires whatever hint is on
+                // screen — smooth fade-out from the current alpha.
+                self.start_hint_fade_out();
 
                 if self.is_moms() {
                     if self.try_moms_click(vx, vy) {
@@ -977,6 +1054,10 @@ impl Widget for GameWidget {
             || !self.deck_animations.is_empty()
             || self.hint_anim.as_ref().is_some_and(|a| !a.done())
             || self.hint_pulse.as_ref().is_some_and(|p| !p.done())
+            || self
+                .hint_fade_out
+                .as_ref()
+                .is_some_and(|f| f.start_at.elapsed() < f.duration)
             || self.model.borrow().toast.is_some()
     }
 }
