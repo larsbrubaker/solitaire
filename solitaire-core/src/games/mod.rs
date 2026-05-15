@@ -4,8 +4,13 @@
 
 pub mod freecell;
 pub mod klondike;
+pub mod ms_freecell;
 pub mod moms;
 pub mod spider;
+pub mod winnable_seeds;
+
+#[cfg(test)]
+mod deal_stability_tests;
 
 use agg_gui::geometry::Rect;
 use rand::rngs::StdRng;

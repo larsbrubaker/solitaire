@@ -38,6 +38,9 @@ struct MenuSnapshot {
     klondike_draw_count: u8,
     spider_suit_count: u8,
     spider_one_suit: Suit,
+    spider_winnable_only: bool,
+    freecell_winnable_only: bool,
+    klondike_winnable_only: bool,
     /// Performance-window visibility: drives the radio-dot indicator
     /// on the "Performance Window" menu item.
     show_performance_window: bool,
@@ -53,6 +56,9 @@ impl MenuSnapshot {
             klondike_draw_count: model.klondike_draw_count,
             spider_suit_count: model.spider_suit_count,
             spider_one_suit: model.spider_one_suit,
+            spider_winnable_only: model.spider_winnable_only,
+            freecell_winnable_only: model.freecell_winnable_only,
+            klondike_winnable_only: model.klondike_winnable_only,
             show_performance_window: model.show_performance_window.get(),
             in_game: model.session.is_some(),
         }
@@ -197,6 +203,22 @@ fn options_menu(model: &AppModel, kind: Option<GameKind>) -> TopMenu {
                     .into(),
             );
             items.push(MenuEntry::Separator);
+            items.push(
+                MenuItem::action("Winnable deals only", "klondike-winnable-only")
+                    .radio(model.klondike_winnable_only)
+                    .keep_open()
+                    .into(),
+            );
+            items.push(MenuEntry::Separator);
+        }
+        Some(GameKind::FreeCell) => {
+            items.push(
+                MenuItem::action("Winnable deals only", "freecell-winnable-only")
+                    .radio(model.freecell_winnable_only)
+                    .keep_open()
+                    .into(),
+            );
+            items.push(MenuEntry::Separator);
         }
         Some(GameKind::Spider) => {
             let count = model.spider_suit_count;
@@ -231,6 +253,13 @@ fn options_menu(model: &AppModel, kind: Option<GameKind>) -> TopMenu {
             items.push(
                 MenuItem::action("4 Suits", "spider-4-suit")
                     .radio(count == 4)
+                    .keep_open()
+                    .into(),
+            );
+            items.push(MenuEntry::Separator);
+            items.push(
+                MenuItem::action("Winnable deals only", "spider-winnable-only")
+                    .radio(model.spider_winnable_only)
                     .keep_open()
                     .into(),
             );
@@ -294,6 +323,9 @@ fn handle_action(model: &mut AppModel, action: &str) {
         "draw-3" => model.set_klondike_draw_count(3),
         "spider-2-suit" => model.set_spider_suit_count(2),
         "spider-4-suit" => model.set_spider_suit_count(4),
+        "spider-winnable-only" => model.set_spider_winnable_only(!model.spider_winnable_only),
+        "freecell-winnable-only" => model.set_freecell_winnable_only(!model.freecell_winnable_only),
+        "klondike-winnable-only" => model.set_klondike_winnable_only(!model.klondike_winnable_only),
         "spider-suit-spades" => spider_set_one_suit(model, Suit::Spades),
         "spider-suit-hearts" => spider_set_one_suit(model, Suit::Hearts),
         "spider-suit-diamonds" => spider_set_one_suit(model, Suit::Diamonds),

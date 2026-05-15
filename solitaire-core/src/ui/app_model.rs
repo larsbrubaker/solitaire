@@ -11,6 +11,10 @@ use web_time::Instant;
 
 use crate::cards::Suit;
 use crate::games::freecell::FreeCell;
+use crate::games::winnable_seeds::MS_FREECELL_MAX;
+
+/// Cached widened form of `MS_FREECELL_MAX` for u64 comparisons.
+const MS_FREECELL_MAX_U64: u64 = MS_FREECELL_MAX as u64;
 use crate::games::klondike::Klondike;
 use crate::games::moms::MomsSolitaire;
 use crate::games::spider::{best_spider_hint, Spider, SpiderHint};
@@ -53,6 +57,13 @@ pub enum ConfirmAction {
     /// Spider 1-suit choice change picked while a game with moves is
     /// in progress.
     ApplySpiderOneSuit(Suit),
+    /// "Winnable deals only" toggle for Spider picked while a game
+    /// with moves is in progress.
+    ApplySpiderWinnableOnly(bool),
+    /// Toggle for FreeCell's "Winnable deals only".
+    ApplyFreeCellWinnableOnly(bool),
+    /// Toggle for Klondike's "Winnable deals only".
+    ApplyKlondikeWinnableOnly(bool),
 }
 
 pub struct AppModel {
@@ -69,6 +80,15 @@ pub struct AppModel {
     pub spider_suit_count: u8,
     /// Suit used by 1-suit Spider. Ignored for other suit counts.
     pub spider_one_suit: Suit,
+    /// When true, Spider new-deal picks a seed from the bundled
+    /// solver-verified winnable list instead of a wallclock seed.
+    pub spider_winnable_only: bool,
+    /// When true, FreeCell new-deal pulls from the Microsoft
+    /// 32,000-deal pool (skipping the known-unwinnable #11982).
+    pub freecell_winnable_only: bool,
+    /// When true, Klondike new-deal picks a seed from the bundled
+    /// solver-verified winnable list instead of a wallclock seed.
+    pub klondike_winnable_only: bool,
     /// Open Help dialog, if any. The `HelpDialog` widget reads this and
     /// paints the corresponding markdown content as a modal overlay.
     pub help: Option<HelpKind>,
@@ -138,6 +158,9 @@ impl AppModel {
             klondike_draw_count: s.klondike_draw_count,
             spider_suit_count: s.spider_suit_count,
             spider_one_suit: s.spider_one_suit,
+            spider_winnable_only: s.spider_winnable_only,
+            freecell_winnable_only: s.freecell_winnable_only,
+            klondike_winnable_only: s.klondike_winnable_only,
             help: None,
             confirm: None,
             moms_waiting_king_at: None,
@@ -168,6 +191,9 @@ impl AppModel {
             klondike_draw_count: self.klondike_draw_count,
             spider_suit_count: self.spider_suit_count,
             spider_one_suit: self.spider_one_suit,
+            spider_winnable_only: self.spider_winnable_only,
+            freecell_winnable_only: self.freecell_winnable_only,
+            klondike_winnable_only: self.klondike_winnable_only,
             perf_window,
         }
         .save();
@@ -207,7 +233,28 @@ impl AppModel {
     }
 
     pub fn start_game(&mut self, kind: GameKind) {
-        self.start_game_with_seed(kind, wallclock_seed());
+        // Route through the winnable-only picker when the player has
+        // the toggle on for this variant. The picker re-uses the
+        // wallclock seed as its own RNG state so each "New Deal"
+        // still produces a different pick from the list.
+        let seed = wallclock_seed();
+        let resolved = match kind {
+            GameKind::Spider if self.spider_winnable_only => {
+                crate::games::winnable_seeds::pick_spider_winnable(seed)
+            }
+            GameKind::Klondike if self.klondike_winnable_only => {
+                crate::games::winnable_seeds::pick_klondike_winnable(seed)
+            }
+            GameKind::FreeCell if self.freecell_winnable_only => {
+                // Microsoft FreeCell numbering: encode the game
+                // number (1..32_000, skipping #11982) as the seed so
+                // Restart re-deals the same game.
+                let n = crate::games::winnable_seeds::pick_ms_freecell_winnable(seed);
+                n as u64
+            }
+            _ => seed,
+        };
+        self.start_game_with_seed(kind, resolved);
     }
 
     pub fn request_new_deal(&mut self, kind: GameKind) {
@@ -248,6 +295,21 @@ impl AppModel {
                 self.save_settings();
                 self.restart_current_deal();
             }
+            ConfirmAction::ApplySpiderWinnableOnly(on) => {
+                self.spider_winnable_only = on;
+                self.save_settings();
+                self.start_game(GameKind::Spider);
+            }
+            ConfirmAction::ApplyFreeCellWinnableOnly(on) => {
+                self.freecell_winnable_only = on;
+                self.save_settings();
+                self.start_game(GameKind::FreeCell);
+            }
+            ConfirmAction::ApplyKlondikeWinnableOnly(on) => {
+                self.klondike_winnable_only = on;
+                self.save_settings();
+                self.start_game(GameKind::Klondike);
+            }
         }
     }
 
@@ -269,7 +331,22 @@ impl AppModel {
                 Klondike::with_draw_count(self.klondike_draw_count),
                 seed,
             )),
-            GameKind::FreeCell => Box::new(GameSession::new(FreeCell::new(), seed)),
+            GameKind::FreeCell => {
+                // When the winnable-only toggle is on, `start_game`
+                // hands us a Microsoft game number (1..32_000) cast
+                // into a u64. Build the FreeCell rules with that
+                // number so the deal reproduces Jim Horne's classic
+                // layout. Restart-with-same-seed then re-deals the
+                // exact same Microsoft game.
+                if self.freecell_winnable_only && seed > 0 && seed <= MS_FREECELL_MAX_U64 {
+                    Box::new(GameSession::new(
+                        FreeCell::with_ms_game_number(seed as u32),
+                        seed,
+                    ))
+                } else {
+                    Box::new(GameSession::new(FreeCell::new(), seed))
+                }
+            }
             GameKind::Spider => Box::new(GameSession::new(
                 Spider {
                     suit_count: self.spider_suit_count,
@@ -344,6 +421,60 @@ impl AppModel {
     /// the active variant is Spider in 1-suit mode (any other state
     /// just persists the setting for the next deal). Confirms first
     /// when the visible Spider game has moves.
+    /// Toggle "Winnable deals only" for Spider. Same confirm-on-
+    /// progress flow as the other Spider settings: a fresh deal
+    /// re-draws immediately from the new pool, mid-game flips queue
+    /// a confirm.
+    pub fn set_spider_winnable_only(&mut self, on: bool) {
+        if self.spider_winnable_only == on {
+            return;
+        }
+        let active = matches!(self.kind, Some(GameKind::Spider));
+        if active && self.game_in_progress_has_moves() {
+            self.confirm = Some(ConfirmAction::ApplySpiderWinnableOnly(on));
+            return;
+        }
+        self.spider_winnable_only = on;
+        self.save_settings();
+        if active {
+            self.start_game(GameKind::Spider);
+        }
+    }
+
+    /// Toggle "Winnable deals only" for FreeCell.
+    pub fn set_freecell_winnable_only(&mut self, on: bool) {
+        if self.freecell_winnable_only == on {
+            return;
+        }
+        let active = matches!(self.kind, Some(GameKind::FreeCell));
+        if active && self.game_in_progress_has_moves() {
+            self.confirm = Some(ConfirmAction::ApplyFreeCellWinnableOnly(on));
+            return;
+        }
+        self.freecell_winnable_only = on;
+        self.save_settings();
+        if active {
+            self.start_game(GameKind::FreeCell);
+        }
+    }
+
+    /// Toggle "Winnable deals only" for Klondike.
+    pub fn set_klondike_winnable_only(&mut self, on: bool) {
+        if self.klondike_winnable_only == on {
+            return;
+        }
+        let active = matches!(self.kind, Some(GameKind::Klondike));
+        if active && self.game_in_progress_has_moves() {
+            self.confirm = Some(ConfirmAction::ApplyKlondikeWinnableOnly(on));
+            return;
+        }
+        self.klondike_winnable_only = on;
+        self.save_settings();
+        if active {
+            self.start_game(GameKind::Klondike);
+        }
+    }
+
     pub fn set_spider_one_suit(&mut self, suit: Suit) {
         if self.spider_one_suit == suit {
             return;
@@ -542,6 +673,9 @@ mod tests {
             klondike_draw_count: 3,
             spider_suit_count: 1,
             spider_one_suit: Suit::Spades,
+            spider_winnable_only: false,
+            freecell_winnable_only: false,
+            klondike_winnable_only: false,
             perf_window: PerfWindowState::default(),
         }
         .save();
@@ -569,6 +703,9 @@ mod tests {
             klondike_draw_count: 1,
             spider_suit_count: 1,
             spider_one_suit: Suit::Spades,
+            spider_winnable_only: false,
+            freecell_winnable_only: false,
+            klondike_winnable_only: false,
             perf_window: PerfWindowState {
                 visible: true,
                 x: 240.0,

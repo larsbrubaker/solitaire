@@ -27,11 +27,26 @@ const N_CASCADES: usize = 8;
 /// Vertical budget in card-heights (top row + tableau fan).
 const VERT_BUDGET_CARDS: f64 = 5.5;
 
-pub struct FreeCell;
+pub struct FreeCell {
+    /// When `Some(n)`, `deal()` reproduces Microsoft FreeCell game
+    /// #n via `super::ms_freecell::deal_columns(n)` and ignores the
+    /// session's RNG. Microsoft's algorithm validates 31,999 of the
+    /// original 32,000 deals as winnable — exactly #11982 is the
+    /// known-unwinnable hold-out and is filtered out at the picker.
+    pub ms_game_number: Option<u32>,
+}
 
 impl FreeCell {
     pub const fn new() -> Self {
-        Self
+        Self {
+            ms_game_number: None,
+        }
+    }
+
+    pub const fn with_ms_game_number(n: u32) -> Self {
+        Self {
+            ms_game_number: Some(n),
+        }
     }
 }
 
@@ -158,6 +173,18 @@ impl GameRules for FreeCell {
     }
 
     fn deal(&self, piles: &mut PileSet, rng: &mut StdRng) {
+        // Microsoft-number path: skip the regular RNG entirely and
+        // reproduce Jim Horne's classic deal so the user can replay
+        // a familiar Game #N from the original Windows FreeCell set.
+        if let Some(game) = self.ms_game_number {
+            let cols = super::ms_freecell::deal_columns(game);
+            for (col_idx, col) in cols.iter().enumerate() {
+                for &card in col {
+                    piles.get_mut(CASCADE_FIRST + col_idx as u8).cards.push(card);
+                }
+            }
+            return;
+        }
         let mut deck = crate::cards::standard_deck();
         deck.shuffle(rng);
         // First 4 cascades: 7 cards. Last 4 cascades: 6 cards. All face-up.
