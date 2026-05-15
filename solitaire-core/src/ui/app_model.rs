@@ -338,11 +338,22 @@ impl AppModel {
         let Some(session) = self.session.as_ref() else {
             return;
         };
-        self.spider_hint = best_spider_hint(session.piles());
-        // Bump even when the recommended move is unchanged so the
-        // GameWidget re-plays the ghost preview animation on every
-        // press.
-        self.spider_hint_seq = self.spider_hint_seq.wrapping_add(1);
+        let hint = best_spider_hint(session.piles());
+        match hint {
+            Some(h) => {
+                self.spider_hint = Some(h);
+                // Bump even when the recommended move is unchanged so
+                // the GameWidget re-plays the ghost preview animation.
+                self.spider_hint_seq = self.spider_hint_seq.wrapping_add(1);
+            }
+            None => {
+                // No legal cascade move and no legal stock deal — show
+                // a toast so the user sees feedback for the Hint press
+                // rather than silence.
+                self.spider_hint = None;
+                self.show_toast("No moves");
+            }
+        }
     }
 
     /// Drop any pending Spider hint. Called by every move/undo path so

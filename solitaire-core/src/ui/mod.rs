@@ -24,6 +24,7 @@ pub mod layout;
 pub mod menu_widget;
 pub mod overlay_stack;
 pub mod title_widget;
+pub mod toast;
 
 use app_model::{shared_model, SharedModel};
 use app_root::AppRootWidget;
