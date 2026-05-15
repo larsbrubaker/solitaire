@@ -350,8 +350,10 @@ impl AppModel {
             if !(1..=MS_FREECELL_MAX_U64).contains(&seed) {
                 return Err("Game number out of range");
             }
-            if seed == crate::games::winnable_seeds::MS_FREECELL_UNWINNABLE as u64 {
-                return Err("Game #11982 is unwinnable");
+            if seed <= u32::MAX as u64
+                && crate::games::winnable_seeds::is_ms_freecell_unwinnable(seed as u32)
+            {
+                return Err("That game number is on Microsoft's unwinnable list");
             }
         }
         self.play_deal_dialog_open = false;

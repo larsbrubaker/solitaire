@@ -166,6 +166,7 @@ fn game_menu(model: &AppModel) -> TopMenu {
             .shortcut("F2")
             .into(),
     );
+    items.push(MenuItem::action("Play Deal Number\u{2026}", "play-deal-number").into());
     items.push(MenuItem::action("Restart this Deal", "restart").into());
     items.push(MenuEntry::Separator);
     items.push(MenuItem::action("Back to Main Menu", "title").into());
@@ -334,6 +335,7 @@ fn handle_action(model: &mut AppModel, action: &str) {
             }
         }
         "restart" => model.restart_current_deal(),
+        "play-deal-number" => model.open_play_deal_dialog(),
         "title" => model.request_main_menu(),
         "draw-1" => model.set_klondike_draw_count(1),
         "draw-3" => model.set_klondike_draw_count(3),
