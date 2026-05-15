@@ -18,6 +18,7 @@ pub fn title_for(kind: HelpKind) -> &'static str {
         HelpKind::About(GameKind::FreeCell) => "About FreeCell",
         HelpKind::About(GameKind::Spider) => "About Spider",
         HelpKind::About(GameKind::MomsSolitaire) => "About Mom's Solitaire",
+        HelpKind::AboutSuite => "About",
     }
 }
 
@@ -31,6 +32,7 @@ pub fn markdown_for(kind: HelpKind) -> &'static str {
         HelpKind::About(GameKind::FreeCell) => FREECELL_ABOUT,
         HelpKind::About(GameKind::Spider) => SPIDER_ABOUT,
         HelpKind::About(GameKind::MomsSolitaire) => MOMS_ABOUT,
+        HelpKind::AboutSuite => SUITE_ABOUT,
     }
 }
 
@@ -281,6 +283,25 @@ C# / agg-sharp re-implementation of the original Forth program
 (under `MatterCAD/Submodules/agg-sharp/examples/MomsSolitaire/`).
 
 See **Help → Rules** for how to play.
+"#,
+    SHARED_CREDITS
+);
+
+const SUITE_ABOUT: &str = const_concat::concat!(
+    r#"
+# About
+
+This Solitaire suite is published by **OneAndDone.games** — a tiny
+studio that builds polished, no-tracking, no-ads desktop and web
+games for people who just want to play. One purchase, you own it,
+done. Hence the name.
+
+The suite bundles four classic Patience variants — **Klondike**,
+**FreeCell**, **Spider**, and **Mom's Solitaire** — sharing one
+card-rendering pipeline, one event loop, and one set of game-
+agnostic services (undo, settings persistence, hints). Pick a
+variant from the title screen; the menu bar's **Game** and
+**Options** entries adapt to whichever game is in play.
 "#,
     SHARED_CREDITS
 );

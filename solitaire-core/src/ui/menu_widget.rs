@@ -125,7 +125,15 @@ fn build_menu_bar(model: SharedModel, font: Arc<Font>, orientation: MenuOrientat
 /// always carries Toggle Fullscreen + the Debug submenu so the
 /// player can always reach those even on the title screen.
 fn build_menus(model: &AppModel) -> Vec<TopMenu> {
-    vec![game_menu(model), options_menu(model, model.kind), help_menu()]
+    // Title screen has no active game, so the Game menu (Undo / New
+    // Deal / Restart / Main Menu) has nothing to act on — strip it.
+    let mut menus = Vec::with_capacity(3);
+    if model.session.is_some() {
+        menus.push(game_menu(model));
+    }
+    menus.push(options_menu(model, model.kind));
+    menus.push(help_menu(model));
+    menus
 }
 
 fn game_menu(model: &AppModel) -> TopMenu {
@@ -158,16 +166,17 @@ fn game_menu(model: &AppModel) -> TopMenu {
     TopMenu::new("Game", items)
 }
 
-fn help_menu() -> TopMenu {
-    TopMenu::new(
-        "Help",
-        vec![
-            // Both items dispatch by `model.kind` so the player only
-            // ever sees content for the variant they're playing.
-            MenuItem::action("Rules", "help-rules").into(),
-            MenuItem::action("About\u{2026}", "help-about").into(),
-        ],
-    )
+fn help_menu(model: &AppModel) -> TopMenu {
+    let mut items: Vec<MenuEntry> = Vec::new();
+    // Per-game About sits ON TOP when a game is active. The suite-
+    // level About below it talks about OneAndDone.games and the
+    // overall app.
+    if let Some(kind) = model.kind {
+        let label = format!("About {}\u{2026}", kind.display_name());
+        items.push(MenuItem::action(label, "help-about").into());
+    }
+    items.push(MenuItem::action("About\u{2026}", "help-about-suite").into());
+    TopMenu::new("Help", items)
 }
 
 fn options_menu(model: &AppModel, kind: Option<GameKind>) -> TopMenu {
@@ -291,6 +300,7 @@ fn handle_action(model: &mut AppModel, action: &str) {
         "spider-suit-clubs" => spider_set_one_suit(model, Suit::Clubs),
         "help-rules" => model.help = model.kind.map(HelpKind::Rules),
         "help-about" => model.help = model.kind.map(HelpKind::About),
+        "help-about-suite" => model.help = Some(HelpKind::AboutSuite),
         "toggle-fullscreen" => crate::platform::request_toggle_fullscreen(),
         "toggle-performance-window" => {
             let now_open = model.show_performance_window.get();

@@ -29,12 +29,14 @@ pub enum Screen {
 }
 
 /// Which Help dialog (if any) is currently overlaid. `None` = no
-/// dialog. Both topics are keyed by `GameKind` so the player only
-/// ever sees content for the variant they're playing.
+/// dialog. The `About` / `Rules` variants are per-game; `AboutSuite`
+/// is the company-and-suite write-up shown on the title screen and
+/// underneath the per-game About when a session is active.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HelpKind {
     Rules(GameKind),
     About(GameKind),
+    AboutSuite,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
