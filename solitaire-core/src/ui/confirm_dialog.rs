@@ -111,7 +111,10 @@ impl ConfirmDialog {
             ConfirmAction::MainMenu => "Main Menu",
             ConfirmAction::ApplyKlondikeDrawCount(_)
             | ConfirmAction::ApplySpiderSuitCount(_)
-            | ConfirmAction::ApplySpiderOneSuit(_) => "Apply",
+            | ConfirmAction::ApplySpiderOneSuit(_)
+            | ConfirmAction::ApplySpiderWinnableOnly(_)
+            | ConfirmAction::ApplyFreeCellWinnableOnly(_)
+            | ConfirmAction::ApplyKlondikeWinnableOnly(_) => "Apply",
         }
     }
 
@@ -123,7 +126,10 @@ impl ConfirmDialog {
             }
             ConfirmAction::ApplyKlondikeDrawCount(_)
             | ConfirmAction::ApplySpiderSuitCount(_)
-            | ConfirmAction::ApplySpiderOneSuit(_) => {
+            | ConfirmAction::ApplySpiderOneSuit(_)
+            | ConfirmAction::ApplySpiderWinnableOnly(_)
+            | ConfirmAction::ApplyFreeCellWinnableOnly(_)
+            | ConfirmAction::ApplyKlondikeWinnableOnly(_) => {
                 "Applying this setting will abandon the current game and start a new deal."
             }
         }
