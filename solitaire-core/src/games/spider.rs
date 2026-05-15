@@ -344,12 +344,10 @@ impl GameRules for Spider {
         if stock_len < N_CASCADES {
             return Vec::new();
         }
-        // Standard Spider: stock click is illegal if any cascade is empty.
-        for cid in CASCADE_FIRST..=CASCADE_LAST {
-            if piles.get(cid).is_empty() {
-                return Vec::new();
-            }
-        }
+        // Classic Spider blocks dealing while any cascade is empty.
+        // We allow it: a dead-locked board (no productive tableau
+        // moves and a partially-empty layout) should still be able
+        // to deal as long as the stock has rows to give.
         let mut out = Vec::with_capacity(N_CASCADES);
         for col in 0..N_CASCADES {
             out.push(Move::simple(STOCK, 1, CASCADE_FIRST + col as u8).with_flip_moved());
@@ -396,19 +394,15 @@ impl GameRules for Spider {
     }
 }
 
-/// Stock deal is legal when stock has at least one card per cascade
-/// AND every cascade is non-empty (standard Spider rule the stock-click
-/// path also enforces).
+/// Stock deal is legal as long as the stock has at least one card
+/// per cascade. The classic Spider rule also requires every cascade
+/// to be non-empty before a deal; we relax that here because boards
+/// where all productive moves are blocked but a cascade or two is
+/// empty are otherwise dead-locked even though the stock still has
+/// rows to deal. Dealing onto an empty cascade just plants a single
+/// face-up card there.
 fn stock_deal_legal(piles: &PileSet) -> bool {
-    if piles.get(STOCK).len() < N_CASCADES {
-        return false;
-    }
-    for cid in CASCADE_FIRST..=CASCADE_LAST {
-        if piles.get(cid).is_empty() {
-            return false;
-        }
-    }
-    true
+    piles.get(STOCK).len() >= N_CASCADES
 }
 
 struct HintCandidate {
