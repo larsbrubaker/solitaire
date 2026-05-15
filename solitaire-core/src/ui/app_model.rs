@@ -43,6 +43,16 @@ pub enum HelpKind {
 pub enum ConfirmAction {
     NewDeal(GameKind),
     MainMenu,
+    /// Klondike draw-count change picked from Options while a game
+    /// with moves is in progress. The pending value rides on the
+    /// variant; only applied if the user confirms.
+    ApplyKlondikeDrawCount(u8),
+    /// Spider suit-count change picked while a game with moves is
+    /// in progress.
+    ApplySpiderSuitCount(u8),
+    /// Spider 1-suit choice change picked while a game with moves is
+    /// in progress.
+    ApplySpiderOneSuit(Suit),
 }
 
 pub struct AppModel {
@@ -223,6 +233,21 @@ impl AppModel {
         match action {
             ConfirmAction::NewDeal(kind) => self.start_game(kind),
             ConfirmAction::MainMenu => self.back_to_title(),
+            ConfirmAction::ApplyKlondikeDrawCount(n) => {
+                self.klondike_draw_count = n;
+                self.save_settings();
+                self.restart_current_deal();
+            }
+            ConfirmAction::ApplySpiderSuitCount(n) => {
+                self.spider_suit_count = n;
+                self.save_settings();
+                self.restart_current_deal();
+            }
+            ConfirmAction::ApplySpiderOneSuit(suit) => {
+                self.spider_one_suit = suit;
+                self.save_settings();
+                self.restart_current_deal();
+            }
         }
     }
 
@@ -275,38 +300,65 @@ impl AppModel {
         self.start_game_with_seed(kind, seed);
     }
 
-    /// Apply a new Klondike draw count. The change is persisted
-    /// immediately so the next deal uses it, but the **active** game
-    /// keeps running under the rules it was dealt with — the player's
-    /// progress is never silently discarded by an Options-menu pick.
+    /// Apply a new Klondike draw count. When the change requires
+    /// re-dealing an in-progress Klondike game with moves, the
+    /// setting is held until the user confirms via the confirm
+    /// dialog — that keeps the player from losing progress to an
+    /// accidental menu click. Otherwise we apply (and re-deal) right
+    /// away so the visible game reflects the new rules.
     pub fn set_klondike_draw_count(&mut self, n: u8) {
         if self.klondike_draw_count == n {
             return;
         }
+        let active = matches!(self.kind, Some(GameKind::Klondike));
+        if active && self.game_in_progress_has_moves() {
+            self.confirm = Some(ConfirmAction::ApplyKlondikeDrawCount(n));
+            return;
+        }
         self.klondike_draw_count = n;
         self.save_settings();
+        if active {
+            self.restart_current_deal();
+        }
     }
 
-    /// Apply a new Spider suit count (1 / 2 / 4). Settings persist
-    /// immediately; the active deal keeps running unchanged so the
-    /// player doesn't lose progress by tweaking Options mid-game.
-    /// The new suit count takes effect on the next New Deal.
+    /// Apply a new Spider suit count (1 / 2 / 4). Confirm-on-progress
+    /// behaviour matches `set_klondike_draw_count`.
     pub fn set_spider_suit_count(&mut self, n: u8) {
         if self.spider_suit_count == n {
             return;
         }
+        let active = matches!(self.kind, Some(GameKind::Spider));
+        if active && self.game_in_progress_has_moves() {
+            self.confirm = Some(ConfirmAction::ApplySpiderSuitCount(n));
+            return;
+        }
         self.spider_suit_count = n;
         self.save_settings();
+        if active {
+            self.restart_current_deal();
+        }
     }
 
-    /// Apply a new active suit for 1-suit Spider. Settings persist
-    /// immediately; the active deal keeps running unchanged.
+    /// Apply a new active suit for 1-suit Spider. Only re-deals when
+    /// the active variant is Spider in 1-suit mode (any other state
+    /// just persists the setting for the next deal). Confirms first
+    /// when the visible Spider game has moves.
     pub fn set_spider_one_suit(&mut self, suit: Suit) {
         if self.spider_one_suit == suit {
             return;
         }
+        let active_one_suit_spider =
+            matches!(self.kind, Some(GameKind::Spider)) && self.spider_suit_count == 1;
+        if active_one_suit_spider && self.game_in_progress_has_moves() {
+            self.confirm = Some(ConfirmAction::ApplySpiderOneSuit(suit));
+            return;
+        }
         self.spider_one_suit = suit;
         self.save_settings();
+        if active_one_suit_spider {
+            self.restart_current_deal();
+        }
     }
 
     pub fn back_to_title(&mut self) {

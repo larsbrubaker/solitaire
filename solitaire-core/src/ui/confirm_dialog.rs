@@ -109,6 +109,9 @@ impl ConfirmDialog {
         match action {
             ConfirmAction::NewDeal(_) => "New Deal",
             ConfirmAction::MainMenu => "Main Menu",
+            ConfirmAction::ApplyKlondikeDrawCount(_)
+            | ConfirmAction::ApplySpiderSuitCount(_)
+            | ConfirmAction::ApplySpiderOneSuit(_) => "Apply",
         }
     }
 
@@ -117,6 +120,11 @@ impl ConfirmDialog {
             ConfirmAction::NewDeal(_) => "This will abandon the current game and start a new deal.",
             ConfirmAction::MainMenu => {
                 "This will abandon the current game and return to the main menu."
+            }
+            ConfirmAction::ApplyKlondikeDrawCount(_)
+            | ConfirmAction::ApplySpiderSuitCount(_)
+            | ConfirmAction::ApplySpiderOneSuit(_) => {
+                "Applying this setting will abandon the current game and start a new deal."
             }
         }
     }

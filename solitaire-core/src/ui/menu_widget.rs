@@ -497,6 +497,7 @@ impl Widget for SidebarMenuHost {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::app_model::ConfirmAction;
 
     #[test]
     fn draw_count_action_updates_model() {
@@ -509,32 +510,75 @@ mod tests {
     }
 
     #[test]
-    fn draw_count_change_during_klondike_does_not_disturb_active_deal() {
-        // Options changes must never blow away the player's progress.
-        // Changing draw count mid-game saves the setting but the active
-        // session keeps the rules it was dealt with; the new count
-        // applies on the next New Deal.
+    fn draw_count_change_on_fresh_klondike_redeals_immediately() {
+        // Fresh deal has no moves yet, so the change applies without
+        // a confirm prompt and the visible board re-deals so the
+        // player sees the new rules at once.
         let mut m = AppModel::new();
         m.start_game_with_seed(GameKind::Klondike, 42);
-        let pre_seed = m.session.as_ref().unwrap().seed();
-        let pre_waste_fan = m
+        m.set_klondike_draw_count(3);
+        assert_eq!(m.klondike_draw_count, 3);
+        assert_eq!(m.confirm, None, "no confirm needed for a fresh deal");
+        let waste = m
             .session
             .as_ref()
             .unwrap()
             .piles()
-            .get(crate::games::klondike::KLONDIKE_WASTE)
-            .fan_top_n;
+            .get(crate::games::klondike::KLONDIKE_WASTE);
+        assert_eq!(waste.fan_top_n, 3, "active deal switched to draw-3 rules");
+    }
+
+    #[test]
+    fn draw_count_change_with_moves_prompts_first() {
+        // After a move there's progress to lose, so the setter queues
+        // a confirm action instead of re-dealing silently.
+        let mut m = AppModel::new();
+        m.start_game_with_seed(GameKind::Klondike, 42);
+        // Click the stock to make the deal "in progress" (counts as a
+        // user move on the undo stack).
+        let session = m.session.as_mut().unwrap();
+        let moves = session.on_pile_click(crate::games::klondike::KLONDIKE_STOCK);
+        assert!(!moves.is_empty(), "fresh Klondike stock should deal");
+        assert!(session.try_apply_batch(moves));
+        let original_seed = m.session.as_ref().unwrap().seed();
+
         m.set_klondike_draw_count(3);
-        assert_eq!(m.klondike_draw_count, 3, "setting persists");
-        let post_session = m.session.as_ref().unwrap();
-        assert_eq!(post_session.seed(), pre_seed, "same session, not redealt");
         assert_eq!(
-            post_session
-                .piles()
-                .get(crate::games::klondike::KLONDIKE_WASTE)
-                .fan_top_n,
-            pre_waste_fan,
-            "active deal keeps its original draw-count rules"
+            m.confirm,
+            Some(ConfirmAction::ApplyKlondikeDrawCount(3)),
+            "setter must queue the confirm instead of applying"
+        );
+        assert_eq!(
+            m.klondike_draw_count, 1,
+            "setting must NOT change until the user confirms"
+        );
+        assert_eq!(m.session.as_ref().unwrap().seed(), original_seed);
+
+        // Confirm — now setting changes and the deal restarts.
+        m.confirm_pending_action();
+        assert_eq!(m.klondike_draw_count, 3);
+        assert_eq!(m.confirm, None);
+        assert_eq!(
+            m.session.as_ref().unwrap().seed(),
+            original_seed,
+            "restart_current_deal keeps the same seed"
+        );
+    }
+
+    #[test]
+    fn draw_count_change_cancelled_reverts_setting() {
+        let mut m = AppModel::new();
+        m.start_game_with_seed(GameKind::Klondike, 42);
+        let session = m.session.as_mut().unwrap();
+        let moves = session.on_pile_click(crate::games::klondike::KLONDIKE_STOCK);
+        assert!(session.try_apply_batch(moves));
+
+        m.set_klondike_draw_count(3);
+        m.cancel_pending_action();
+        assert_eq!(m.confirm, None);
+        assert_eq!(
+            m.klondike_draw_count, 1,
+            "cancel keeps the original setting"
         );
     }
 
@@ -551,11 +595,9 @@ mod tests {
     }
 
     #[test]
-    fn spider_suit_count_change_does_not_disturb_active_deal() {
-        // Same no-progress-loss rule as Klondike draw count.
+    fn spider_suit_count_change_on_fresh_deal_redeals_immediately() {
         let mut m = AppModel::new();
         m.start_game_with_seed(GameKind::Spider, 7);
-        let pre_seed = m.session.as_ref().unwrap().seed();
         let pre_piles: Vec<Vec<_>> = m
             .session
             .as_ref()
@@ -565,28 +607,8 @@ mod tests {
             .map(|p| p.cards.clone())
             .collect();
         m.set_spider_suit_count(2);
-        assert_eq!(m.spider_suit_count, 2, "setting persists");
-        let post = m.session.as_ref().unwrap();
-        assert_eq!(post.seed(), pre_seed, "active session not re-dealt");
-        let post_piles: Vec<Vec<_>> = post.piles().iter().map(|p| p.cards.clone()).collect();
-        assert_eq!(pre_piles, post_piles, "active piles unchanged");
-    }
-
-    #[test]
-    fn picking_spider_one_suit_changes_setting_but_not_active_deal() {
-        let mut m = AppModel::new();
-        m.start_game_with_seed(GameKind::Spider, 11);
-        assert_eq!(m.spider_suit_count, 1);
-        let pre_piles: Vec<Vec<_>> = m
-            .session
-            .as_ref()
-            .unwrap()
-            .piles()
-            .iter()
-            .map(|p| p.cards.clone())
-            .collect();
-        handle_action(&mut m, "spider-suit-hearts");
-        assert_eq!(m.spider_one_suit, Suit::Hearts, "setting persists");
+        assert_eq!(m.spider_suit_count, 2);
+        assert_eq!(m.confirm, None);
         let post_piles: Vec<Vec<_>> = m
             .session
             .as_ref()
@@ -595,10 +617,55 @@ mod tests {
             .iter()
             .map(|p| p.cards.clone())
             .collect();
-        assert_eq!(
+        assert_ne!(
             pre_piles, post_piles,
-            "active Spider deal keeps its original suit"
+            "fresh deal re-shuffled under the new suit count"
         );
+    }
+
+    #[test]
+    fn spider_suit_count_change_with_moves_prompts_first() {
+        let mut m = AppModel::new();
+        m.start_game_with_seed(GameKind::Spider, 7);
+        // Stock click counts as a user move on Spider.
+        let session = m.session.as_mut().unwrap();
+        let moves = session.on_pile_click(8);
+        assert!(session.try_apply_batch(moves));
+        let pre_piles: Vec<Vec<_>> = m
+            .session
+            .as_ref()
+            .unwrap()
+            .piles()
+            .iter()
+            .map(|p| p.cards.clone())
+            .collect();
+        m.set_spider_suit_count(2);
+        assert_eq!(m.confirm, Some(ConfirmAction::ApplySpiderSuitCount(2)));
+        assert_eq!(m.spider_suit_count, 1, "setting waits for confirm");
+        let post_piles: Vec<Vec<_>> = m
+            .session
+            .as_ref()
+            .unwrap()
+            .piles()
+            .iter()
+            .map(|p| p.cards.clone())
+            .collect();
+        assert_eq!(pre_piles, post_piles, "active piles unchanged pre-confirm");
+    }
+
+    #[test]
+    fn picking_spider_one_suit_on_fresh_deal_redeals() {
+        let mut m = AppModel::new();
+        m.start_game_with_seed(GameKind::Spider, 11);
+        assert_eq!(m.spider_suit_count, 1);
+        handle_action(&mut m, "spider-suit-hearts");
+        assert_eq!(m.spider_one_suit, Suit::Hearts);
+        assert_eq!(m.confirm, None);
+        let session = m.session.as_ref().unwrap();
+        for cid in 9..=18u8 {
+            let top = session.piles().get(cid).top().unwrap();
+            assert_eq!(top.suit, Suit::Hearts, "deck swapped to Hearts");
+        }
     }
 
     #[test]
