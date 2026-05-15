@@ -584,6 +584,54 @@ fn hint_skips_sterile_duplicate_parent_shuffle() {
 }
 
 #[test]
+fn hint_returns_none_when_only_sterile_relocations_remain() {
+    // User report: two columns and a stray card, every legal move is
+    // either a duplicate-parent shuffle (Q-J on one cascade, Q-J-10-…-A
+    // on another) or a wholesale relocation of a suited run to an
+    // empty cascade. None of those advance the game, and the stock is
+    // empty, so the hint must return None (the UI then shows the
+    // "No moves" toast instead of a misleading highlight).
+    let rules = Spider::one_suit();
+    let mut piles = PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
+    // Short column: Q-J.
+    let short = CASCADE_FIRST;
+    for r in [Rank::Queen, Rank::Jack] {
+        piles
+            .get_mut(short)
+            .cards
+            .push(Card::new(Suit::Spades, r).face_up());
+    }
+    // Long column: Q down through A, all suited.
+    let long = CASCADE_FIRST + 1;
+    for r in [
+        Rank::Queen,
+        Rank::Jack,
+        Rank::Ten,
+        Rank::Nine,
+        Rank::Eight,
+        Rank::Seven,
+        Rank::Six,
+        Rank::Five,
+        Rank::Four,
+        Rank::Three,
+        Rank::Two,
+        Rank::Ace,
+    ] {
+        piles
+            .get_mut(long)
+            .cards
+            .push(Card::new(Suit::Spades, r).face_up());
+    }
+    // A single stray 2 (mirrors the screenshot's middle column).
+    piles
+        .get_mut(CASCADE_FIRST + 2)
+        .cards
+        .push(Card::new(Suit::Spades, Rank::Two).face_up());
+    // Other cascades empty, stock empty — no stock deal is legal.
+    assert!(best_spider_hint(&piles).is_none());
+}
+
+#[test]
 fn hint_returns_none_when_no_tableau_and_stock_illegal() {
     // Same locked-Kings board, but stock has zero cards so the deal
     // is illegal too. Hint must report no move at all.

@@ -461,23 +461,28 @@ pub fn best_spider_hint(piles: &PileSet) -> Option<SpiderHint> {
                     continue;
                 }
                 let exposes = start_idx > 0 && !src.cards[start_idx - 1].face_up;
-                // "Sterile shuffle" filter: when the source's parent
-                // (the card the move leaves on top of source) is the
-                // SAME card identity as the destination's current top,
-                // the moved tail just trades one parent for an
-                // identical one — visibly no progress. Skip unless the
-                // move exposes a facedown or completes a run, both of
-                // which we still want even with a duplicate parent.
-                if start_idx > 0 {
-                    let src_pred = &src.cards[start_idx - 1];
-                    if src_pred.face_up {
-                        if let Some(dst_top) = dst.top() {
-                            if dst_top.rank == src_pred.rank && dst_top.suit == src_pred.suit {
-                                continue;
-                            }
-                        }
-                    }
-                }
+                let moved_head = &src.cards[start_idx];
+                // Net suited-junction delta: a useful move either
+                // creates a new suited adjacency at the destination
+                // join (moved head is suited with `dst.top()`) without
+                // destroying one at the source split (src predecessor
+                // was suited with moved head). Cards moved together
+                // preserve their internal suited pairs, so only the
+                // two junction points matter.
+                let created_at_dst = dst
+                    .top()
+                    .is_some_and(|t| {
+                        t.face_up
+                            && t.suit == moved_head.suit
+                            && Some(moved_head.rank) == t.rank.next_down()
+                    });
+                let destroyed_at_src = start_idx > 0
+                    && {
+                        let pred = &src.cards[start_idx - 1];
+                        pred.face_up
+                            && pred.suit == moved_head.suit
+                            && Some(moved_head.rank) == pred.rank.next_down()
+                    };
                 let mut m = Move::simple(src_id, take as u8, dst_id);
                 if exposes {
                     m = m.with_flip_source();
@@ -486,6 +491,17 @@ pub fn best_spider_hint(piles: &PileSet) -> Option<SpiderHint> {
                 apply_move(&mut sim, &m);
                 let dst_run_after = suited_run_len_on_top(sim.get(dst_id));
                 let completes = has_complete_run_on_top(sim.get(dst_id));
+                // Filter out moves with no real progress: not a
+                // completion, not a face-down reveal, and the suited
+                // junction count is no better than before. Catches
+                // both the duplicate-parent shuffle (gain 1, lose 1)
+                // and the wholesale relocation onto an empty cascade
+                // (gain 0, lose 0).
+                let junction_delta =
+                    (created_at_dst as i32) - (destroyed_at_src as i32);
+                if !completes && !exposes && junction_delta <= 0 {
+                    continue;
+                }
                 cands.push(HintCandidate {
                     completes,
                     exposes,

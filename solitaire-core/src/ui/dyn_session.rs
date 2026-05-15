@@ -26,6 +26,11 @@ pub trait DynGameSession {
     fn single_click_move(&self, pile: PileId, card_idx: usize) -> Option<Move>;
     fn auto_complete_step(&self) -> Option<Move>;
     fn piles(&self) -> &PileSet;
+    /// Mutable access to the live `PileSet` — used by tests that need
+    /// to set up a specific board layout without running through the
+    /// move engine. Not called by production UI code.
+    #[cfg(test)]
+    fn piles_mut(&mut self) -> &mut PileSet;
     fn is_won(&self) -> bool;
     fn game_slug(&self) -> &'static str;
     fn seed(&self) -> u64;
@@ -69,6 +74,10 @@ impl<R: GameRules> DynGameSession for GameSession<R> {
     }
     fn piles(&self) -> &PileSet {
         &self.piles
+    }
+    #[cfg(test)]
+    fn piles_mut(&mut self) -> &mut PileSet {
+        &mut self.piles
     }
     fn is_won(&self) -> bool {
         GameSession::is_won(self)

@@ -656,6 +656,71 @@ mod tests {
     }
 
     #[test]
+    fn show_spider_hint_sets_no_moves_toast_on_dead_board() {
+        // Mirrors the user-reported wedge: every legal cascade move
+        // is sterile (duplicate-parent shuffle or a wholesale
+        // relocation to an empty cascade) and the stock is empty.
+        // The Hint button must drop a "No moves" toast on the model
+        // instead of leaving the highlight on a misleading move.
+        use crate::cards::{Card, Rank, Suit};
+        let _guard = install_test_storage();
+        let mut model = AppModel::new();
+        model.start_game_with_seed(GameKind::Spider, 7);
+        // Wipe the dealt state and rebuild the dead board by hand.
+        {
+            let session = model.session.as_mut().unwrap();
+            let piles = session.piles_mut();
+            for p in piles.iter_mut() {
+                p.cards.clear();
+            }
+            for r in [Rank::Queen, Rank::Jack] {
+                piles
+                    .get_mut(9)
+                    .cards
+                    .push(Card::new(Suit::Spades, r).face_up());
+            }
+            for r in [
+                Rank::Queen,
+                Rank::Jack,
+                Rank::Ten,
+                Rank::Nine,
+                Rank::Eight,
+                Rank::Seven,
+                Rank::Six,
+                Rank::Five,
+                Rank::Four,
+                Rank::Three,
+                Rank::Two,
+                Rank::Ace,
+            ] {
+                piles
+                    .get_mut(10)
+                    .cards
+                    .push(Card::new(Suit::Spades, r).face_up());
+            }
+            piles
+                .get_mut(11)
+                .cards
+                .push(Card::new(Suit::Spades, Rank::Two).face_up());
+        }
+
+        model.show_spider_hint();
+
+        assert!(
+            model.spider_hint.is_none(),
+            "dead board must not surface a hint"
+        );
+        assert!(
+            model
+                .toast
+                .as_ref()
+                .is_some_and(|(msg, _)| msg.contains("No moves")),
+            "expected `No moves` toast, got {:?}",
+            model.toast.as_ref().map(|(m, _)| m.clone())
+        );
+    }
+
+    #[test]
     fn show_spider_hint_no_op_for_non_spider_games() {
         let _guard = install_test_storage();
         let mut model = AppModel::new();
