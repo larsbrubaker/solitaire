@@ -31,12 +31,15 @@ static KLONDIKE_RUNNING: AtomicBool = AtomicBool::new(false);
 
 /// Per-seed solver budget. Generous on time but capped on nodes so
 /// a single pathological deal can't stall the whole sweep.
+#[cfg(not(target_arch = "wasm32"))]
 const PER_SEED_DURATION: std::time::Duration = std::time::Duration::from_secs(15);
+#[cfg(not(target_arch = "wasm32"))]
 const PER_SEED_MAX_NODES: u64 = 2_000_000;
 
 /// How many seeds the generator sweeps from `start` per invocation.
 /// Re-clicking the menu entry resumes from the next un-tested seed
 /// (we read the existing `.bin` to recover the highest seed seen).
+#[cfg(not(target_arch = "wasm32"))]
 const SEEDS_PER_RUN: u64 = 200;
 
 #[cfg(not(target_arch = "wasm32"))]
