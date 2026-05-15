@@ -57,17 +57,18 @@ pub struct UserSettings {
     pub spider_one_suit: Suit,
     /// When true, Spider new-deal picks a seed from the bundled list
     /// of solver-verified winnable deals instead of a wallclock seed.
-    /// Default `false` so existing players see no behaviour change.
-    #[serde(default)]
+    /// Default `true` — winnable-only is the welcoming choice; players
+    /// who want hard mode can flip it off in Options.
+    #[serde(default = "default_true")]
     pub spider_winnable_only: bool,
     /// When true, FreeCell new-deal reproduces a Microsoft FreeCell
     /// game number drawn from the original 32,000-deal pool
-    /// (skipping the known-unwinnable #11982).
-    #[serde(default)]
+    /// (skipping the known-unwinnable #11982). Default `true`.
+    #[serde(default = "default_true")]
     pub freecell_winnable_only: bool,
     /// When true, Klondike new-deal picks a seed from the bundled
-    /// Solvitaire-verified winnable list.
-    #[serde(default)]
+    /// Solvitaire-verified winnable list. Default `true`.
+    #[serde(default = "default_true")]
     pub klondike_winnable_only: bool,
     /// Persisted Debug → Performance window state (visible + last
     /// position/size).  `serde(default)` keeps stored blobs from
@@ -76,15 +77,23 @@ pub struct UserSettings {
     pub perf_window: PerfWindowState,
 }
 
+/// Serde helper for fields that should default to `true` when an
+/// older saved settings blob is missing them. (Bare `#[serde(default)]`
+/// would pick `bool::default() == false` — wrong for our
+/// winnable-only fields where the product-level default is "on".)
+fn default_true() -> bool {
+    true
+}
+
 impl Default for UserSettings {
     fn default() -> Self {
         Self {
             klondike_draw_count: 1,
             spider_suit_count: 1,
             spider_one_suit: Suit::Spades,
-            spider_winnable_only: false,
-            freecell_winnable_only: false,
-            klondike_winnable_only: false,
+            spider_winnable_only: true,
+            freecell_winnable_only: true,
+            klondike_winnable_only: true,
             perf_window: PerfWindowState::default(),
         }
     }
