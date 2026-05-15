@@ -340,11 +340,21 @@ impl AppModel {
         };
         let hint = best_spider_hint(session.piles());
         match hint {
-            Some(h) => {
-                self.spider_hint = Some(h);
+            Some(SpiderHint::Move { .. }) => {
+                self.spider_hint = hint;
                 // Bump even when the recommended move is unchanged so
                 // the GameWidget re-plays the ghost preview animation.
                 self.spider_hint_seq = self.spider_hint_seq.wrapping_add(1);
+            }
+            Some(SpiderHint::StockDeal { .. }) => {
+                // The yellow rect on the stock pile is too quiet on
+                // its own — players read "ring around a pile" as a
+                // valid drop target, not as a next-action prompt.
+                // Pair it with a toast so the recommendation is
+                // unambiguous.
+                self.spider_hint = hint;
+                self.spider_hint_seq = self.spider_hint_seq.wrapping_add(1);
+                self.show_toast("Deal more cards");
             }
             None => {
                 // No legal cascade move and no legal stock deal — show
@@ -716,6 +726,58 @@ mod tests {
                 .as_ref()
                 .is_some_and(|(msg, _)| msg.contains("No moves")),
             "expected `No moves` toast, got {:?}",
+            model.toast.as_ref().map(|(m, _)| m.clone())
+        );
+    }
+
+    #[test]
+    fn show_spider_hint_sets_deal_toast_when_only_stock_left() {
+        // User reported a board where every tableau move is sterile
+        // but stock still has cards waiting to deal. The Hint button
+        // must surface a StockDeal recommendation AND a "Deal more
+        // cards" toast so the player understands the next action.
+        use crate::cards::{Card, Rank, Suit};
+        use crate::games::spider::SpiderHint;
+        let _guard = install_test_storage();
+        let mut model = AppModel::new();
+        model.start_game_with_seed(GameKind::Spider, 11);
+        {
+            let session = model.session.as_mut().unwrap();
+            let piles = session.piles_mut();
+            for p in piles.iter_mut() {
+                p.cards.clear();
+            }
+            // 10 cascades, each topped with a single King — Kings can
+            // only land on empty cascades, and none are empty, so the
+            // ranker has no tableau candidate. The stock still has
+            // cards to deal, so the right hint is `StockDeal`.
+            for i in 0..10u8 {
+                piles
+                    .get_mut(9 + i)
+                    .cards
+                    .push(Card::new(Suit::Spades, Rank::King).face_up());
+            }
+            // Stock has at least 10 cards so a deal is legal.
+            for _ in 0..10 {
+                piles
+                    .get_mut(8)
+                    .cards
+                    .push(Card::new(Suit::Spades, Rank::Two));
+            }
+        }
+
+        model.show_spider_hint();
+
+        assert!(matches!(
+            model.spider_hint,
+            Some(SpiderHint::StockDeal { .. })
+        ));
+        assert!(
+            model
+                .toast
+                .as_ref()
+                .is_some_and(|(msg, _)| msg.contains("Deal")),
+            "expected `Deal more cards` toast, got {:?}",
             model.toast.as_ref().map(|(m, _)| m.clone())
         );
     }
