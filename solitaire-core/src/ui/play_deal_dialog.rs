@@ -1,17 +1,18 @@
 //! "Play deal number…" modal — accepts a decimal Microsoft FreeCell
 //! game number or a `u64` seed (decimal / 0x-prefixed hex) for the
-//! other variants, and starts a new deal at that number. Mirrors
-//! [`ConfirmDialog`]'s overall structure: a scrim, a centred panel,
-//! a typed-input field, Cancel + Play buttons, plus an inline
-//! error line for invalid input.
+//! other variants, and starts a new deal at that number.
 //!
-//! Doesn't use `agg_gui::widgets::TextField` — the Widget trait's
-//! generic accessor doesn't expose typed input/output, and routing
-//! events through a child TextField while keeping the rest of the
-//! dialog functional adds non-trivial plumbing for what's a single
-//! short numeric field. Instead we handle keystrokes inline: digits
-//! / hex / `x` append, Backspace pops, Enter/Escape commit/cancel.
+//! The numeric input is an [`agg_gui::widgets::TextField`] (with a
+//! `char_filter` restricting input to decimal digits, hex letters,
+//! and the `x`/`X` separator used by 0x-prefixed seeds). The dialog
+//! still owns the scrim, the panel, the title/hint copy, the
+//! Cancel/Play buttons, and the inline error line. Keystrokes
+//! reach the TextField via manual forwarding from `on_event`
+//! because the modal-path routing stops at the dialog level — see
+//! `has_active_modal` + `forward_key_to_field`.
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use agg_gui::color::Color;
@@ -20,6 +21,7 @@ use agg_gui::event::{Event, EventResult, Key, MouseButton};
 use agg_gui::geometry::{Point, Rect, Size};
 use agg_gui::text::Font;
 use agg_gui::widget::Widget;
+use agg_gui::widgets::TextField;
 
 use super::app_model::SharedModel;
 
@@ -30,8 +32,6 @@ const TITLE_TEXT: Color = Color::from_rgb8(0xff, 0xd7, 0x00);
 const BODY_TEXT: Color = Color::from_rgb8(0xff, 0xff, 0xff);
 const HINT_TEXT: Color = Color::from_rgba8(0xff, 0xff, 0xff, 0xb0);
 const ERROR_TEXT: Color = Color::from_rgb8(0xff, 0x80, 0x80);
-const FIELD_BG: Color = Color::from_rgb8(0x0c, 0x1c, 0x12);
-const FIELD_BORDER: Color = Color::from_rgba8(0xff, 0xff, 0xff, 0x55);
 const BTN_BG: Color = Color::from_rgb8(0x1f, 0x4d, 0x2e);
 const BTN_BG_HOVER: Color = Color::from_rgb8(0x29, 0x68, 0x3e);
 const BTN_BORDER: Color = Color::from_rgba8(0xff, 0xff, 0xff, 0x80);
@@ -43,7 +43,6 @@ const BTN_W: f64 = 130.0;
 const BTN_H: f64 = 38.0;
 const BTN_GAP: f64 = 16.0;
 const FIELD_H: f64 = 40.0;
-const MAX_INPUT_LEN: usize = 20;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Button {
@@ -58,20 +57,49 @@ pub struct PlayDealDialog {
     font: Arc<Font>,
     hover: Option<Button>,
     error: Option<&'static str>,
-    input: String,
+    /// Backing buffer that the TextField reads from and writes to via
+    /// `with_text_cell`. Letting the cell live outside the TextField
+    /// means the dialog can clear it on open / commit without having
+    /// to take a `&mut` borrow on the child widget.
+    text_cell: Rc<RefCell<String>>,
     last_open: bool,
 }
 
 impl PlayDealDialog {
     pub fn new(model: SharedModel, font: Arc<Font>) -> Self {
+        let text_cell = Rc::new(RefCell::new(String::new()));
+        // The TextField stays at index 0 in `children` for the
+        // lifetime of the dialog — the inline forwarders rely on
+        // that position. `on_enter` captures the model+cell once,
+        // up front, so we never have to swap the field in or out.
+        let enter_model = model.clone();
+        let enter_cell = Rc::clone(&text_cell);
+        let field = TextField::new(font.clone())
+            .with_text_cell(Rc::clone(&text_cell))
+            .with_font_size(20.0)
+            .with_padding(10.0)
+            .with_char_filter(|c| {
+                c.is_ascii_digit() || c == 'x' || c == 'X' || c.is_ascii_hexdigit()
+            })
+            .on_enter(move |_| {
+                let input = enter_cell.borrow().clone();
+                if enter_model
+                    .borrow_mut()
+                    .commit_play_deal_dialog(&input)
+                    .is_ok()
+                {
+                    enter_cell.borrow_mut().clear();
+                }
+                agg_gui::animation::request_draw();
+            });
         Self {
             bounds: Rect::default(),
-            children: Vec::new(),
+            children: vec![Box::new(field)],
             model,
             font,
             hover: None,
             error: None,
-            input: String::new(),
+            text_cell,
             last_open: false,
         }
     }
@@ -122,37 +150,43 @@ impl PlayDealDialog {
         match button {
             Button::Cancel => {
                 self.error = None;
-                self.input.clear();
+                self.text_cell.borrow_mut().clear();
                 self.model.borrow_mut().cancel_play_deal_dialog();
             }
-            Button::Play => {
-                let input = self.input.clone();
-                match self.model.borrow_mut().commit_play_deal_dialog(&input) {
-                    Ok(()) => {
-                        self.error = None;
-                        self.input.clear();
-                    }
-                    Err(msg) => {
-                        self.error = Some(msg);
-                    }
-                }
-            }
+            Button::Play => self.commit(),
         }
         agg_gui::animation::request_draw();
     }
 
-    fn key_to_char(&mut self, c: char) {
-        if self.input.len() >= MAX_INPUT_LEN {
-            return;
+    /// Read the current text, hand it to AppModel, surface any
+    /// validation error inline. Triggered by clicking Play and by
+    /// the TextField's Enter handler (set up in `paint` once per
+    /// open).
+    fn commit(&mut self) {
+        let input = self.text_cell.borrow().clone();
+        match self.model.borrow_mut().commit_play_deal_dialog(&input) {
+            Ok(()) => {
+                self.error = None;
+                self.text_cell.borrow_mut().clear();
+            }
+            Err(msg) => {
+                self.error = Some(msg);
+            }
         }
-        let ok = c.is_ascii_digit()
-            || c == 'x'
-            || c == 'X'
-            || matches!(c, 'a'..='f' | 'A'..='F');
-        if ok {
-            self.input.push(c);
-            self.error = None;
-            agg_gui::animation::request_draw();
+    }
+
+    /// Reset transient state on the open transition. Sends
+    /// FocusGained to the TextField so the cursor blinks
+    /// immediately and typed keystrokes have somewhere to land.
+    /// The text itself is cleared via `text_cell` — TextField
+    /// picks the cleared value up on its next `layout` (which
+    /// calls `sync_from_text_cell`).
+    fn on_open(&mut self) {
+        self.text_cell.borrow_mut().clear();
+        self.error = None;
+        self.hover = None;
+        if let Some(field) = self.children.get_mut(0) {
+            field.on_event(&Event::FocusGained);
         }
     }
 
@@ -210,6 +244,15 @@ impl Widget for PlayDealDialog {
     }
 
     fn layout(&mut self, available: Size) -> Size {
+        // Resync the TextField's bounds to the current field rect
+        // every layout pass — the dialog repositions when the host
+        // window resizes.
+        if let Some((fx, fy, fw, fh)) = self.field_rect() {
+            if let Some(child) = self.children.get_mut(0) {
+                child.set_bounds(Rect::new(fx, fy, fw, fh));
+                child.layout(Size::new(fw, fh));
+            }
+        }
         available
     }
 
@@ -217,18 +260,25 @@ impl Widget for PlayDealDialog {
         self.is_open()
     }
 
+    fn has_active_modal(&self) -> bool {
+        self.is_open()
+    }
+
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
-        // Reset transient state on each open so re-launching the
-        // dialog after an error or partial entry starts fresh.
+        // Open-transition: clear input, refresh callbacks, focus.
         let open = self.is_open();
         if open && !self.last_open {
-            self.input.clear();
-            self.error = None;
-            self.hover = None;
+            self.on_open();
         }
         self.last_open = open;
         if !open {
             return;
+        }
+        // Make sure TextField bounds are current (resize while open).
+        if let Some((fx, fy, fw, fh)) = self.field_rect() {
+            if let Some(child) = self.children.get_mut(0) {
+                child.set_bounds(Rect::new(fx, fy, fw, fh));
+            }
         }
         let Some((px, py, pw, ph)) = self.panel_rect() else {
             return;
@@ -265,28 +315,8 @@ impl Widget for PlayDealDialog {
             ctx.fill_text(hint, px + (pw - m.width) / 2.0, hint_y);
         }
 
-        // Input field.
-        if let Some((fx, fy, fw, fh)) = self.field_rect() {
-            ctx.begin_path();
-            ctx.rounded_rect(fx, fy, fw, fh, 6.0);
-            ctx.set_fill_color(FIELD_BG);
-            ctx.fill();
-            ctx.begin_path();
-            ctx.rounded_rect(fx, fy, fw, fh, 6.0);
-            ctx.set_stroke_color(FIELD_BORDER);
-            ctx.set_line_width(1.0);
-            ctx.stroke();
-            let display: String = if self.input.is_empty() {
-                "_".to_string()
-            } else {
-                format!("{}_", self.input)
-            };
-            ctx.set_fill_color(BODY_TEXT);
-            ctx.set_font_size(20.0);
-            if let Some(m) = ctx.measure_text(&display) {
-                ctx.fill_text(&display, fx + 10.0, fy + m.centered_baseline_y(fh));
-            }
-        }
+        // TextField paints itself via the framework's child walk
+        // after this `paint` returns — see widget/paint.rs.
 
         if let Some(err) = self.error {
             ctx.set_fill_color(ERROR_TEXT);
@@ -315,31 +345,85 @@ impl Widget for PlayDealDialog {
                 button: MouseButton::Left,
                 ..
             } => {
+                // Forward clicks inside the field rect to the
+                // TextField so the user can position the cursor
+                // and drag-select. The modal-path routing stops at
+                // this dialog, so children don't receive mouse
+                // events automatically.
+                if let Some(field_r) = self.field_rect() {
+                    if point_in(field_r, pos.x, pos.y) {
+                        if let Some(child) = self.children.get_mut(0) {
+                            let local = Point::new(pos.x - field_r.0, pos.y - field_r.1);
+                            let translated = Event::MouseDown {
+                                pos: local,
+                                button: MouseButton::Left,
+                                modifiers: Default::default(),
+                            };
+                            child.on_event(&translated);
+                            // Make sure the field is focused — it
+                            // gets cursor blink + key forwarding
+                            // from us once focused.
+                            child.on_event(&Event::FocusGained);
+                        }
+                        return EventResult::Consumed;
+                    }
+                }
                 if let Some(button) = self.hit_button(pos.x, pos.y) {
                     self.click_button(button);
                 }
                 EventResult::Consumed
             }
             Event::MouseMove { pos } => {
+                // Hover for buttons.
                 let hover = self.hit_button(pos.x, pos.y);
                 if hover != self.hover {
                     self.hover = hover;
                     agg_gui::animation::request_draw();
                 }
+                // Forward mouse-move to TextField for drag-select.
+                if let Some(field_r) = self.field_rect() {
+                    if let Some(child) = self.children.get_mut(0) {
+                        let local = Point::new(pos.x - field_r.0, pos.y - field_r.1);
+                        child.on_event(&Event::MouseMove { pos: local });
+                    }
+                }
+                EventResult::Consumed
+            }
+            Event::MouseUp {
+                button: MouseButton::Left,
+                pos,
+                modifiers,
+            } => {
+                if let Some(field_r) = self.field_rect() {
+                    if let Some(child) = self.children.get_mut(0) {
+                        let local = Point::new(pos.x - field_r.0, pos.y - field_r.1);
+                        child.on_event(&Event::MouseUp {
+                            pos: local,
+                            button: MouseButton::Left,
+                            modifiers: *modifiers,
+                        });
+                    }
+                }
                 EventResult::Consumed
             }
             Event::KeyDown { key, .. } => {
+                // Forward keystroke to the TextField; if it
+                // returns Ignored (Escape with no selection,
+                // unhandled key), fall through to the dialog's
+                // own handlers (Cancel on Escape).
+                let child_result = if let Some(child) = self.children.get_mut(0) {
+                    child.on_event(event)
+                } else {
+                    EventResult::Ignored
+                };
+                if child_result == EventResult::Consumed {
+                    self.error = None;
+                    agg_gui::animation::request_draw();
+                    return EventResult::Consumed;
+                }
                 match key {
                     Key::Escape => self.click_button(Button::Cancel),
                     Key::Enter => self.click_button(Button::Play),
-                    Key::Backspace => {
-                        self.input.pop();
-                        self.error = None;
-                        agg_gui::animation::request_draw();
-                    }
-                    Key::Char(c) => {
-                        self.key_to_char(*c);
-                    }
                     _ => {}
                 }
                 EventResult::Consumed
