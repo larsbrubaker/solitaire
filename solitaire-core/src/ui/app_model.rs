@@ -99,6 +99,11 @@ pub struct AppModel {
     /// widget reads this for visibility and writes it on cancel /
     /// commit.
     pub play_deal_dialog_open: bool,
+    /// True while the HUD hamburger popup is open (compact mode).
+    /// The HUD widget reads this for visibility of the vertical
+    /// action list and writes it when the hamburger is tapped or
+    /// when an action button inside the popup is clicked.
+    pub hud_hamburger_open: bool,
     /// Mom's Solitaire state: when the player clicks an Ace gap at
     /// column 0, that gap's pile id lands here and the game waits for
     /// the next click to land on a King — that King will be swapped
@@ -171,6 +176,7 @@ impl AppModel {
             help: None,
             confirm: None,
             play_deal_dialog_open: false,
+            hud_hamburger_open: false,
             moms_waiting_king_at: None,
             moms_shuffles: 0,
             spider_hint: None,
