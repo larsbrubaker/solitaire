@@ -4,12 +4,17 @@
 //!
 //! The numeric input is an [`agg_gui::widgets::TextField`] (with a
 //! `char_filter` restricting input to decimal digits, hex letters,
-//! and the `x`/`X` separator used by 0x-prefixed seeds). The dialog
-//! still owns the scrim, the panel, the title/hint copy, the
-//! Cancel/Play buttons, and the inline error line. Keystrokes
-//! reach the TextField via manual forwarding from `on_event`
-//! because the modal-path routing stops at the dialog level — see
-//! `has_active_modal` + `forward_key_to_field`.
+//! and the `x`/`X` separator used by 0x-prefixed seeds).
+//!
+//! Event routing follows the same pattern as `HelpDialog`: we do NOT
+//! override `has_active_modal`, so the framework's hit-testing
+//! descends naturally into the TextField child for clicks in its
+//! bounds (the click sets focus, and subsequent keystrokes route
+//! via the focus path). The dialog still hosts the scrim, panel,
+//! title/hint copy, Cancel/Play buttons, and the inline error
+//! line. Escape dismissal + first-frame focus arrival use
+//! `on_unconsumed_key` so the field receives keystrokes immediately
+//! on open, before any click sets a "real" App-level focus.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -17,7 +22,7 @@ use std::sync::Arc;
 
 use agg_gui::color::Color;
 use agg_gui::draw_ctx::DrawCtx;
-use agg_gui::event::{Event, EventResult, Key, MouseButton};
+use agg_gui::event::{Event, EventResult, Key, Modifiers, MouseButton};
 use agg_gui::geometry::{Point, Rect, Size};
 use agg_gui::text::Font;
 use agg_gui::widget::Widget;
@@ -57,10 +62,9 @@ pub struct PlayDealDialog {
     font: Arc<Font>,
     hover: Option<Button>,
     error: Option<&'static str>,
-    /// Backing buffer that the TextField reads from and writes to via
-    /// `with_text_cell`. Letting the cell live outside the TextField
-    /// means the dialog can clear it on open / commit without having
-    /// to take a `&mut` borrow on the child widget.
+    /// Backing buffer for the TextField. Owned by the dialog so we
+    /// can clear it on open / commit without taking a mutable
+    /// borrow on the child widget.
     text_cell: Rc<RefCell<String>>,
     last_open: bool,
 }
@@ -68,10 +72,9 @@ pub struct PlayDealDialog {
 impl PlayDealDialog {
     pub fn new(model: SharedModel, font: Arc<Font>) -> Self {
         let text_cell = Rc::new(RefCell::new(String::new()));
-        // The TextField stays at index 0 in `children` for the
-        // lifetime of the dialog — the inline forwarders rely on
-        // that position. `on_enter` captures the model+cell once,
-        // up front, so we never have to swap the field in or out.
+        // `on_enter` captures the model+cell once, up front, so we
+        // never rebuild the field. The TextField is at index 0 in
+        // `children` for the lifetime of the dialog.
         let enter_model = model.clone();
         let enter_cell = Rc::clone(&text_cell);
         let field = TextField::new(font.clone())
@@ -158,10 +161,6 @@ impl PlayDealDialog {
         agg_gui::animation::request_draw();
     }
 
-    /// Read the current text, hand it to AppModel, surface any
-    /// validation error inline. Triggered by clicking Play and by
-    /// the TextField's Enter handler (set up in `paint` once per
-    /// open).
     fn commit(&mut self) {
         let input = self.text_cell.borrow().clone();
         match self.model.borrow_mut().commit_play_deal_dialog(&input) {
@@ -177,10 +176,11 @@ impl PlayDealDialog {
 
     /// Reset transient state on the open transition. Sends
     /// FocusGained to the TextField so the cursor blinks
-    /// immediately and typed keystrokes have somewhere to land.
-    /// The text itself is cleared via `text_cell` — TextField
-    /// picks the cleared value up on its next `layout` (which
-    /// calls `sync_from_text_cell`).
+    /// immediately and `on_unconsumed_key` has a focused field to
+    /// forward keystrokes into. The TextField also synchronises
+    /// its internal text from `text_cell` on its next `layout`
+    /// pass — we cleared the cell here so re-opening the dialog
+    /// after a previous commit shows a blank field.
     fn on_open(&mut self) {
         self.text_cell.borrow_mut().clear();
         self.error = None;
@@ -244,9 +244,6 @@ impl Widget for PlayDealDialog {
     }
 
     fn layout(&mut self, available: Size) -> Size {
-        // Resync the TextField's bounds to the current field rect
-        // every layout pass — the dialog repositions when the host
-        // window resizes.
         if let Some((fx, fy, fw, fh)) = self.field_rect() {
             if let Some(child) = self.children.get_mut(0) {
                 child.set_bounds(Rect::new(fx, fy, fw, fh));
@@ -260,12 +257,7 @@ impl Widget for PlayDealDialog {
         self.is_open()
     }
 
-    fn has_active_modal(&self) -> bool {
-        self.is_open()
-    }
-
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
-        // Open-transition: clear input, refresh callbacks, focus.
         let open = self.is_open();
         if open && !self.last_open {
             self.on_open();
@@ -274,7 +266,6 @@ impl Widget for PlayDealDialog {
         if !open {
             return;
         }
-        // Make sure TextField bounds are current (resize while open).
         if let Some((fx, fy, fw, fh)) = self.field_rect() {
             if let Some(child) = self.children.get_mut(0) {
                 child.set_bounds(Rect::new(fx, fy, fw, fh));
@@ -315,8 +306,8 @@ impl Widget for PlayDealDialog {
             ctx.fill_text(hint, px + (pw - m.width) / 2.0, hint_y);
         }
 
-        // TextField paints itself via the framework's child walk
-        // after this `paint` returns — see widget/paint.rs.
+        // The TextField paints itself via the framework's child
+        // walk after this `paint` returns.
 
         if let Some(err) = self.error {
             ctx.set_fill_color(ERROR_TEXT);
@@ -345,90 +336,138 @@ impl Widget for PlayDealDialog {
                 button: MouseButton::Left,
                 ..
             } => {
-                // Forward clicks inside the field rect to the
-                // TextField so the user can position the cursor
-                // and drag-select. The modal-path routing stops at
-                // this dialog, so children don't receive mouse
-                // events automatically.
-                if let Some(field_r) = self.field_rect() {
-                    if point_in(field_r, pos.x, pos.y) {
-                        if let Some(child) = self.children.get_mut(0) {
-                            let local = Point::new(pos.x - field_r.0, pos.y - field_r.1);
-                            let translated = Event::MouseDown {
-                                pos: local,
-                                button: MouseButton::Left,
-                                modifiers: Default::default(),
-                            };
-                            child.on_event(&translated);
-                            // Make sure the field is focused — it
-                            // gets cursor blink + key forwarding
-                            // from us once focused.
-                            child.on_event(&Event::FocusGained);
-                        }
-                        return EventResult::Consumed;
-                    }
-                }
+                // Mouse-down reaches us only when the click missed
+                // the TextField (framework descends into children
+                // first via hit-testing). Either it hit a button or
+                // it hit empty panel / scrim chrome — either way we
+                // consume it so it doesn't leak to the playfield.
                 if let Some(button) = self.hit_button(pos.x, pos.y) {
                     self.click_button(button);
                 }
                 EventResult::Consumed
             }
             Event::MouseMove { pos } => {
-                // Hover for buttons.
                 let hover = self.hit_button(pos.x, pos.y);
                 if hover != self.hover {
                     self.hover = hover;
                     agg_gui::animation::request_draw();
                 }
-                // Forward mouse-move to TextField for drag-select.
-                if let Some(field_r) = self.field_rect() {
-                    if let Some(child) = self.children.get_mut(0) {
-                        let local = Point::new(pos.x - field_r.0, pos.y - field_r.1);
-                        child.on_event(&Event::MouseMove { pos: local });
-                    }
-                }
                 EventResult::Consumed
             }
-            Event::MouseUp {
-                button: MouseButton::Left,
-                pos,
-                modifiers,
-            } => {
-                if let Some(field_r) = self.field_rect() {
-                    if let Some(child) = self.children.get_mut(0) {
-                        let local = Point::new(pos.x - field_r.0, pos.y - field_r.1);
-                        child.on_event(&Event::MouseUp {
-                            pos: local,
-                            button: MouseButton::Left,
-                            modifiers: *modifiers,
-                        });
-                    }
-                }
-                EventResult::Consumed
-            }
-            Event::KeyDown { key, .. } => {
-                // Forward keystroke to the TextField; if it
-                // returns Ignored (Escape with no selection,
-                // unhandled key), fall through to the dialog's
-                // own handlers (Cancel on Escape).
-                let child_result = if let Some(child) = self.children.get_mut(0) {
-                    child.on_event(event)
-                } else {
-                    EventResult::Ignored
-                };
-                if child_result == EventResult::Consumed {
-                    self.error = None;
-                    agg_gui::animation::request_draw();
-                    return EventResult::Consumed;
-                }
-                match key {
-                    Key::Escape => self.click_button(Button::Cancel),
-                    Key::Enter => self.click_button(Button::Play),
-                    _ => {}
-                }
-                EventResult::Consumed
-            }
+            // Swallow every other event so the playfield underneath
+            // doesn't receive stray clicks/scrolls while the dialog
+            // is up. Keys are handled in `on_unconsumed_key` below.
             _ => EventResult::Consumed,
         }
+    }
+
+    fn on_unconsumed_key(&mut self, key: &Key, modifiers: Modifiers) -> EventResult {
+        if !self.is_visible() {
+            return EventResult::Ignored;
+        }
+        // Forward to the TextField first. It returns Consumed for
+        // characters / Backspace / arrow keys / clipboard
+        // shortcuts and Ignored for things it doesn't claim
+        // (notably Escape with no selection, per the agg-gui
+        // change we landed alongside this dialog).
+        let event = Event::KeyDown {
+            key: key.clone(),
+            modifiers,
+        };
+        let child_result = if let Some(child) = self.children.get_mut(0) {
+            child.on_event(&event)
+        } else {
+            EventResult::Ignored
+        };
+        if child_result == EventResult::Consumed {
+            self.error = None;
+            agg_gui::animation::request_draw();
+            return EventResult::Consumed;
+        }
+        match key {
+            Key::Escape => {
+                self.click_button(Button::Cancel);
+                EventResult::Consumed
+            }
+            Key::Enter => {
+                self.click_button(Button::Play);
+                EventResult::Consumed
+            }
+            _ => EventResult::Ignored,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::app_model::shared_model;
+    use agg_gui::event::Modifiers;
+    use agg_gui::text::Font;
+
+    fn test_font() -> Arc<Font> {
+        const FONT_BYTES: &[u8] = include_bytes!("../../assets/CascadiaCode.ttf");
+        Arc::new(Font::from_slice(FONT_BYTES).unwrap())
+    }
+
+    /// Sanity check that a standalone TextField (no dialog wrapping)
+    /// accepts keystrokes after FocusGained. If this passes but the
+    /// dialog test fails, the bug is in dialog forwarding, not in
+    /// TextField itself.
+    #[test]
+    fn standalone_text_field_accepts_typing() {
+        use agg_gui::widgets::TextField;
+        let mut field = TextField::new(test_font()).with_font_size(13.0);
+        field.set_bounds(Rect::new(0.0, 0.0, 200.0, 32.0));
+        field.layout(Size::new(200.0, 32.0));
+        field.on_event(&Event::FocusGained);
+        for c in ['a', 'b', 'c'] {
+            field.on_event(&Event::KeyDown {
+                key: Key::Char(c),
+                modifiers: Modifiers::default(),
+            });
+        }
+        assert_eq!(field.text(), "abc");
+    }
+
+    /// Open the dialog, fake the open-transition + first paint
+    /// (which calls on_open and sends FocusGained to the
+    /// TextField), then send digit keystrokes through the dialog's
+    /// `on_unconsumed_key` — the same path the App's event loop
+    /// uses when no focus path is registered yet. Confirm the
+    /// TextField's bound `text_cell` updates.
+    #[test]
+    fn typing_via_unconsumed_key_updates_text_cell() {
+        let model = shared_model();
+        // open_play_deal_dialog gates on session.is_some(); for
+        // the unit test flip the flag directly.
+        model.borrow_mut().play_deal_dialog_open = true;
+        let mut dialog = PlayDealDialog::new(model.clone(), test_font());
+        dialog.set_bounds(Rect::new(0.0, 0.0, 800.0, 600.0));
+        dialog.layout(Size::new(800.0, 600.0));
+        // Simulate the open-transition that paint() would run.
+        dialog.children[0].on_event(&Event::FocusGained);
+
+        for c in ['1', '2', '3'] {
+            dialog.on_unconsumed_key(&Key::Char(c), Modifiers::default());
+        }
+        assert_eq!(*dialog.text_cell.borrow(), "123");
+    }
+
+    /// Escape should bubble out of the TextField (no selection),
+    /// trigger the dialog's Cancel handler, and clear the open
+    /// flag on the AppModel.
+    #[test]
+    fn escape_via_unconsumed_key_cancels_dialog() {
+        let model = shared_model();
+        model.borrow_mut().play_deal_dialog_open = true;
+        let mut dialog = PlayDealDialog::new(model.clone(), test_font());
+        dialog.set_bounds(Rect::new(0.0, 0.0, 800.0, 600.0));
+        dialog.layout(Size::new(800.0, 600.0));
+        dialog.children[0].on_event(&Event::FocusGained);
+
+        let r = dialog.on_unconsumed_key(&Key::Escape, Modifiers::default());
+        assert_eq!(r, EventResult::Consumed);
+        assert!(!model.borrow().play_deal_dialog_open);
     }
 }
