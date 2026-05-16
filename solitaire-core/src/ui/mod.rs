@@ -43,9 +43,21 @@ use crate::render::CardSpriteAtlas;
 
 /// CascadiaCode bundled into the binary.
 const FONT_BYTES: &[u8] = include_bytes!("../../assets/CascadiaCode.ttf");
+/// Font Awesome (private-use glyphs only, no Latin coverage) bundled
+/// in. Loaded as a separate [`Font`] so widgets can fall back to it
+/// when rendering icon code points from [`crate::ui::icons`].
+const FA_FONT_BYTES: &[u8] = include_bytes!("../../assets/fa.ttf");
 
 fn load_default_font() -> Arc<Font> {
     Arc::new(Font::from_slice(FONT_BYTES).expect("solitaire default font"))
+}
+
+/// Load the Font Awesome icon font. Stays separate from the text
+/// font because CascadiaCode doesn't carry FA's private-use code
+/// points — call sites that paint an icon glyph (e.g. on a button)
+/// must temporarily switch [`DrawCtx::set_font`] to this one.
+pub fn load_fa_font() -> Arc<Font> {
+    Arc::new(Font::from_slice(FA_FONT_BYTES).expect("solitaire FA font"))
 }
 
 /// Build the shared Solitaire application. Returns the [`App`] hosting the
