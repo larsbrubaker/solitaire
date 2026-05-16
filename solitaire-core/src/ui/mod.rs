@@ -67,6 +67,7 @@ pub fn load_fa_font() -> Arc<Font> {
 pub fn build_solitaire_app() -> (App, SharedModel) {
     let model = shared_model();
     let font = load_default_font();
+    let fa_font = load_fa_font();
     // Seed an empty stand-in atlas at default card dimensions. The
     // first `GameWidget::paint` after a session starts replaces it with
     // one matching the active variant's actual screen-space card size.
@@ -74,12 +75,12 @@ pub fn build_solitaire_app() -> (App, SharedModel) {
 
     let title = TitleWidget::new(model.clone(), font.clone());
     let game = GameWidget::new(model.clone(), font.clone(), atlas);
-    let hud = HudWidget::new(model.clone(), font.clone());
+    let hud = HudWidget::new(model.clone(), font.clone(), fa_font.clone());
     let menu = MenuBarHost::new(model.clone(), font.clone());
     let sidebar_menu = SidebarMenuHost::new(model.clone(), font.clone());
     let help = HelpDialog::new(model.clone(), font.clone());
     let confirm = ConfirmDialog::new(model.clone(), font.clone());
-    let play_deal = PlayDealDialog::new(model.clone(), font.clone());
+    let play_deal = PlayDealDialog::new(model.clone(), font.clone(), fa_font.clone());
     let perf_window = build_performance_window(&model, font.clone());
     let seed_gen_window = build_seed_gen_window(&model, font.clone());
     let root = AppRootWidget::new(model.clone());

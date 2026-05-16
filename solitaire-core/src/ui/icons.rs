@@ -22,3 +22,13 @@ pub const FA_REFRESH: char = '\u{f021}';
 pub const FA_HOME: char = '\u{f015}';
 /// FA Free Solid: f091 — trophy (leaderboard / win).
 pub const FA_TROPHY: char = '\u{f091}';
+/// FA Free Solid: f00d — x-mark (cancel / close).
+pub const FA_XMARK: char = '\u{f00d}';
+/// FA Free Solid: f04b — play (filled triangle).
+pub const FA_PLAY: char = '\u{f04b}';
+/// FA Free Solid: f0eb — lightbulb (hint).
+pub const FA_LIGHTBULB: char = '\u{f0eb}';
+/// FA Free Solid: f065 — expand (fullscreen).
+pub const FA_EXPAND: char = '\u{f065}';
+/// FA Free Solid: f0c9 — bars (hamburger menu).
+pub const FA_BARS: char = '\u{f0c9}';
