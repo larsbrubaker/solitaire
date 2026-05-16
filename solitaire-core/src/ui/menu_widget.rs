@@ -41,6 +41,9 @@ struct MenuSnapshot {
     spider_winnable_only: bool,
     freecell_winnable_only: bool,
     klondike_winnable_only: bool,
+    /// Active session's seed — drives the deal-info row in the
+    /// Game menu so it rebuilds when New Deal fires.
+    session_seed: Option<u64>,
     /// Performance-window visibility: drives the radio-dot indicator
     /// on the "Performance Window" menu item.
     show_performance_window: bool,
@@ -61,6 +64,7 @@ impl MenuSnapshot {
             klondike_winnable_only: model.klondike_winnable_only,
             show_performance_window: model.show_performance_window.get(),
             in_game: model.session.is_some(),
+            session_seed: model.session.as_ref().map(|s| s.seed()),
         }
     }
 }
@@ -166,11 +170,34 @@ fn game_menu(model: &AppModel) -> TopMenu {
             .shortcut("F2")
             .into(),
     );
+    // Show the active deal's identifier as an info row directly
+    // above "Play Deal Number…". Disabled so it can't be clicked;
+    // it's there for players who want to write the number down or
+    // share it. Only shown when a game is in progress.
+    if let Some(label) = current_deal_label(model) {
+        items.push(MenuItem::action(label, "deal-info").disabled().into());
+    }
     items.push(MenuItem::action("Play Deal Number\u{2026}", "play-deal-number").into());
     items.push(MenuItem::action("Restart this Deal", "restart").into());
     items.push(MenuEntry::Separator);
     items.push(MenuItem::action("Back to Main Menu", "title").into());
     TopMenu::new("Game", items)
+}
+
+/// Format the active session's deal identifier for the disabled
+/// info row above "Play Deal Number…". `None` if no game is in
+/// progress. FreeCell in winnable-only mode shows the Microsoft
+/// game number in decimal so players can share / recall a
+/// familiar `Game #11234`; other variants show the raw `u64` seed
+/// in hex.
+fn current_deal_label(model: &AppModel) -> Option<String> {
+    let seed = model.session.as_ref()?.seed();
+    let kind = model.kind?;
+    let label = match kind {
+        GameKind::FreeCell if model.freecell_winnable_only => format!("Game #{}", seed),
+        _ => format!("Deal #{:016x}", seed),
+    };
+    Some(label)
 }
 
 fn help_menu(model: &AppModel) -> TopMenu {
