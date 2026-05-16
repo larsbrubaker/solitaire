@@ -190,21 +190,21 @@ mod tests {
     /// `TitleWidget` paints behind the menu and (deliberately) claims
     /// its full bounds for hit-testing of the game-selection buttons,
     /// so the overlay stack must place the menu above it for clicks in
-    /// the top 26 px strip to reach the menu bar.
+    /// the bottom 26 px strip to reach the menu bar.
     #[test]
     fn menu_strip_click_on_title_screen_hits_menu_bar() {
         let (mut app, _model) = build_solitaire_app();
         // Desktop-shaped viewport so chrome layout picks `Standard`
-        // (top-aligned menu bar, not the sidebar variant). Aspect
+        // (bottom-aligned menu bar, not the sidebar variant). Aspect
         // matters: `chrome::compute` switches to `Sidebar` when
         // `w > h*1.5 && h < 900`, so 1024x768 keeps us in Standard.
         let viewport = Size::new(1024.0, 768.0);
         app.layout(viewport);
 
-        // Menu bar lives in the top 26 px (Y-up: y close to viewport
-        // height).  Pick a point safely inside the strip and away from
-        // the corners so we exercise an active hit region.
-        let click = Point::new(200.0, viewport.height - 8.0);
+        // Menu bar lives in the bottom 26 px (Y-up: y close to 0).
+        // Pick a point safely inside the strip and away from the
+        // corners so we exercise an active hit region.
+        let click = Point::new(200.0, 8.0);
         let path = hit_test_subtree(app.root(), click)
             .expect("click inside the menu strip must hit something");
         let chain = type_chain_for_path(app.root(), &path);

@@ -88,15 +88,19 @@ pub fn compute(viewport: Size) -> ChromeLayout {
             playfield_rect,
         }
     } else {
-        let menu_rect = Rect::new(0.0, h - MENU_BAR_H, w, MENU_BAR_H);
-        let hud_rect = Rect::new(0.0, 0.0, w, HUD_STRIP_H);
-        // Inset on every side so cards have breathing room between
-        // the menu bar above, HUD strip below, and window edges.
+        // Both menu bar and HUD stack across the BOTTOM of the
+        // viewport (Y-up: smaller y = lower on screen). Menu sits
+        // at y=0 closest to the thumb; HUD action buttons stack
+        // immediately above the menu. Playfield gets the rest of
+        // the viewport above the combined chrome.
+        let menu_rect = Rect::new(0.0, 0.0, w, MENU_BAR_H);
+        let hud_rect = Rect::new(0.0, MENU_BAR_H, w, HUD_STRIP_H);
+        let chrome_h = MENU_BAR_H + HUD_STRIP_H;
         let playfield_rect = Rect::new(
             PLAY_PAD,
-            HUD_STRIP_H + PLAY_PAD,
+            chrome_h + PLAY_PAD,
             w - PLAY_PAD * 2.0,
-            h - HUD_STRIP_H - MENU_BAR_H - PLAY_PAD * 2.0,
+            h - chrome_h - PLAY_PAD * 2.0,
         );
         ChromeLayout {
             mode: ChromeMode::Standard,
@@ -115,15 +119,19 @@ mod tests {
     fn desktop_uses_standard_layout() {
         let l = compute(Size::new(1024.0, 720.0));
         assert_eq!(l.mode, ChromeMode::Standard);
-        // Playfield grabs the middle band minus PLAY_PAD breathing room
-        // between menu/HUD and the cards.
+        // Menu + HUD stack at the bottom (Y-up): menu at y=0,
+        // HUD just above it, playfield above the combined chrome.
+        assert_eq!(l.menu_rect.y, 0.0);
+        assert_eq!(l.menu_rect.height, MENU_BAR_H);
+        assert_eq!(l.hud_rect.y, MENU_BAR_H);
+        assert_eq!(l.hud_rect.height, HUD_STRIP_H);
         assert_eq!(l.playfield_rect.x, PLAY_PAD);
         assert_eq!(l.playfield_rect.width, 1024.0 - PLAY_PAD * 2.0);
         assert_eq!(
             l.playfield_rect.height,
             720.0 - MENU_BAR_H - HUD_STRIP_H - PLAY_PAD * 2.0
         );
-        assert_eq!(l.playfield_rect.y, HUD_STRIP_H + PLAY_PAD);
+        assert_eq!(l.playfield_rect.y, MENU_BAR_H + HUD_STRIP_H + PLAY_PAD);
     }
 
     #[test]
@@ -160,8 +168,8 @@ mod tests {
         // sidebar mode would spend too much width on chrome.
         let l = compute(Size::new(654.0, 690.0));
         assert_eq!(l.mode, ChromeMode::Standard);
-        assert_eq!(l.menu_rect.y, 690.0 - MENU_BAR_H);
-        assert_eq!(l.hud_rect.y, 0.0);
+        assert_eq!(l.menu_rect.y, 0.0);
+        assert_eq!(l.hud_rect.y, MENU_BAR_H);
         assert_eq!(l.playfield_rect.x, PLAY_PAD);
         assert_eq!(l.playfield_rect.width, 654.0 - PLAY_PAD * 2.0);
     }
