@@ -598,6 +598,53 @@ impl AppModel {
         }
     }
 
+    /// Compute and store a Klondike hint. No-op when the active
+    /// game isn't Klondike. Lives in the same `spider_hint` /
+    /// `spider_hint_seq` slot as the Spider hint — they're
+    /// mutually-exclusive since only one game is active at a time.
+    /// The rendering code reads the slot blind, so the name's a
+    /// holdover until a wider rename.
+    pub fn show_klondike_hint(&mut self) {
+        let is_klondike = self
+            .session
+            .as_ref()
+            .map(|s| s.game_slug() == "klondike")
+            .unwrap_or(false);
+        if !is_klondike {
+            return;
+        }
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
+        let rules = crate::games::klondike::Klondike::with_draw_count(self.klondike_draw_count);
+        let hint = crate::games::klondike_hint::best_klondike_hint(&rules, session.piles());
+        match hint {
+            Some(SpiderHint::Move { .. }) => {
+                self.spider_hint = hint;
+                self.spider_hint_seq = self.spider_hint_seq.wrapping_add(1);
+            }
+            Some(SpiderHint::StockDeal { .. }) => {
+                self.spider_hint = hint;
+                self.spider_hint_seq = self.spider_hint_seq.wrapping_add(1);
+                self.show_toast("Draw from stock");
+            }
+            None => {
+                self.spider_hint = None;
+                self.show_toast("No moves");
+            }
+        }
+    }
+
+    /// Variant-aware hint dispatcher used by the HUD Hint button +
+    /// 'h' hotkey + Game-menu "Hint" entry.
+    pub fn show_hint(&mut self) {
+        match self.kind {
+            Some(GameKind::Spider) => self.show_spider_hint(),
+            Some(GameKind::Klondike) => self.show_klondike_hint(),
+            _ => {}
+        }
+    }
+
     /// Drop any pending Spider hint. Called by every move/undo path so
     /// the highlight never lingers past the board state it was computed
     /// for.

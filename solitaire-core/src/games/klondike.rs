@@ -12,12 +12,12 @@ use crate::session::Move;
 use super::{GameRules, CARD_ASPECT};
 
 // Pile ids:
-const STOCK: PileId = 0;
-const WASTE: PileId = 1;
-const FOUND_FIRST: PileId = 2;
-const FOUND_LAST: PileId = 5;
-const TABLEAU_FIRST: PileId = 6;
-const TABLEAU_LAST: PileId = 12;
+pub(super) const STOCK: PileId = 0;
+pub(super) const WASTE: PileId = 1;
+pub(super) const FOUND_FIRST: PileId = 2;
+pub(super) const FOUND_LAST: PileId = 5;
+pub(super) const TABLEAU_FIRST: PileId = 6;
+pub(super) const TABLEAU_LAST: PileId = 12;
 
 /// Number of tableau columns (= horizontal layout width budget).
 const COLS: usize = 7;
@@ -50,7 +50,7 @@ impl Default for Klondike {
     }
 }
 
-fn is_tableau(id: PileId) -> bool {
+pub(super) fn is_tableau(id: PileId) -> bool {
     (TABLEAU_FIRST..=TABLEAU_LAST).contains(&id)
 }
 
@@ -60,7 +60,7 @@ fn is_foundation(id: PileId) -> bool {
 
 /// Are `top` and `cand` an alternating-color, descending pair? `cand` is
 /// the card being placed on top of `top`.
-fn alt_color_descending(top: &Card, cand: &Card) -> bool {
+pub(super) fn alt_color_descending(top: &Card, cand: &Card) -> bool {
     if top.suit.color() == cand.suit.color() {
         return false;
     }
@@ -69,13 +69,13 @@ fn alt_color_descending(top: &Card, cand: &Card) -> bool {
 
 /// Same suit, ascending pair: `cand` is being placed on top of `top` in a
 /// foundation pile.
-fn same_suit_ascending(top: &Card, cand: &Card) -> bool {
+pub(super) fn same_suit_ascending(top: &Card, cand: &Card) -> bool {
     top.suit == cand.suit && Some(cand.rank) == top.rank.next_up()
 }
 
 /// Check that `cards` form a valid alternating-color descending run.
 /// All cards must be face-up. Used to validate multi-card tableau moves.
-fn is_valid_run(cards: &[Card]) -> bool {
+pub(super) fn is_valid_run(cards: &[Card]) -> bool {
     if cards.iter().any(|c| !c.face_up) {
         return false;
     }
@@ -357,6 +357,9 @@ pub fn is_foundation_pile(id: PileId) -> bool {
 }
 pub const KLONDIKE_STOCK: PileId = STOCK;
 pub const KLONDIKE_WASTE: PileId = WASTE;
+
+// `best_klondike_hint` lives in the sibling `klondike_hint` module
+// so this file stays under the 800-line cap.
 
 #[cfg(test)]
 mod tests {

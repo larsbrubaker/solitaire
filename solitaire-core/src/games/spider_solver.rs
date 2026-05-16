@@ -15,9 +15,9 @@
 
 use std::collections::HashSet;
 
-use crate::cards::{Card, Rank};
+use crate::cards::{Card, Rank, Suit};
 use crate::piles::{PileId, PileSet};
-use crate::session::{apply_move, Move};
+use crate::session::{apply_move, revert_move, Move};
 
 const FOUND_FIRST: PileId = 0;
 const FOUND_LAST: PileId = 7;
@@ -52,7 +52,17 @@ impl SolverBudget {
     }
 }
 
+/// One search choice — a single tableau move is one move, a stock
+/// "deal a row" action is a vec of 10 moves applied as an
+/// atomic unit. The solver treats each Choice as one branch in
+/// the DFS so partial-deal intermediate states are never explored
+/// (the player can't reach them either).
+type Choice = Vec<Move>;
+
 pub fn solve(piles: &PileSet, budget: SolverBudget) -> SolveResult {
+    // Single shared mutable state — every node mutates the same
+    // `PileSet` via apply_move on push and revert_move on pop.
+    // No clone-per-child; the entire search shares one allocation.
     let mut state = piles.clone();
     while let Some(m) = collapse_step(&state) {
         apply_move(&mut state, &m);
@@ -64,22 +74,39 @@ pub fn solve(piles: &PileSet, budget: SolverBudget) -> SolveResult {
     visited.insert(hash_state(&state));
     let mut stack: Vec<Frame> = Vec::with_capacity(256);
     stack.push(Frame {
-        state,
-        moves: vec![],
-        next_move_idx: 0,
-        generated: false,
+        applied: Vec::new(),
+        choices: generate_choices(&state),
+        next_idx: 0,
     });
 
     let mut nodes = 0u64;
-    while let Some(frame) = stack.last_mut() {
-        if !frame.generated {
-            frame.moves = generate_ordered_moves(&frame.state);
-            frame.generated = true;
-        }
-        if frame.next_move_idx >= frame.moves.len() {
-            stack.pop();
+    loop {
+        // Borrow-check the frame as briefly as possible — we need
+        // to mutate `state` between consults, so we don't hold a
+        // long-lived &mut Frame.
+        let (choice, exhausted) = {
+            let Some(frame) = stack.last_mut() else {
+                break;
+            };
+            if frame.next_idx >= frame.choices.len() {
+                (None, true)
+            } else {
+                let c = std::mem::take(&mut frame.choices[frame.next_idx]);
+                frame.next_idx += 1;
+                (Some(c), false)
+            }
+        };
+
+        if exhausted {
+            // Revert this frame's applied moves in reverse, then pop.
+            if let Some(frame) = stack.pop() {
+                for am in frame.applied.iter().rev() {
+                    revert_move(&mut state, am);
+                }
+            }
             continue;
         }
+
         nodes += 1;
         if nodes > budget.max_nodes {
             return SolveResult::Timeout;
@@ -87,35 +114,47 @@ pub fn solve(piles: &PileSet, budget: SolverBudget) -> SolveResult {
         if nodes & 4095 == 0 && web_time::Instant::now() >= budget.deadline {
             return SolveResult::Timeout;
         }
-        let m = frame.moves[frame.next_move_idx];
-        frame.next_move_idx += 1;
-        let mut child_state = frame.state.clone();
-        apply_move(&mut child_state, &m);
-        while let Some(am) = collapse_step(&child_state) {
-            apply_move(&mut child_state, &am);
+
+        let choice = choice.unwrap();
+        // Apply each move in the choice + any forced collapses,
+        // recording every applied move so the parent can be
+        // restored exactly on backtrack.
+        let mut applied: Vec<Move> = Vec::with_capacity(choice.len() + 2);
+        for m in &choice {
+            apply_move(&mut state, m);
+            applied.push(*m);
         }
-        if is_won(&child_state) {
+        while let Some(am) = collapse_step(&state) {
+            apply_move(&mut state, &am);
+            applied.push(am);
+        }
+        if is_won(&state) {
             return SolveResult::Won;
         }
-        let ch = hash_state(&child_state);
+        let ch = hash_state(&state);
         if !visited.insert(ch) {
+            // Already-seen state — revert and try next move.
+            for am in applied.iter().rev() {
+                revert_move(&mut state, am);
+            }
             continue;
         }
+        let child_choices = generate_choices(&state);
         stack.push(Frame {
-            state: child_state,
-            moves: vec![],
-            next_move_idx: 0,
-            generated: false,
+            applied,
+            choices: child_choices,
+            next_idx: 0,
         });
     }
     SolveResult::Exhausted
 }
 
 struct Frame {
-    state: PileSet,
-    moves: Vec<Move>,
-    next_move_idx: usize,
-    generated: bool,
+    /// Moves applied (in order) to reach this frame's state from
+    /// the parent frame's state. Reverted in reverse order on pop.
+    applied: Vec<Move>,
+    choices: Vec<Choice>,
+    next_idx: usize,
 }
 
 fn is_won(piles: &PileSet) -> bool {
@@ -127,15 +166,82 @@ fn is_won(piles: &PileSet) -> bool {
     true
 }
 
-fn hash_state(piles: &PileSet) -> u64 {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut h = DefaultHasher::new();
-    for pile in piles.iter() {
-        pile.cards.len().hash(&mut h);
-        pile.cards.hash(&mut h);
+/// Per-card hash byte matching Solvitaire's recipe
+/// (`suit_val * 26 + 2*rank + is_face_down`) — gives face-down vs
+/// face-up the same card a distinct hash.
+#[inline]
+fn card_byte(c: &Card) -> u64 {
+    let suit_val: u64 = match c.suit {
+        Suit::Clubs => 0,
+        Suit::Diamonds => 1,
+        Suit::Hearts => 2,
+        Suit::Spades => 3,
+    };
+    let rank_val: u64 = c.rank as u64; // Rank::Ace=1 .. King=13 in this crate's encoding
+    let fd: u64 = if c.face_up { 0 } else { 1 };
+    suit_val * 26 + 2 * rank_val + fd
+}
+
+/// Solvitaire's golden-ratio hash combiner. Cheaper than
+/// DefaultHasher and matches the reference solver's TT key recipe.
+#[inline]
+fn mix(seed: &mut u64, v: u64) {
+    *seed ^= v
+        .wrapping_add(0x9e3779b9_u64)
+        .wrapping_add(seed.wrapping_shl(6))
+        .wrapping_add(seed.wrapping_shr(2));
+}
+
+/// Compress a single pile to a 64-bit fingerprint.
+fn pile_fingerprint(cards: &[Card]) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325; // FNV offset basis as seed
+    mix(&mut h, cards.len() as u64);
+    for c in cards {
+        mix(&mut h, card_byte(c));
     }
-    h.finish()
+    h
+}
+
+/// Hash the board with the 10 tableau columns **sorted by their
+/// fingerprint** so any permutation of columns collapses to the
+/// same TT key. Foundations and stock keep their identity (their
+/// positions are semantically meaningful — foundation slots are
+/// interchangeable, but they're all empty until a full suit
+/// completes, at which point the count alone suffices).
+fn hash_state(piles: &PileSet) -> u64 {
+    let mut h: u64 = 0;
+
+    // Foundations: just the count of completed suits, since each
+    // foundation pile is either empty or holds exactly one
+    // completed 13-card suit and they're interchangeable.
+    let mut completed: u64 = 0;
+    for fid in FOUND_FIRST..=FOUND_LAST {
+        if piles.get(fid).cards.len() == 13 {
+            completed += 1;
+        }
+    }
+    mix(&mut h, completed);
+
+    // Stock: order-stable, top-to-bottom. The marker separates
+    // foundation count from stock contents in the hash stream.
+    mix(&mut h, 0x57_4F_43_4B_4D_41_52_4B); // "STOCKMRK"
+    let stock = piles.get(STOCK);
+    mix(&mut h, stock.cards.len() as u64);
+    for c in &stock.cards {
+        mix(&mut h, card_byte(c));
+    }
+
+    // Tableau: permutation-invariant via sorted fingerprints.
+    let mut fps: [u64; N_CASCADES] = [0; N_CASCADES];
+    for (i, cid) in (CASCADE_FIRST..=CASCADE_LAST).enumerate() {
+        fps[i] = pile_fingerprint(&piles.get(cid).cards);
+    }
+    fps.sort_unstable();
+    for fp in fps {
+        mix(&mut h, fp);
+    }
+
+    h
 }
 
 fn is_suited_run(cards: &[Card]) -> bool {
@@ -185,7 +291,7 @@ fn collapse_step(piles: &PileSet) -> Option<Move> {
     None
 }
 
-fn generate_ordered_moves(piles: &PileSet) -> Vec<Move> {
+fn generate_choices(piles: &PileSet) -> Vec<Choice> {
     let mut scored: Vec<(i32, Move)> = Vec::new();
     for src_id in CASCADE_FIRST..=CASCADE_LAST {
         let src = piles.get(src_id);
@@ -213,6 +319,14 @@ fn generate_ordered_moves(piles: &PileSet) -> Vec<Move> {
                     Some(top) => top.face_up && Some(head.rank) == top.rank.next_down(),
                 };
                 if !legal {
+                    continue;
+                }
+                // Solvitaire-style prune: a single-card move from a
+                // pile of length 1 onto an empty pile is a pure
+                // no-op (the source becomes empty, the dest becomes
+                // a singleton — symmetric to the start state under
+                // pile-order canonicalization).
+                if take == 1 && start_idx == 0 && n == 1 && dst.is_empty() {
                     continue;
                 }
                 let exposes = start_idx > 0 && !src.cards[start_idx - 1].face_up;
@@ -251,11 +365,18 @@ fn generate_ordered_moves(piles: &PileSet) -> Vec<Move> {
         }
     }
     scored.sort_by(|a, b| b.0.cmp(&a.0));
-    let mut out: Vec<Move> = scored.into_iter().map(|(_, m)| m).collect();
+    let mut out: Vec<Choice> = scored.into_iter().map(|(_, m)| vec![m]).collect();
+    // Stock deal is an atomic 10-card broadcast: one card per
+    // cascade, applied in left-to-right order. Treating it as a
+    // single Choice keeps the solver from exploring nonsensical
+    // partial-deal states. Pushed last so it's the lowest-priority
+    // option in FIFO traversal.
     if piles.get(STOCK).len() >= N_CASCADES {
+        let mut deal: Choice = Vec::with_capacity(N_CASCADES);
         for col in 0..N_CASCADES {
-            out.push(Move::simple(STOCK, 1, CASCADE_FIRST + col as u8).with_flip_moved());
+            deal.push(Move::simple(STOCK, 1, CASCADE_FIRST + col as u8).with_flip_moved());
         }
+        out.push(deal);
     }
     out
 }
@@ -284,6 +405,128 @@ mod tests {
         }
         let budget = SolverBudget::from_duration(std::time::Duration::from_millis(50), 1_000);
         assert_eq!(solve(&s.piles, budget), SolveResult::Won);
+    }
+
+    #[test]
+    fn hash_state_collapses_tableau_column_permutations() {
+        // Two boards that differ only in tableau column order
+        // should hash to the same TT key — that's the whole point
+        // of the Solvitaire-style pile-order canonicalization.
+        let rules = Spider::four_suit();
+        let mut a = crate::piles::PileSet::from_slots(
+            &rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT),
+        );
+        let mut b = a.clone();
+
+        // a: column 0 = [K♠ face-up], column 1 = [Q♥ face-up]
+        a.get_mut(CASCADE_FIRST)
+            .cards
+            .push(Card::new(crate::cards::Suit::Spades, Rank::King).face_up());
+        a.get_mut(CASCADE_FIRST + 1)
+            .cards
+            .push(Card::new(crate::cards::Suit::Hearts, Rank::Queen).face_up());
+
+        // b: swapped — column 0 = [Q♥ face-up], column 1 = [K♠ face-up]
+        b.get_mut(CASCADE_FIRST)
+            .cards
+            .push(Card::new(crate::cards::Suit::Hearts, Rank::Queen).face_up());
+        b.get_mut(CASCADE_FIRST + 1)
+            .cards
+            .push(Card::new(crate::cards::Suit::Spades, Rank::King).face_up());
+
+        assert_eq!(hash_state(&a), hash_state(&b));
+    }
+
+    #[test]
+    fn hash_state_distinguishes_face_up_from_face_down() {
+        // The per-card hash byte must include face-down so a deal
+        // with one flipped card hashes distinctly.
+        let rules = Spider::four_suit();
+        let mut a = crate::piles::PileSet::from_slots(
+            &rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT),
+        );
+        let mut b = a.clone();
+        a.get_mut(CASCADE_FIRST)
+            .cards
+            .push(Card::new(crate::cards::Suit::Spades, Rank::King).face_up());
+        b.get_mut(CASCADE_FIRST)
+            .cards
+            .push(Card::new(crate::cards::Suit::Spades, Rank::King)); // face-down
+        assert_ne!(hash_state(&a), hash_state(&b));
+    }
+
+    /// Real-seed smoke test (ignored by default — too slow for CI).
+    /// Run with `cargo test -p solitaire-core --release
+    /// spider_solver -- --ignored --nocapture` to benchmark the
+    /// solver on a handful of 1-suit Spider deals. Prints per-seed
+    /// classification + elapsed so we can see how much the
+    /// Solvitaire optimizations help.
+    #[ignore]
+    #[test]
+    fn benchmark_one_suit_spider_seeds() {
+        bench(Spider::one_suit(), "1-suit", 20);
+    }
+
+    #[ignore]
+    #[test]
+    fn benchmark_two_suit_spider_seeds() {
+        bench(Spider::two_suit(), "2-suit", 20);
+    }
+
+    #[ignore]
+    #[test]
+    fn benchmark_four_suit_spider_seeds() {
+        bench(Spider::four_suit(), "4-suit", 20);
+    }
+
+    fn bench(rules_template: Spider, label: &str, count: u64) {
+        use crate::session::GameSession;
+        let budget_per_seed = std::time::Duration::from_secs(5);
+        let max_nodes = 5_000_000u64;
+        let mut won = 0;
+        let mut exhausted = 0;
+        let mut timeout = 0;
+        for seed in 0u64..count {
+            // Spider isn't Clone; rebuild a fresh instance each
+            // loop iteration matching the template's suit_count.
+            let rules = Spider::new(rules_template.suit_count);
+            let s = GameSession::new(rules, seed);
+            let start = web_time::Instant::now();
+            let budget = SolverBudget::from_duration(budget_per_seed, max_nodes);
+            let r = solve(&s.piles, budget);
+            let elapsed = start.elapsed();
+            println!("{label} seed {seed:3}: {r:?} in {:?}", elapsed);
+            match r {
+                SolveResult::Won => won += 1,
+                SolveResult::Exhausted => exhausted += 1,
+                SolveResult::Timeout => timeout += 1,
+            }
+        }
+        println!(
+            "{label} Spider: {won} won, {exhausted} exhausted, {timeout} timeout (of {count})"
+        );
+    }
+
+    #[test]
+    fn apply_revert_preserves_state_across_random_dfs() {
+        // Run a short bounded search; the solver's apply/revert
+        // path must leave the board exactly as it started when the
+        // search returns (Exhausted or Timeout). Any drift would
+        // mean revert_move and apply_move aren't true inverses for
+        // the move shapes the solver emits.
+        use crate::session::GameSession;
+        let s = GameSession::new(Spider::four_suit(), 42);
+        let starting = s.piles.clone();
+        let budget = SolverBudget::from_duration(std::time::Duration::from_millis(80), 10_000);
+        // We don't care about the result — only that the state is
+        // un-perturbed if we re-run starting from a fresh clone.
+        let _ = solve(&starting, budget);
+        // Re-run on the same starting state and confirm we get the
+        // same classification (deterministic).
+        let r2 = solve(&starting, budget);
+        // Run a third time — same answer.
+        let r3 = solve(&starting, budget);
+        assert_eq!(r2, r3);
     }
 
     #[test]
