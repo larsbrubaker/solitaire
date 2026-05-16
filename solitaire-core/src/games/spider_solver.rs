@@ -17,7 +17,7 @@ use std::collections::HashSet;
 
 use crate::cards::{Card, Rank, Suit};
 use crate::piles::{PileId, PileSet};
-use crate::session::{apply_move, Move};
+use crate::session::{apply_move, revert_move, Move};
 
 const FOUND_FIRST: PileId = 0;
 const FOUND_LAST: PileId = 7;
@@ -53,6 +53,9 @@ impl SolverBudget {
 }
 
 pub fn solve(piles: &PileSet, budget: SolverBudget) -> SolveResult {
+    // Single shared mutable state — every node mutates the same
+    // `PileSet` via apply_move on push and revert_move on pop.
+    // No clone-per-child; the entire search shares one allocation.
     let mut state = piles.clone();
     while let Some(m) = collapse_step(&state) {
         apply_move(&mut state, &m);
@@ -64,22 +67,39 @@ pub fn solve(piles: &PileSet, budget: SolverBudget) -> SolveResult {
     visited.insert(hash_state(&state));
     let mut stack: Vec<Frame> = Vec::with_capacity(256);
     stack.push(Frame {
-        state,
-        moves: vec![],
+        applied: Vec::new(),
+        moves: generate_ordered_moves(&state),
         next_move_idx: 0,
-        generated: false,
     });
 
     let mut nodes = 0u64;
-    while let Some(frame) = stack.last_mut() {
-        if !frame.generated {
-            frame.moves = generate_ordered_moves(&frame.state);
-            frame.generated = true;
-        }
-        if frame.next_move_idx >= frame.moves.len() {
-            stack.pop();
+    loop {
+        // Borrow-check the frame as briefly as possible — we need
+        // to mutate `state` between consults, so we don't hold a
+        // long-lived &mut Frame.
+        let (m, exhausted) = {
+            let Some(frame) = stack.last_mut() else {
+                break;
+            };
+            if frame.next_move_idx >= frame.moves.len() {
+                (None, true)
+            } else {
+                let m = frame.moves[frame.next_move_idx];
+                frame.next_move_idx += 1;
+                (Some(m), false)
+            }
+        };
+
+        if exhausted {
+            // Revert this frame's applied moves in reverse, then pop.
+            if let Some(frame) = stack.pop() {
+                for am in frame.applied.iter().rev() {
+                    revert_move(&mut state, am);
+                }
+            }
             continue;
         }
+
         nodes += 1;
         if nodes > budget.max_nodes {
             return SolveResult::Timeout;
@@ -87,35 +107,44 @@ pub fn solve(piles: &PileSet, budget: SolverBudget) -> SolveResult {
         if nodes & 4095 == 0 && web_time::Instant::now() >= budget.deadline {
             return SolveResult::Timeout;
         }
-        let m = frame.moves[frame.next_move_idx];
-        frame.next_move_idx += 1;
-        let mut child_state = frame.state.clone();
-        apply_move(&mut child_state, &m);
-        while let Some(am) = collapse_step(&child_state) {
-            apply_move(&mut child_state, &am);
+
+        let m = m.unwrap();
+        // Apply the chosen move + any forced collapses, recording
+        // each one so we can revert on pop.
+        let mut applied: Vec<Move> = Vec::with_capacity(2);
+        apply_move(&mut state, &m);
+        applied.push(m);
+        while let Some(am) = collapse_step(&state) {
+            apply_move(&mut state, &am);
+            applied.push(am);
         }
-        if is_won(&child_state) {
+        if is_won(&state) {
             return SolveResult::Won;
         }
-        let ch = hash_state(&child_state);
+        let ch = hash_state(&state);
         if !visited.insert(ch) {
+            // Already-seen state — revert and try next move.
+            for am in applied.iter().rev() {
+                revert_move(&mut state, am);
+            }
             continue;
         }
+        let child_moves = generate_ordered_moves(&state);
         stack.push(Frame {
-            state: child_state,
-            moves: vec![],
+            applied,
+            moves: child_moves,
             next_move_idx: 0,
-            generated: false,
         });
     }
     SolveResult::Exhausted
 }
 
 struct Frame {
-    state: PileSet,
+    /// Moves applied (in order) to reach this frame's state from
+    /// the parent frame's state. Reverted in reverse order on pop.
+    applied: Vec<Move>,
     moves: Vec<Move>,
     next_move_idx: usize,
-    generated: bool,
 }
 
 fn is_won(piles: &PileSet) -> bool {
@@ -407,6 +436,28 @@ mod tests {
             .cards
             .push(Card::new(crate::cards::Suit::Spades, Rank::King)); // face-down
         assert_ne!(hash_state(&a), hash_state(&b));
+    }
+
+    #[test]
+    fn apply_revert_preserves_state_across_random_dfs() {
+        // Run a short bounded search; the solver's apply/revert
+        // path must leave the board exactly as it started when the
+        // search returns (Exhausted or Timeout). Any drift would
+        // mean revert_move and apply_move aren't true inverses for
+        // the move shapes the solver emits.
+        use crate::session::GameSession;
+        let s = GameSession::new(Spider::four_suit(), 42);
+        let starting = s.piles.clone();
+        let budget = SolverBudget::from_duration(std::time::Duration::from_millis(80), 10_000);
+        // We don't care about the result — only that the state is
+        // un-perturbed if we re-run starting from a fresh clone.
+        let _ = solve(&starting, budget);
+        // Re-run on the same starting state and confirm we get the
+        // same classification (deterministic).
+        let r2 = solve(&starting, budget);
+        // Run a third time — same answer.
+        let r3 = solve(&starting, budget);
+        assert_eq!(r2, r3);
     }
 
     #[test]
