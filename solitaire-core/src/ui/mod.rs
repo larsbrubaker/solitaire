@@ -24,6 +24,7 @@ pub mod layout;
 pub mod menu_widget;
 pub mod overlay_stack;
 pub mod play_deal_dialog;
+pub mod seed_gen_window;
 pub mod title_widget;
 pub mod toast;
 
@@ -68,6 +69,7 @@ pub fn build_solitaire_app() -> (App, SharedModel) {
     let confirm = ConfirmDialog::new(model.clone(), font.clone());
     let play_deal = PlayDealDialog::new(model.clone(), font.clone());
     let perf_window = build_performance_window(&model, font.clone());
+    let seed_gen_window = build_seed_gen_window(&model, font.clone());
     let root = AppRootWidget::new(model.clone());
 
     // Painted bottom→top, hit-tested top→bottom. Confirmation and help
@@ -93,6 +95,7 @@ pub fn build_solitaire_app() -> (App, SharedModel) {
         .add(Box::new(menu))
         .add(Box::new(sidebar_menu))
         .add(Box::new(perf_window))
+        .add(Box::new(seed_gen_window))
         .add(Box::new(help))
         .add(Box::new(confirm))
         .add(Box::new(play_deal));
@@ -136,6 +139,15 @@ fn build_performance_window(model: &SharedModel, font: Arc<Font>) -> AggWindow {
         .with_bounds(saved_bounds)
         .with_visible_cell(visible_cell)
         .with_position_cell(position_cell)
+        .with_resizable(true)
+}
+
+fn build_seed_gen_window(model: &SharedModel, font: Arc<Font>) -> AggWindow {
+    let visible = model.borrow().show_seed_gen_window.clone();
+    let view = seed_gen_window::SeedGenView::new(font.clone());
+    AggWindow::new("Generate Seed Games", font, Box::new(view))
+        .with_bounds(agg_gui::geometry::Rect::new(80.0, 80.0, 720.0, 360.0))
+        .with_visible_cell(visible)
         .with_resizable(true)
 }
 

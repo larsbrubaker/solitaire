@@ -142,6 +142,9 @@ pub struct AppModel {
     /// model so the platform shell can grab a clone via
     /// [`SharedModel`] borrow without an extra plumbing layer.
     pub frame_history: SharedFrameHistory,
+    /// Visibility flag for the seed-generator window (Debug →
+    /// Generate Seed Games). The window's × button writes false here.
+    pub show_seed_gen_window: Rc<Cell<bool>>,
 }
 
 impl AppModel {
@@ -175,6 +178,7 @@ impl AppModel {
             show_performance_window: Rc::new(Cell::new(s.perf_window.visible)),
             perf_window_bounds: Rc::new(Cell::new(perf_bounds)),
             last_saved_perf_window: Cell::new((s.perf_window.visible, perf_bounds)),
+            show_seed_gen_window: Rc::new(Cell::new(false)),
             frame_history: shared_frame_history(),
         }
     }
@@ -235,6 +239,11 @@ impl AppModel {
         // not get a layout pass before the user closes the app, so
         // waiting for the AppRoot tick would lose the toggle.
         self.save_settings();
+    }
+
+    pub fn set_seed_gen_window_open(&mut self, open: bool) {
+        self.show_seed_gen_window.set(open);
+        agg_gui::animation::request_draw();
     }
 
     pub fn start_game(&mut self, kind: GameKind) {
