@@ -82,7 +82,14 @@ pub struct MenuBarHost {
 impl MenuBarHost {
     pub fn new(model: SharedModel, font: Arc<Font>) -> Self {
         let snapshot = MenuSnapshot::from(&model.borrow());
-        let bar = build_menu_bar(model.clone(), font.clone(), MenuOrientation::Horizontal);
+        // `HorizontalBottom` flips the popup direction so menus
+        // rise UPWARD out of the bar — the bar lives at the very
+        // bottom of the viewport now, paired with the HUD strip.
+        let bar = build_menu_bar(
+            model.clone(),
+            font.clone(),
+            MenuOrientation::HorizontalBottom,
+        );
         Self {
             bounds: Rect::default(),
             children: vec![Box::new(bar)],
@@ -411,11 +418,17 @@ impl MenuBarHost {
         let bar = build_menu_bar(
             self.model.clone(),
             self.font.clone(),
-            MenuOrientation::Horizontal,
+            MenuOrientation::HorizontalBottom,
         );
         self.children = vec![Box::new(bar)];
-        let bar_y = self.bounds.y + self.bounds.height - MENU_BAR_H;
-        let bar_rect = Rect::new(self.bounds.x, bar_y, self.bounds.width, MENU_BAR_H);
+        // Menu bar sits at the BOTTOM of the viewport (Y-up: y=0
+        // closest to the thumb). Use the `layout::compute()` slice
+        // directly so it stays in sync with the playfield + HUD.
+        let chrome = super::layout::compute(Size::new(
+            self.bounds.width,
+            self.bounds.height,
+        ));
+        let bar_rect = chrome.menu_rect;
         if let Some(bar) = self.children.first_mut() {
             bar.layout(Size::new(self.bounds.width, MENU_BAR_H));
             bar.set_bounds(bar_rect);
@@ -456,12 +469,12 @@ impl Widget for MenuBarHost {
     }
     fn set_bounds(&mut self, bounds: Rect) {
         self.bounds = bounds;
-        // Y-up: top of the window is at y = bounds.y + bounds.height. The
-        // bar sits in the top BAR_H pixels.
-        let bar_y = bounds.y + bounds.height - MENU_BAR_H;
-        let bar_rect = Rect::new(bounds.x, bar_y, bounds.width, MENU_BAR_H);
+        // Bar sits at the BOTTOM of the viewport (Y-up: y=0 is the
+        // floor closest to the thumb). Position from the chrome
+        // layout helper so menu / HUD / playfield stay aligned.
+        let chrome = layout::compute(Size::new(bounds.width, bounds.height));
         if let Some(bar) = self.children.first_mut() {
-            bar.set_bounds(bar_rect);
+            bar.set_bounds(chrome.menu_rect);
         }
     }
     fn children(&self) -> &[Box<dyn Widget>] {
@@ -485,19 +498,19 @@ impl Widget for MenuBarHost {
         let chrome = layout::compute(Size::new(self.bounds.width, self.bounds.height));
         chrome.mode != ChromeMode::Sidebar
     }
-    /// Claim only the top BAR_H pixels for ordinary input; without this
-    /// the OverlayStack's top→bottom hit-test stops at us (full window
-    /// bounds) and never reaches HudWidget / GameWidget below — same
-    /// gotcha HudWidget calls out in its own `hit_test` override.
-    /// Open-popup events go through `has_active_modal` on the inner
-    /// `MenuBar` so we don't need to forward those here.
+    /// Claim only the bottom MENU_BAR_H pixels for ordinary input;
+    /// without this the OverlayStack's top→bottom hit-test stops
+    /// at us (full window bounds) and never reaches HudWidget /
+    /// GameWidget below — same gotcha HudWidget calls out in its
+    /// own `hit_test` override. Open-popup events go through
+    /// `has_active_modal` on the inner `MenuBar` so we don't need
+    /// to forward those here.
     fn hit_test(&self, local_pos: Point) -> bool {
         if !self.is_visible() {
             return false;
         }
-        let top = self.bounds.height;
-        let bottom = self.bounds.height - MENU_BAR_H;
-        local_pos.y >= bottom && local_pos.y <= top
+        // Bar sits at Y-up y=0..MENU_BAR_H now.
+        local_pos.y >= 0.0 && local_pos.y <= MENU_BAR_H
     }
     fn paint(&mut self, _ctx: &mut dyn DrawCtx) {
         self.sync_state();
