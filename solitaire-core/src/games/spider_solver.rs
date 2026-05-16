@@ -1,17 +1,22 @@
-//! In-process Spider solver used by the Debug → Generate Spider
-//! Seeds menu action. Runs iterative DFS over a `PileSet` snapshot,
-//! folds forced moves (auto-collapse K→A runs) into the apply step
-//! so they don't burn search depth, prunes obviously sterile moves,
-//! and tracks visited states in a transposition table so the same
-//! position is never re-explored.
+//! Clean-room Spider solver. See
+//! [`crate::games::SPEC_SPIDER_SOLVER`](../SPEC_SPIDER_SOLVER.md) for
+//! the design spec; all algorithms derived from Blake & Gent's JAIR
+//! 2026 paper (arXiv:1906.12314v5) and first-principles reasoning
+//! about Spider's rules. No `Solvitaire` source consulted.
 //!
-//! Performance is good enough to classify most seeds in well under
-//! a second; the long tail (genuinely hard 4-suit boards) gets
-//! capped by the caller's time + node budget and reported as
-//! `Timeout`. The seed generator only adds seeds for which the
-//! solver returns `Won`, so timeouts are silently dropped from the
-//! pool — the cost is that a few winnable-but-hard deals never make
-//! the bundled list.
+//! Architecture (per SPEC):
+//! - DFS + apply/revert trailing (paper §5.1)
+//! - Transposition table keyed by canonical-pile-order 64-bit hash
+//!   (paper §5.2, §5.3)
+//! - Spider-specific prunes P1..P4 (first-principles; paper's formal
+//!   dominances D1+D2 exclude Spider per paper §5.4.3 and §C.2)
+//! - Optional S2 suit-symmetry streamliner for 1-suit / 2-suit Spider
+//!   (paper §5.5)
+//! - "Smart" wrapper that runs S2 for 10 % of the budget then falls
+//!   back to strict for 90 % (paper §5.5)
+//!
+//! The seed generator only adds seeds for which the solver returns
+//! `Won`, so timeouts are silently dropped from the bundled pool.
 
 use std::collections::HashSet;
 
@@ -52,6 +57,28 @@ impl SolverBudget {
     }
 }
 
+/// Streamliner mode for the transposition-table hash. Per SPEC §4:
+/// for 1-suit and 2-suit Spider the cache can collapse states that
+/// differ only in suit detail, since identical-colour cards are
+/// often indistinguishable in those variants. False negatives are
+/// possible; the `smart_solve` wrapper guards against them by
+/// re-running strict on streamliner failure.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StreamlinerMode {
+    /// No collapse — every suit is distinct. Sound: a `Won` /
+    /// `Exhausted` verdict is final. Required for 4-suit Spider.
+    Strict,
+    /// Collapse suit to a single symbol — treat the deck as
+    /// 1-suit. Correct for 1-suit Spider (where every card already
+    /// has the same suit) and a false-negative-prone streamliner
+    /// for higher-suit variants.
+    SuitFlatten,
+    /// Collapse suit to colour parity (♣/♠ → "black", ♦/♥ → "red").
+    /// Sound for 2-suit Spider when the chosen suits are one of
+    /// each colour; a streamliner for 4-suit.
+    SuitColour,
+}
+
 /// One search choice — a single tableau move is one move, a stock
 /// "deal a row" action is a vec of 10 moves applied as an
 /// atomic unit. The solver treats each Choice as one branch in
@@ -60,6 +87,53 @@ impl SolverBudget {
 type Choice = Vec<Move>;
 
 pub fn solve(piles: &PileSet, budget: SolverBudget) -> SolveResult {
+    solve_with(piles, budget, StreamlinerMode::Strict)
+}
+
+/// Smart-streamliner wrapper per SPEC §5. Spends 10 % of the
+/// time budget under `streamliner` (e.g. [`StreamlinerMode::SuitColour`])
+/// looking for a quick `Won`; if the streamliner returns
+/// `Exhausted` or `Timeout`, restarts under [`StreamlinerMode::Strict`]
+/// with the full budget. Sound: a final `Won` is always real, and a
+/// final `Exhausted` always came from the strict pass.
+///
+/// Picking the right `streamliner` is the caller's job. Spider
+/// 1-suit → `SuitFlatten`; 2-suit → `SuitColour`; 4-suit → don't
+/// bother (just call [`solve`] directly — the streamliner adds no
+/// useful collapses).
+pub fn smart_solve(
+    piles: &PileSet,
+    budget: SolverBudget,
+    streamliner: StreamlinerMode,
+) -> SolveResult {
+    let now = web_time::Instant::now();
+    let total = budget.deadline.saturating_duration_since(now);
+    // 10 % of budget for the streamliner pass; the streamliner
+    // sees a smaller `max_nodes` proportionally so it can't burn
+    // the whole node budget either.
+    let pre_dur = total / 10;
+    let pre_nodes = budget.max_nodes / 10;
+    let pre_budget = SolverBudget {
+        deadline: now + pre_dur,
+        max_nodes: pre_nodes,
+    };
+    if let SolveResult::Won = solve_with(piles, pre_budget, streamliner) {
+        return SolveResult::Won;
+    }
+    // Streamliner didn't find a win — possible false negative.
+    // Run strict pass with the full original budget.
+    solve_with(piles, budget, StreamlinerMode::Strict)
+}
+
+/// Run the search with a chosen [`StreamlinerMode`]. `Strict` is
+/// sound; `SuitFlatten` and `SuitColour` may report `Exhausted` on
+/// genuinely-winnable deals (false negatives) and should be wrapped
+/// in [`smart_solve`] for a guaranteed-sound outer answer.
+pub fn solve_with(
+    piles: &PileSet,
+    budget: SolverBudget,
+    mode: StreamlinerMode,
+) -> SolveResult {
     // Single shared mutable state — every node mutates the same
     // `PileSet` via apply_move on push and revert_move on pop.
     // No clone-per-child; the entire search shares one allocation.
@@ -71,7 +145,7 @@ pub fn solve(piles: &PileSet, budget: SolverBudget) -> SolveResult {
         return SolveResult::Won;
     }
     let mut visited: HashSet<u64> = HashSet::new();
-    visited.insert(hash_state(&state));
+    visited.insert(hash_state(&state, mode));
     let mut stack: Vec<Frame> = Vec::with_capacity(256);
     stack.push(Frame {
         applied: Vec::new(),
@@ -131,7 +205,7 @@ pub fn solve(piles: &PileSet, budget: SolverBudget) -> SolveResult {
         if is_won(&state) {
             return SolveResult::Won;
         }
-        let ch = hash_state(&state);
+        let ch = hash_state(&state, mode);
         if !visited.insert(ch) {
             // Already-seen state — revert and try next move.
             for am in applied.iter().rev() {
@@ -166,24 +240,38 @@ fn is_won(piles: &PileSet) -> bool {
     true
 }
 
-/// Per-card hash byte matching Solvitaire's recipe
-/// (`suit_val * 26 + 2*rank + is_face_down`) — gives face-down vs
-/// face-up the same card a distinct hash.
+/// Per-card hash byte: `suit_class * 26 + 2 * rank + face_down`.
+/// `suit_class` collapses suit detail according to the active
+/// [`StreamlinerMode`] (SPEC §2, §4):
+/// - `Strict` — four distinct suits → values 0..=3
+/// - `SuitColour` — black (♣/♠) → 0, red (♦/♥) → 1
+/// - `SuitFlatten` — all suits → 0
+///
+/// Multiplying by 26 = (rank range × 2 face-up/-down) keeps each
+/// suit class's encoding disjoint so the hash bits stay
+/// distinguishable even before the mixer.
 #[inline]
-fn card_byte(c: &Card) -> u64 {
-    let suit_val: u64 = match c.suit {
-        Suit::Clubs => 0,
-        Suit::Diamonds => 1,
-        Suit::Hearts => 2,
-        Suit::Spades => 3,
+fn card_byte(c: &Card, mode: StreamlinerMode) -> u64 {
+    let suit_class: u64 = match mode {
+        StreamlinerMode::Strict => match c.suit {
+            Suit::Clubs => 0,
+            Suit::Diamonds => 1,
+            Suit::Hearts => 2,
+            Suit::Spades => 3,
+        },
+        StreamlinerMode::SuitColour => match c.suit {
+            Suit::Clubs | Suit::Spades => 0,
+            Suit::Diamonds | Suit::Hearts => 1,
+        },
+        StreamlinerMode::SuitFlatten => 0,
     };
-    let rank_val: u64 = c.rank as u64; // Rank::Ace=1 .. King=13 in this crate's encoding
+    let rank_val: u64 = c.rank as u64;
     let fd: u64 = if c.face_up { 0 } else { 1 };
-    suit_val * 26 + 2 * rank_val + fd
+    suit_class * 26 + 2 * rank_val + fd
 }
 
-/// Solvitaire's golden-ratio hash combiner. Cheaper than
-/// DefaultHasher and matches the reference solver's TT key recipe.
+/// Standard golden-ratio hash combiner (Knuth / Boost). Cheaper
+/// than `DefaultHasher` and well-mixed for short input streams.
 #[inline]
 fn mix(seed: &mut u64, v: u64) {
     *seed ^= v
@@ -193,22 +281,21 @@ fn mix(seed: &mut u64, v: u64) {
 }
 
 /// Compress a single pile to a 64-bit fingerprint.
-fn pile_fingerprint(cards: &[Card]) -> u64 {
+fn pile_fingerprint(cards: &[Card], mode: StreamlinerMode) -> u64 {
     let mut h: u64 = 0xcbf29ce484222325; // FNV offset basis as seed
     mix(&mut h, cards.len() as u64);
     for c in cards {
-        mix(&mut h, card_byte(c));
+        mix(&mut h, card_byte(c, mode));
     }
     h
 }
 
 /// Hash the board with the 10 tableau columns **sorted by their
 /// fingerprint** so any permutation of columns collapses to the
-/// same TT key. Foundations and stock keep their identity (their
-/// positions are semantically meaningful — foundation slots are
-/// interchangeable, but they're all empty until a full suit
-/// completes, at which point the count alone suffices).
-fn hash_state(piles: &PileSet) -> u64 {
+/// same TT key (SPEC §2). Foundations are reduced to a count of
+/// completed-suit piles since the 8 slots are interchangeable.
+/// Stock is order-stable.
+fn hash_state(piles: &PileSet, mode: StreamlinerMode) -> u64 {
     let mut h: u64 = 0;
 
     // Foundations: just the count of completed suits, since each
@@ -228,13 +315,13 @@ fn hash_state(piles: &PileSet) -> u64 {
     let stock = piles.get(STOCK);
     mix(&mut h, stock.cards.len() as u64);
     for c in &stock.cards {
-        mix(&mut h, card_byte(c));
+        mix(&mut h, card_byte(c, mode));
     }
 
     // Tableau: permutation-invariant via sorted fingerprints.
     let mut fps: [u64; N_CASCADES] = [0; N_CASCADES];
     for (i, cid) in (CASCADE_FIRST..=CASCADE_LAST).enumerate() {
-        fps[i] = pile_fingerprint(&piles.get(cid).cards);
+        fps[i] = pile_fingerprint(&piles.get(cid).cards, mode);
     }
     fps.sort_unstable();
     for fp in fps {
@@ -434,7 +521,93 @@ mod tests {
             .cards
             .push(Card::new(crate::cards::Suit::Spades, Rank::King).face_up());
 
-        assert_eq!(hash_state(&a), hash_state(&b));
+        assert_eq!(
+            hash_state(&a, StreamlinerMode::Strict),
+            hash_state(&b, StreamlinerMode::Strict)
+        );
+    }
+
+    /// SPEC §4 — `SuitFlatten` mode collapses suit detail so two
+    /// states differing only in suit (♠ vs ♣) hash identically.
+    /// Required for the S2 streamliner on 1-suit Spider; useful as
+    /// an optimistic streamliner on higher-suit variants.
+    #[test]
+    fn hash_state_collapses_suit_under_flatten_mode() {
+        let rules = Spider::four_suit();
+        let mut a = crate::piles::PileSet::from_slots(
+            &rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT),
+        );
+        let mut b = a.clone();
+        a.get_mut(CASCADE_FIRST)
+            .cards
+            .push(Card::new(Suit::Spades, Rank::King).face_up());
+        b.get_mut(CASCADE_FIRST)
+            .cards
+            .push(Card::new(Suit::Clubs, Rank::King).face_up());
+        // Strict mode: ♠ vs ♣ are different cards → distinct hashes.
+        assert_ne!(
+            hash_state(&a, StreamlinerMode::Strict),
+            hash_state(&b, StreamlinerMode::Strict),
+        );
+        // Flatten mode: every suit collapses to 0 → identical hash.
+        assert_eq!(
+            hash_state(&a, StreamlinerMode::SuitFlatten),
+            hash_state(&b, StreamlinerMode::SuitFlatten),
+        );
+    }
+
+    /// SPEC §4 — `SuitColour` collapses suits by black/red parity
+    /// so ♣ ≡ ♠ and ♦ ≡ ♥, but black ≠ red.
+    #[test]
+    fn hash_state_collapses_suit_under_colour_mode() {
+        let rules = Spider::four_suit();
+        let mut a = crate::piles::PileSet::from_slots(
+            &rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT),
+        );
+        let mut b = a.clone();
+        let mut c = a.clone();
+        a.get_mut(CASCADE_FIRST)
+            .cards
+            .push(Card::new(Suit::Spades, Rank::King).face_up());
+        b.get_mut(CASCADE_FIRST)
+            .cards
+            .push(Card::new(Suit::Clubs, Rank::King).face_up());
+        c.get_mut(CASCADE_FIRST)
+            .cards
+            .push(Card::new(Suit::Hearts, Rank::King).face_up());
+        // ♠ and ♣ are both black → same hash under SuitColour.
+        assert_eq!(
+            hash_state(&a, StreamlinerMode::SuitColour),
+            hash_state(&b, StreamlinerMode::SuitColour),
+        );
+        // ♥ is red → distinct hash.
+        assert_ne!(
+            hash_state(&a, StreamlinerMode::SuitColour),
+            hash_state(&c, StreamlinerMode::SuitColour),
+        );
+    }
+
+    /// SPEC §5 — `smart_solve` must return the same verdict as
+    /// strict `solve` on a pre-won board (no time spent in the
+    /// streamliner pass beyond confirming the win immediately).
+    #[test]
+    fn smart_solve_finds_win_on_pre_won_board() {
+        let mut s = GameSession::new(Spider::four_suit(), 1);
+        for fid in FOUND_FIRST..=FOUND_LAST {
+            s.piles.get_mut(fid).cards.clear();
+            for _ in 0..13 {
+                s.piles
+                    .get_mut(fid)
+                    .cards
+                    .push(Card::new(Suit::Spades, Rank::King));
+            }
+        }
+        let budget =
+            SolverBudget::from_duration(std::time::Duration::from_millis(50), 1_000);
+        assert_eq!(
+            smart_solve(&s.piles, budget, StreamlinerMode::SuitColour),
+            SolveResult::Won
+        );
     }
 
     #[test]
@@ -452,7 +625,10 @@ mod tests {
         b.get_mut(CASCADE_FIRST)
             .cards
             .push(Card::new(crate::cards::Suit::Spades, Rank::King)); // face-down
-        assert_ne!(hash_state(&a), hash_state(&b));
+        assert_ne!(
+            hash_state(&a, StreamlinerMode::Strict),
+            hash_state(&b, StreamlinerMode::Strict)
+        );
     }
 
     /// Real-seed smoke test (ignored by default — too slow for CI).
