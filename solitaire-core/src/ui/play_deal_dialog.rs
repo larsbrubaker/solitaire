@@ -26,7 +26,7 @@ use agg_gui::event::{Event, EventResult, Key, Modifiers, MouseButton};
 use agg_gui::geometry::{Point, Rect, Size};
 use agg_gui::text::Font;
 use agg_gui::widget::Widget;
-use agg_gui::widgets::TextField;
+use agg_gui::widgets::{TextField, TextFieldTheme};
 
 use super::app_model::SharedModel;
 
@@ -37,9 +37,37 @@ const TITLE_TEXT: Color = Color::from_rgb8(0xff, 0xd7, 0x00);
 const BODY_TEXT: Color = Color::from_rgb8(0xff, 0xff, 0xff);
 const HINT_TEXT: Color = Color::from_rgba8(0xff, 0xff, 0xff, 0xb0);
 const ERROR_TEXT: Color = Color::from_rgb8(0xff, 0x80, 0x80);
+/// Darker shade than `PANEL_BG` so the field reads as carved into
+/// the panel rather than sitting on top of it.
+const FIELD_BG: Color = Color::from_rgb8(0x0c, 0x1c, 0x12);
+const FIELD_BORDER: Color = Color::from_rgba8(0xff, 0xff, 0xff, 0x55);
+/// Focused state — same accent yellow as the dialog title so the
+/// glow ties the active field back to the dialog brand.
+const FIELD_BORDER_FOCUSED: Color = Color::from_rgb8(0xff, 0xd7, 0x00);
 const BTN_BG: Color = Color::from_rgb8(0x1f, 0x4d, 0x2e);
 const BTN_BG_HOVER: Color = Color::from_rgb8(0x29, 0x68, 0x3e);
 const BTN_BORDER: Color = Color::from_rgba8(0xff, 0xff, 0xff, 0x80);
+
+/// Match the dialog's dark-green palette. The TextField reads from
+/// `theme` instead of the ambient `visuals()`, so the field sits
+/// flush in the panel instead of contrasting against it with the
+/// agg-gui demo theme's lighter widget background.
+fn field_theme() -> TextFieldTheme {
+    TextFieldTheme {
+        background: Some(FIELD_BG),
+        text_color: Some(BODY_TEXT),
+        placeholder_color: Some(HINT_TEXT),
+        border_color: Some(FIELD_BORDER),
+        border_color_hovered: Some(FIELD_BORDER_FOCUSED),
+        border_color_focused: Some(FIELD_BORDER_FOCUSED),
+        cursor_color: Some(FIELD_BORDER_FOCUSED),
+        // Selection / unfocused-selection use a translucent gold so
+        // dragging across digits keeps the dialog's accent visible.
+        selection_bg: Some(Color::from_rgba8(0xff, 0xd7, 0x00, 0x55)),
+        selection_bg_unfocused: Some(Color::from_rgba8(0xff, 0xd7, 0x00, 0x33)),
+        border_radius: Some(6.0),
+    }
+}
 
 const PANEL_W: f64 = 460.0;
 const PANEL_H: f64 = 230.0;
@@ -81,6 +109,7 @@ impl PlayDealDialog {
             .with_text_cell(Rc::clone(&text_cell))
             .with_font_size(20.0)
             .with_padding(10.0)
+            .with_theme(field_theme())
             .with_char_filter(|c| {
                 c.is_ascii_digit() || c == 'x' || c == 'X' || c.is_ascii_hexdigit()
             })
