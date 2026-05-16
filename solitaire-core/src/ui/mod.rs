@@ -75,7 +75,7 @@ pub fn build_solitaire_app() -> (App, SharedModel) {
 
     let title = TitleWidget::new(model.clone(), font.clone());
     let game = GameWidget::new(model.clone(), font.clone(), atlas);
-    let hud = HudWidget::new(model.clone(), font.clone());
+    let hud = HudWidget::new(model.clone(), font.clone(), fa_font.clone());
     let menu = MenuBarHost::new(model.clone(), font.clone());
     let sidebar_menu = SidebarMenuHost::new(model.clone(), font.clone());
     let help = HelpDialog::new(model.clone(), font.clone());

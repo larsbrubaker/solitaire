@@ -1,36 +1,53 @@
-//! HUD widget — Undo / New Deal / (Shuffle) / Main Menu buttons plus the
-//! Mom's-Solitaire shuffle counter. Visible whenever a game is active.
+//! HUD widget — action buttons (Undo / New Deal / Hint / Shuffle /
+//! Main Menu / Full Screen) plus the Mom's-Solitaire shuffle
+//! counter. Visible whenever a game is active.
 //!
-//! Paints in viewport coordinates rather than the virtual playfield
-//! coordinate space so it can switch between two chrome layouts driven
-//! by [`layout::compute`]:
+//! Each action is an `agg_gui::widgets::Button` with a Font Awesome
+//! glyph painted to the left of its label. The buttons live in
+//! `self.children` and the framework's hit-test + paint walk does
+//! the heavy lifting — the HUD itself just decides which subset
+//! to show for the active variant and positions them in either:
 //!
-//! * `ChromeMode::Standard` — horizontal strip across the bottom of the
-//!   viewport. Default for desktop and portrait phones.
-//! * `ChromeMode::Sidebar` — vertical column on the LEFT side of the
-//!   viewport with the menu bar still pinned to the top. Used on
-//!   landscape-mobile so the playfield gets the full window height.
+//! * `ChromeMode::Standard` — horizontal strip across the bottom
+//!   of the viewport. Default for desktop and portrait phones.
+//! * `ChromeMode::Sidebar` — vertical column on the LEFT side of
+//!   the viewport with the menu bar still pinned to the top. Used
+//!   on landscape-mobile so the playfield gets the full height.
 
 use std::sync::Arc;
 
 use agg_gui::color::Color;
 use agg_gui::draw_ctx::DrawCtx;
-use agg_gui::event::{Event, EventResult, Key, Modifiers, MouseButton};
+use agg_gui::event::{Event, EventResult, Key, Modifiers};
 use agg_gui::geometry::{Point, Rect, Size};
 use agg_gui::text::Font;
 use agg_gui::widget::Widget;
+use agg_gui::widgets::{Button, ButtonTheme, LabelAlign};
 
 use super::app_model::{Screen, SharedModel};
+use super::icons::{FA_BARS, FA_EXPAND, FA_HOME, FA_LIGHTBULB, FA_REFRESH, FA_UNDO};
 use super::layout::{self, ChromeMode};
 
 const HUD_BG: Color = Color::from_rgba8(0x09, 0x52, 0x2c, 0xe0);
 const BTN_BG: Color = Color::from_rgb8(0x1f, 0x4d, 0x2e);
 const BTN_BG_HOVER: Color = Color::from_rgb8(0x29, 0x68, 0x3e);
+const BTN_BG_PRESSED: Color = Color::from_rgb8(0x18, 0x3d, 0x24);
 const BTN_BORDER: Color = Color::from_rgba8(0xff, 0xff, 0xff, 0x80);
+const BTN_TEXT: Color = Color::from_rgb8(0xff, 0xff, 0xff);
 const TXT: Color = Color::from_rgb8(0xff, 0xff, 0xff);
 
+/// Standard-mode button height + horizontal gap (horizontal strip).
+const STD_BTN_H: f64 = 36.0;
+const STD_BTN_GAP: f64 = 12.0;
+
+/// Sidebar-mode button height and vertical gap.
+const SIDE_BTN_H: f64 = 44.0;
+const SIDE_BTN_GAP: f64 = 10.0;
+const SIDE_PAD_X: f64 = 12.0;
+const SIDE_PAD_TOP: f64 = 12.0;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Btn {
+enum Action {
     Fullscreen,
     Undo,
     NewDeal,
@@ -39,152 +56,204 @@ enum Btn {
     Home,
 }
 
-/// Standard-mode button height/width and gap (horizontal strip).
-const STD_BTN_W: f64 = 120.0;
-const STD_BTN_H: f64 = 36.0;
-const STD_BTN_GAP: f64 = 12.0;
+impl Action {
+    fn label(self) -> &'static str {
+        match self {
+            Action::Fullscreen => "Full Screen",
+            Action::Undo => "Undo",
+            Action::NewDeal => "New Deal",
+            Action::Shuffle => "Shuffle",
+            Action::Hint => "Hint",
+            Action::Home => "Main Menu",
+        }
+    }
 
-/// Sidebar-mode button height and vertical gap. Width derives from the
-/// sidebar column width minus padding so buttons fit a 44-ish px tap
-/// target on a phone.
-const SIDE_BTN_H: f64 = 44.0;
-const SIDE_BTN_GAP: f64 = 10.0;
-const SIDE_PAD_X: f64 = 12.0;
-const SIDE_PAD_TOP: f64 = 12.0;
+    fn icon(self) -> char {
+        match self {
+            Action::Fullscreen => FA_EXPAND,
+            Action::Undo => FA_UNDO,
+            Action::NewDeal => FA_REFRESH,
+            // Shuffle reuses the refresh glyph — Mom's variant has
+            // no truly unique action so we use the same circular-
+            // arrows mark.
+            Action::Shuffle => FA_REFRESH,
+            Action::Hint => FA_LIGHTBULB,
+            Action::Home => FA_HOME,
+        }
+    }
+
+    fn invoke(self, model: &SharedModel) {
+        let mut m = model.borrow_mut();
+        match self {
+            Action::Fullscreen => {
+                drop(m);
+                crate::platform::request_toggle_fullscreen();
+                return;
+            }
+            Action::Undo => {
+                if let Some(s) = m.session.as_mut() {
+                    s.try_undo();
+                }
+                m.clear_spider_hint();
+            }
+            Action::NewDeal => {
+                if let Some(kind) = m.kind {
+                    m.request_new_deal(kind);
+                }
+            }
+            Action::Shuffle => {
+                m.try_moms_shuffle();
+            }
+            Action::Hint => m.show_hint(),
+            Action::Home => m.request_main_menu(),
+        }
+        agg_gui::animation::request_draw();
+    }
+}
+
+/// Shared HUD button theme — matches the green palette of the
+/// menu / dialogs.
+fn hud_button_theme() -> ButtonTheme {
+    ButtonTheme {
+        background: BTN_BG,
+        background_hovered: BTN_BG_HOVER,
+        background_pressed: BTN_BG_PRESSED,
+        label_color: BTN_TEXT,
+        border_radius: 8.0,
+        focus_ring_color: BTN_BORDER,
+        focus_ring_width: 1.5,
+    }
+}
 
 pub struct HudWidget {
     bounds: Rect,
     children: Vec<Box<dyn Widget>>,
     model: SharedModel,
     font: Arc<Font>,
-    hover: Option<Btn>,
+    fa_font: Arc<Font>,
+    /// Action assigned to each child button, parallel-indexed.
+    /// Rebuilt by `sync_children` when the active variant changes.
+    actions: Vec<Action>,
+    /// Last variant we built buttons for; used to detect the need
+    /// to rebuild the children vec.
+    last_actions: Vec<Action>,
 }
 
 impl HudWidget {
-    pub fn new(model: SharedModel, font: Arc<Font>) -> Self {
+    pub fn new(model: SharedModel, font: Arc<Font>, fa_font: Arc<Font>) -> Self {
         Self {
             bounds: Rect::default(),
             children: Vec::new(),
             model,
             font,
-            hover: None,
+            fa_font,
+            actions: Vec::new(),
+            last_actions: Vec::new(),
         }
     }
 
-    /// Buttons to render. Mom's Solitaire gets an extra `Shuffle`
-    /// between New Deal and Main Menu; Spider gets an extra `Hint`.
-    /// Everything else gets the standard three. The menu-bar / sidebar-
-    /// menu actions (Restart, Draw 1/3, Rules, About) live in the menu
-    /// widget — not duplicated here.
-    fn btns(&self) -> Vec<Btn> {
+    /// Buttons to render for the active variant. Mom's Solitaire
+    /// gets `Shuffle`; Spider + Klondike get `Hint`; everything
+    /// else gets the base four (Fullscreen / Undo / New Deal /
+    /// Main Menu).
+    fn actions_for(&self) -> Vec<Action> {
         match self.model.borrow().kind {
             Some(crate::games::GameKind::MomsSolitaire) => vec![
-                Btn::Fullscreen,
-                Btn::Undo,
-                Btn::NewDeal,
-                Btn::Shuffle,
-                Btn::Home,
+                Action::Fullscreen,
+                Action::Undo,
+                Action::NewDeal,
+                Action::Shuffle,
+                Action::Home,
             ],
-            // Hint button on Spider AND Klondike — both have a
-            // heuristic ranker (`best_spider_hint`, `best_klondike_hint`)
-            // that picks the recommended next move.
             Some(crate::games::GameKind::Spider)
             | Some(crate::games::GameKind::Klondike) => vec![
-                Btn::Fullscreen,
-                Btn::Undo,
-                Btn::NewDeal,
-                Btn::Hint,
-                Btn::Home,
+                Action::Fullscreen,
+                Action::Undo,
+                Action::NewDeal,
+                Action::Hint,
+                Action::Home,
             ],
-            _ => vec![Btn::Fullscreen, Btn::Undo, Btn::NewDeal, Btn::Home],
+            _ => vec![
+                Action::Fullscreen,
+                Action::Undo,
+                Action::NewDeal,
+                Action::Home,
+            ],
         }
     }
 
-    fn btn_label(&self, b: Btn) -> &'static str {
-        match b {
-            Btn::Fullscreen => "Full Screen",
-            Btn::Undo => "Undo",
-            Btn::NewDeal => "New Deal",
-            Btn::Shuffle => "Shuffle",
-            Btn::Hint => "Hint",
-            Btn::Home => "Main Menu",
+    /// Rebuild `self.children` if `actions_for()` changed since
+    /// the last call. Each button captures `self.model` + its
+    /// `Action` in its `on_click` closure.
+    fn sync_children(&mut self) {
+        let want = self.actions_for();
+        if want == self.last_actions {
+            return;
         }
+        let _ = FA_BARS; // reserved for the hamburger follow-up
+        self.children.clear();
+        self.actions.clear();
+        let font_size: f64 = 16.0;
+        for action in &want {
+            let model = self.model.clone();
+            let a = *action;
+            let btn = Button::new(action.label(), self.font.clone())
+                .with_font_size(font_size)
+                .with_theme(hud_button_theme())
+                .with_icon(action.icon(), self.fa_font.clone())
+                .with_label_align(LabelAlign::Center)
+                .on_click(move || a.invoke(&model));
+            self.children.push(Box::new(btn));
+            self.actions.push(*action);
+        }
+        self.last_actions = want;
     }
 
-    /// Resolve the current chrome layout for `self.bounds`.
     fn chrome(&self) -> layout::ChromeLayout {
         layout::compute(Size::new(self.bounds.width, self.bounds.height))
     }
 
-    /// Pixel rect for the `idx`-th button in viewport coords. `n` is the
-    /// total button count for the active variant.
-    fn btn_rect_for(&self, idx: usize, n: usize) -> (f64, f64, f64, f64) {
+    /// Position each button child for the active chrome mode.
+    /// Standard: horizontal strip; Sidebar: vertical column.
+    fn layout_buttons(&mut self) {
         let chrome = self.chrome();
         let hud = chrome.hud_rect;
+        let n = self.children.len();
+        if n == 0 {
+            return;
+        }
         match chrome.mode {
             ChromeMode::Standard => {
-                let total_w = n as f64 * STD_BTN_W + (n as f64 - 1.0) * STD_BTN_GAP;
+                // Ask each button for its natural width so wider
+                // labels (Localised strings, longer game names)
+                // grow the strip rather than truncating.
+                let probe = Size::new(hud.width, STD_BTN_H);
+                let widths: Vec<f64> = self
+                    .children
+                    .iter_mut()
+                    .map(|c| c.layout(probe).width)
+                    .collect();
+                let total_w: f64 = widths.iter().sum::<f64>() + STD_BTN_GAP * (n as f64 - 1.0);
                 let start_x = hud.x + (hud.width - total_w) / 2.0;
-                let x = start_x + idx as f64 * (STD_BTN_W + STD_BTN_GAP);
                 let y = hud.y + (hud.height - STD_BTN_H) / 2.0;
-                (x, y, STD_BTN_W, STD_BTN_H)
+                let mut x = start_x;
+                for (i, w) in widths.iter().enumerate() {
+                    self.children[i].set_bounds(Rect::new(x, y, *w, STD_BTN_H));
+                    x += *w + STD_BTN_GAP;
+                }
             }
             ChromeMode::Sidebar => {
                 let btn_w = hud.width - SIDE_PAD_X * 2.0;
                 let x = hud.x + SIDE_PAD_X;
-                // Y-up: idx 0 is the TOP-most button in the column. The
-                // top of the column is at hud.y + hud.height.
                 let top_of_first = hud.y + hud.height - SIDE_PAD_TOP;
-                let y = top_of_first - SIDE_BTN_H - idx as f64 * (SIDE_BTN_H + SIDE_BTN_GAP);
-                (x, y, btn_w, SIDE_BTN_H)
-            }
-        }
-    }
-
-    fn hit_btn_at(&self, px: f64, py: f64) -> Option<Btn> {
-        let btns = self.btns();
-        let n = btns.len();
-        for (i, b) in btns.iter().enumerate() {
-            let (x, y, w, h) = self.btn_rect_for(i, n);
-            if px >= x && px <= x + w && py >= y && py <= y + h {
-                return Some(*b);
-            }
-        }
-        None
-    }
-
-    fn click_at(&mut self, px: f64, py: f64) -> bool {
-        let Some(b) = self.hit_btn_at(px, py) else {
-            return false;
-        };
-        let mut model = self.model.borrow_mut();
-        match b {
-            Btn::Fullscreen => {
-                crate::platform::request_toggle_fullscreen();
-            }
-            Btn::Undo => {
-                if let Some(s) = model.session.as_mut() {
-                    s.try_undo();
-                }
-                model.clear_spider_hint();
-            }
-            Btn::NewDeal => {
-                if let Some(kind) = model.kind {
-                    model.request_new_deal(kind);
+                for (i, child) in self.children.iter_mut().enumerate() {
+                    let y =
+                        top_of_first - SIDE_BTN_H - i as f64 * (SIDE_BTN_H + SIDE_BTN_GAP);
+                    child.set_bounds(Rect::new(x, y, btn_w, SIDE_BTN_H));
+                    child.layout(Size::new(btn_w, SIDE_BTN_H));
                 }
             }
-            Btn::Shuffle => {
-                model.try_moms_shuffle();
-            }
-            Btn::Hint => {
-                model.show_hint();
-            }
-            Btn::Home => {
-                model.request_main_menu();
-            }
         }
-        agg_gui::animation::request_draw();
-        true
     }
 
     fn paint_strip(&self, ctx: &mut dyn DrawCtx, hud: Rect) {
@@ -194,39 +263,7 @@ impl HudWidget {
         ctx.fill();
     }
 
-    fn paint_btn(&self, ctx: &mut dyn DrawCtx, idx: usize, b: Btn, n: usize) {
-        let (x, y, w, h) = self.btn_rect_for(idx, n);
-        let bg = if self.hover == Some(b) {
-            BTN_BG_HOVER
-        } else {
-            BTN_BG
-        };
-        ctx.begin_path();
-        ctx.rounded_rect(x, y, w, h, 8.0);
-        ctx.set_fill_color(bg);
-        ctx.fill();
-        ctx.begin_path();
-        ctx.rounded_rect(x, y, w, h, 8.0);
-        ctx.set_stroke_color(BTN_BORDER);
-        ctx.set_line_width(1.5);
-        ctx.stroke();
-
-        ctx.set_fill_color(TXT);
-        ctx.set_font(self.font.clone());
-        ctx.set_font_size(18.0);
-        let label = self.btn_label(b);
-        let Some(m) = ctx.measure_text(label) else {
-            return;
-        };
-        let lx = x + (w - m.width) / 2.0;
-        let ly = y + m.centered_baseline_y(h);
-        ctx.fill_text(label, lx, ly);
-    }
-
-    /// Position + paint the Mom's-Solitaire shuffle counter. Tucked
-    /// against the leading edge of the HUD in Standard mode and below
-    /// the button stack in Sidebar mode so it never collides with the
-    /// buttons.
+    /// Position + paint the Mom's-Solitaire shuffle counter.
     fn paint_moms_counter(&self, ctx: &mut dyn DrawCtx) {
         let model = self.model.borrow();
         if !matches!(model.kind, Some(crate::games::GameKind::MomsSolitaire)) {
@@ -249,9 +286,6 @@ impl HudWidget {
                 ctx.fill_text(&label, hud.x + 18.0, baseline);
             }
             ChromeMode::Sidebar => {
-                // Place the counter near the BOTTOM of the sidebar
-                // column (small numerical y in Y-up) so it's out of the
-                // way of the button stack at the top.
                 let baseline_y = hud.y + 12.0;
                 let lx = hud.x + (hud.width - m.width) / 2.0;
                 ctx.fill_text(&label, lx, baseline_y);
@@ -277,6 +311,8 @@ impl Widget for HudWidget {
         &mut self.children
     }
     fn layout(&mut self, available: Size) -> Size {
+        self.sync_children();
+        self.layout_buttons();
         available
     }
 
@@ -285,11 +321,11 @@ impl Widget for HudWidget {
         matches!(s, Screen::Game | Screen::Won)
     }
 
-    /// Only claim pointer events that fall inside the HUD rect for the
-    /// current chrome mode. Without this override the widget's full-
-    /// bounds default would swallow every click on the playfield and
-    /// `GameWidget` (added earlier in the OverlayStack) would never
-    /// receive a drag start.
+    /// Only claim pointer events that fall inside the HUD rect for
+    /// the current chrome mode. Without this override the widget's
+    /// full-bounds default would swallow every click on the
+    /// playfield and `GameWidget` (added earlier in the
+    /// OverlayStack) would never receive a drag start.
     fn hit_test(&self, local_pos: Point) -> bool {
         let hud = self.chrome().hud_rect;
         local_pos.x >= hud.x
@@ -301,47 +337,21 @@ impl Widget for HudWidget {
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
         let chrome = self.chrome();
         self.paint_strip(ctx, chrome.hud_rect);
-        let btns = self.btns();
-        let n = btns.len();
-        for (i, b) in btns.iter().enumerate() {
-            self.paint_btn(ctx, i, *b, n);
-        }
         self.paint_moms_counter(ctx);
+        // The Button children paint themselves through the
+        // framework's child walk after this method returns.
     }
 
-    fn on_event(&mut self, event: &Event) -> EventResult {
+    fn on_event(&mut self, _event: &Event) -> EventResult {
         if !self.is_visible() {
             return EventResult::Ignored;
         }
-        let hud = self.chrome().hud_rect;
-        let inside = |p: Point| -> bool {
-            p.x >= hud.x && p.x <= hud.x + hud.width && p.y >= hud.y && p.y <= hud.y + hud.height
-        };
-        match event {
-            Event::MouseDown {
-                pos,
-                button: MouseButton::Left,
-                ..
-            } => {
-                if inside(*pos) && self.click_at(pos.x, pos.y) {
-                    return EventResult::Consumed;
-                }
-                EventResult::Ignored
-            }
-            Event::MouseMove { pos } => {
-                let new_hover = if inside(*pos) {
-                    self.hit_btn_at(pos.x, pos.y)
-                } else {
-                    None
-                };
-                if new_hover != self.hover {
-                    self.hover = new_hover;
-                    agg_gui::animation::request_draw();
-                }
-                EventResult::Ignored
-            }
-            _ => EventResult::Ignored,
-        }
+        // The Button children receive their own mouse events via
+        // the framework's hit-test descent. We don't need any
+        // local handling — let events fall through (Ignored) so
+        // the playfield below sees them when the click misses the
+        // HUD rect.
+        EventResult::Ignored
     }
 
     /// Game-screen hotkeys. The framework only calls this if no
