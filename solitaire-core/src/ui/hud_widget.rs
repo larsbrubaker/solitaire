@@ -54,6 +54,11 @@ enum Action {
     Shuffle,
     Hint,
     Home,
+    /// Pseudo-action used in compact mode — clicking the
+    /// hamburger toggles `model.hud_hamburger_open`. Doesn't
+    /// appear in `actions_for()`; only `sync_children` may
+    /// inject it at index 0.
+    Hamburger,
 }
 
 impl Action {
@@ -65,6 +70,7 @@ impl Action {
             Action::Shuffle => "Shuffle",
             Action::Hint => "Hint",
             Action::Home => "Main Menu",
+            Action::Hamburger => "Menu",
         }
     }
 
@@ -79,6 +85,7 @@ impl Action {
             Action::Shuffle => FA_REFRESH,
             Action::Hint => FA_LIGHTBULB,
             Action::Home => FA_HOME,
+            Action::Hamburger => FA_BARS,
         }
     }
 
@@ -95,17 +102,29 @@ impl Action {
                     s.try_undo();
                 }
                 m.clear_spider_hint();
+                m.hud_hamburger_open = false;
             }
             Action::NewDeal => {
                 if let Some(kind) = m.kind {
                     m.request_new_deal(kind);
                 }
+                m.hud_hamburger_open = false;
             }
             Action::Shuffle => {
                 m.try_moms_shuffle();
+                m.hud_hamburger_open = false;
             }
-            Action::Hint => m.show_hint(),
-            Action::Home => m.request_main_menu(),
+            Action::Hint => {
+                m.show_hint();
+                m.hud_hamburger_open = false;
+            }
+            Action::Home => {
+                m.request_main_menu();
+                m.hud_hamburger_open = false;
+            }
+            Action::Hamburger => {
+                m.hud_hamburger_open = !m.hud_hamburger_open;
+            }
         }
         agg_gui::animation::request_draw();
     }
@@ -184,16 +203,23 @@ impl HudWidget {
 
     /// Rebuild `self.children` if `actions_for()` changed since
     /// the last call. Each button captures `self.model` + its
-    /// `Action` in its `on_click` closure.
+    /// `Action` in its `on_click` closure. The hamburger button
+    /// (Action::Hamburger) is always appended at the end — it's
+    /// only visible in compact mode, but we keep it built so we
+    /// don't have to rebuild the entire vec when the viewport
+    /// resizes between wide and narrow.
     fn sync_children(&mut self) {
-        let want = self.actions_for();
+        let mut want = self.actions_for();
         if want == self.last_actions {
             return;
         }
-        let _ = FA_BARS; // reserved for the hamburger follow-up
         self.children.clear();
         self.actions.clear();
         let font_size: f64 = 16.0;
+        // Append the hamburger after the per-variant actions.
+        // Layout decides which subset gets visible bounds based on
+        // available width + popup state.
+        want.push(Action::Hamburger);
         for action in &want {
             let model = self.model.clone();
             let a = *action;
@@ -209,12 +235,42 @@ impl HudWidget {
         self.last_actions = want;
     }
 
+    /// Index of the hamburger child (always last after
+    /// `sync_children`).
+    fn hamburger_idx(&self) -> usize {
+        self.children.len().saturating_sub(1)
+    }
+
+    fn hamburger_open(&self) -> bool {
+        self.model.borrow().hud_hamburger_open
+    }
+
+    /// Total horizontal width the per-variant action buttons want
+    /// when laid out side by side. Returns the sum of their
+    /// natural widths + the gaps between them. Used to decide
+    /// whether to switch to compact (hamburger) mode.
+    fn measure_action_strip(&mut self) -> f64 {
+        let mut total = 0.0;
+        let probe = Size::new(self.bounds.width, STD_BTN_H);
+        let action_count = self.children.len().saturating_sub(1);
+        for i in 0..action_count {
+            let w = self.children[i].layout(probe).width;
+            total += w;
+        }
+        if action_count > 1 {
+            total += STD_BTN_GAP * (action_count as f64 - 1.0);
+        }
+        total
+    }
+
     fn chrome(&self) -> layout::ChromeLayout {
         layout::compute(Size::new(self.bounds.width, self.bounds.height))
     }
 
     /// Position each button child for the active chrome mode.
-    /// Standard: horizontal strip; Sidebar: vertical column.
+    /// Standard: horizontal strip; if too narrow, collapses to a
+    /// left-edge hamburger that toggles a vertical popup. Sidebar:
+    /// vertical column.
     fn layout_buttons(&mut self) {
         let chrome = self.chrome();
         let hud = chrome.hud_rect;
@@ -222,36 +278,82 @@ impl HudWidget {
         if n == 0 {
             return;
         }
+        let ham = self.hamburger_idx();
+        let popup_open = self.hamburger_open();
         match chrome.mode {
             ChromeMode::Standard => {
-                // Ask each button for its natural width so wider
-                // labels (Localised strings, longer game names)
-                // grow the strip rather than truncating.
-                let probe = Size::new(hud.width, STD_BTN_H);
-                let widths: Vec<f64> = self
-                    .children
-                    .iter_mut()
-                    .map(|c| c.layout(probe).width)
-                    .collect();
-                let total_w: f64 = widths.iter().sum::<f64>() + STD_BTN_GAP * (n as f64 - 1.0);
-                let start_x = hud.x + (hud.width - total_w) / 2.0;
-                let y = hud.y + (hud.height - STD_BTN_H) / 2.0;
-                let mut x = start_x;
-                for (i, w) in widths.iter().enumerate() {
-                    self.children[i].set_bounds(Rect::new(x, y, *w, STD_BTN_H));
-                    x += *w + STD_BTN_GAP;
+                let action_count = n.saturating_sub(1);
+                let strip_w = self.measure_action_strip();
+                let compact = strip_w + STD_BTN_GAP * 2.0 > hud.width;
+                if !compact {
+                    // Wide enough: lay actions in a centered strip
+                    // and stash the hamburger off-screen so it
+                    // doesn't paint or accept clicks.
+                    let probe = Size::new(hud.width, STD_BTN_H);
+                    let widths: Vec<f64> = (0..action_count)
+                        .map(|i| self.children[i].layout(probe).width)
+                        .collect();
+                    let total_w: f64 =
+                        widths.iter().sum::<f64>() + STD_BTN_GAP * (action_count as f64 - 1.0);
+                    let start_x = hud.x + (hud.width - total_w) / 2.0;
+                    let y = hud.y + (hud.height - STD_BTN_H) / 2.0;
+                    let mut x = start_x;
+                    for (i, w) in widths.iter().enumerate() {
+                        self.children[i].set_bounds(Rect::new(x, y, *w, STD_BTN_H));
+                        x += *w + STD_BTN_GAP;
+                    }
+                    self.children[ham].set_bounds(Rect::new(-9999.0, -9999.0, 0.0, 0.0));
+                } else {
+                    // Compact: hamburger at the left edge of the
+                    // HUD; action buttons either off-screen (popup
+                    // closed) or stacked vertically above the
+                    // hamburger (popup open).
+                    let probe = Size::new(hud.width, STD_BTN_H);
+                    let ham_w = self.children[ham].layout(probe).width;
+                    let ham_y = hud.y + (hud.height - STD_BTN_H) / 2.0;
+                    let ham_x = hud.x + STD_BTN_GAP;
+                    self.children[ham].set_bounds(Rect::new(ham_x, ham_y, ham_w, STD_BTN_H));
+                    if popup_open {
+                        // Find the widest action button so the
+                        // column has a uniform width.
+                        let widths: Vec<f64> = (0..action_count)
+                            .map(|i| self.children[i].layout(probe).width)
+                            .collect();
+                        let col_w = widths
+                            .iter()
+                            .cloned()
+                            .fold(0.0_f64, f64::max)
+                            .max(ham_w);
+                        let col_x = ham_x;
+                        // Stack upward from above the HUD strip.
+                        let bottom = hud.y + hud.height + STD_BTN_GAP;
+                        for (i, _w) in widths.iter().enumerate() {
+                            let y = bottom + i as f64 * (STD_BTN_H + STD_BTN_GAP);
+                            self.children[i].set_bounds(Rect::new(col_x, y, col_w, STD_BTN_H));
+                        }
+                    } else {
+                        for i in 0..action_count {
+                            self.children[i]
+                                .set_bounds(Rect::new(-9999.0, -9999.0, 0.0, 0.0));
+                        }
+                    }
                 }
             }
             ChromeMode::Sidebar => {
+                // Sidebar mode keeps the legacy vertical stack;
+                // hamburger stays hidden.
+                let action_count = n.saturating_sub(1);
                 let btn_w = hud.width - SIDE_PAD_X * 2.0;
                 let x = hud.x + SIDE_PAD_X;
                 let top_of_first = hud.y + hud.height - SIDE_PAD_TOP;
-                for (i, child) in self.children.iter_mut().enumerate() {
-                    let y =
-                        top_of_first - SIDE_BTN_H - i as f64 * (SIDE_BTN_H + SIDE_BTN_GAP);
-                    child.set_bounds(Rect::new(x, y, btn_w, SIDE_BTN_H));
-                    child.layout(Size::new(btn_w, SIDE_BTN_H));
+                for i in 0..action_count {
+                    let y = top_of_first
+                        - SIDE_BTN_H
+                        - i as f64 * (SIDE_BTN_H + SIDE_BTN_GAP);
+                    self.children[i].set_bounds(Rect::new(x, y, btn_w, SIDE_BTN_H));
+                    self.children[i].layout(Size::new(btn_w, SIDE_BTN_H));
                 }
+                self.children[ham].set_bounds(Rect::new(-9999.0, -9999.0, 0.0, 0.0));
             }
         }
     }
@@ -321,17 +423,43 @@ impl Widget for HudWidget {
         matches!(s, Screen::Game | Screen::Won)
     }
 
-    /// Only claim pointer events that fall inside the HUD rect for
-    /// the current chrome mode. Without this override the widget's
-    /// full-bounds default would swallow every click on the
-    /// playfield and `GameWidget` (added earlier in the
-    /// OverlayStack) would never receive a drag start.
+    /// Only claim pointer events that fall inside the HUD rect (or
+    /// the open hamburger popup) for the current chrome mode.
+    /// Without this override the widget's full-bounds default
+    /// would swallow every click on the playfield and `GameWidget`
+    /// (added earlier in the OverlayStack) would never receive a
+    /// drag start.
     fn hit_test(&self, local_pos: Point) -> bool {
         let hud = self.chrome().hud_rect;
-        local_pos.x >= hud.x
+        let in_strip = local_pos.x >= hud.x
             && local_pos.x <= hud.x + hud.width
             && local_pos.y >= hud.y
-            && local_pos.y <= hud.y + hud.height
+            && local_pos.y <= hud.y + hud.height;
+        if in_strip {
+            return true;
+        }
+        // When the hamburger popup is open the action buttons
+        // float above the HUD strip — claim their rect too so
+        // the click reaches the popup button via the framework's
+        // hit-test descent.
+        if self.hamburger_open() {
+            // Union of all action-button bounds (the popup
+            // column).
+            let action_count = self.children.len().saturating_sub(1);
+            for i in 0..action_count {
+                let b = self.children[i].bounds();
+                if b.width > 0.0
+                    && b.height > 0.0
+                    && local_pos.x >= b.x
+                    && local_pos.x <= b.x + b.width
+                    && local_pos.y >= b.y
+                    && local_pos.y <= b.y + b.height
+                {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
