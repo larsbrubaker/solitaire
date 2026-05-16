@@ -24,7 +24,7 @@ use crate::cards::Suit;
 use crate::games::GameKind;
 
 use super::app_model::{AppModel, HelpKind, SharedModel};
-use super::layout::{self, ChromeMode, SIDEBAR_MENU_H, SIDEBAR_W};
+use super::layout;
 
 /// Snapshot of every `AppModel` field that affects the menu's text or
 /// radio state. The hosts compare a freshly-computed snapshot against
@@ -100,30 +100,8 @@ impl MenuBarHost {
     }
 }
 
-/// Vertical menu strip pinned to the TOP of the left sidebar. Only
-/// visible in `ChromeMode::Sidebar`. Each top menu (Game / Options /
-/// Help) is a row that opens its popup to the right.
-pub struct SidebarMenuHost {
-    bounds: Rect,
-    children: Vec<Box<dyn Widget>>,
-    model: SharedModel,
-    font: Arc<Font>,
-    current_snapshot: MenuSnapshot,
-}
-
-impl SidebarMenuHost {
-    pub fn new(model: SharedModel, font: Arc<Font>) -> Self {
-        let snapshot = MenuSnapshot::from(&model.borrow());
-        let bar = build_menu_bar(model.clone(), font.clone(), MenuOrientation::Vertical);
-        Self {
-            bounds: Rect::default(),
-            children: vec![Box::new(bar)],
-            model,
-            font,
-            current_snapshot: snapshot,
-        }
-    }
-}
+// `SidebarMenuHost` removed — the bottom-bar layout is the only
+// chrome mode now (see `layout::compute`).
 
 fn build_menu_bar(model: SharedModel, font: Arc<Font>, orientation: MenuOrientation) -> MenuBar {
     let menus = build_menus(&model.borrow());
@@ -136,24 +114,26 @@ fn build_menu_bar(model: SharedModel, font: Arc<Font>, orientation: MenuOrientat
     .with_orientation(orientation)
 }
 
-/// Build the menu structure for the variant currently in `model`. The
-/// Game and Help menus are universal; the Options menu is per-variant
-/// for variant-specific rules (Klondike draw count, Spider suits) but
-/// always carries Toggle Fullscreen + the Debug submenu so the
-/// player can always reach those even on the title screen.
+/// Build the menu structure for the variant currently in `model`.
+///
+/// Single top-level "Menu" entry whose popup is a 3-row list of
+/// **Game / Options / Help** submenus — i.e. one button on the
+/// menu bar, two clicks to reach any leaf action. The previous
+/// three-button bar (Game / Options / Help) was driving the
+/// bar's natural width past the available HUD strip in narrow
+/// viewports; nesting it all under one entry keeps the bar
+/// compact and matches the "hamburger of menus" pattern.
 fn build_menus(model: &AppModel) -> Vec<TopMenu> {
-    // Title screen has no active game, so the Game menu (Undo / New
-    // Deal / Restart / Main Menu) has nothing to act on — strip it.
-    let mut menus = Vec::with_capacity(3);
+    let mut items: Vec<MenuEntry> = Vec::new();
     if model.session.is_some() {
-        menus.push(game_menu(model));
+        items.push(MenuItem::submenu("Game", game_menu_items(model)).into());
     }
-    menus.push(options_menu(model, model.kind));
-    menus.push(help_menu(model));
-    menus
+    items.push(MenuItem::submenu("Options", options_menu_items(model, model.kind)).into());
+    items.push(MenuItem::submenu("Help", help_menu_items(model)).into());
+    vec![TopMenu::new("Menu", items)]
 }
 
-fn game_menu(model: &AppModel) -> TopMenu {
+fn game_menu_items(model: &AppModel) -> Vec<MenuEntry> {
     let mut items: Vec<MenuEntry> = Vec::new();
     if model.session.is_some() {
         items.push(
@@ -188,7 +168,7 @@ fn game_menu(model: &AppModel) -> TopMenu {
     items.push(MenuItem::action("Restart this Deal", "restart").into());
     items.push(MenuEntry::Separator);
     items.push(MenuItem::action("Back to Main Menu", "title").into());
-    TopMenu::new("Game", items)
+    items
 }
 
 /// Format the active session's deal identifier for the disabled
@@ -207,7 +187,7 @@ fn current_deal_label(model: &AppModel) -> Option<String> {
     Some(label)
 }
 
-fn help_menu(model: &AppModel) -> TopMenu {
+fn help_menu_items(model: &AppModel) -> Vec<MenuEntry> {
     let mut items: Vec<MenuEntry> = Vec::new();
     // Per-game About sits ON TOP when a game is active. The suite-
     // level About below it talks about OneAndDone.games and the
@@ -217,10 +197,10 @@ fn help_menu(model: &AppModel) -> TopMenu {
         items.push(MenuItem::action(label, "help-about").into());
     }
     items.push(MenuItem::action("About\u{2026}", "help-about-suite").into());
-    TopMenu::new("Help", items)
+    items
 }
 
-fn options_menu(model: &AppModel, kind: Option<GameKind>) -> TopMenu {
+fn options_menu_items(model: &AppModel, kind: Option<GameKind>) -> Vec<MenuEntry> {
     let mut items: Vec<MenuEntry> = Vec::new();
     match kind {
         Some(GameKind::Klondike) => {
@@ -305,7 +285,7 @@ fn options_menu(model: &AppModel, kind: Option<GameKind>) -> TopMenu {
     items.push(MenuItem::action("Toggle Fullscreen", "toggle-fullscreen").into());
     items.push(MenuEntry::Separator);
     items.push(debug_menu(model).into());
-    TopMenu::new("Options", items)
+    items
 }
 
 /// Developer-only submenu nested under Options.  Currently hosts a
@@ -437,29 +417,6 @@ impl MenuBarHost {
     }
 }
 
-impl SidebarMenuHost {
-    fn sync_state(&mut self) {
-        let snapshot = MenuSnapshot::from(&self.model.borrow());
-        if self.current_snapshot == snapshot {
-            return;
-        }
-        self.current_snapshot = snapshot;
-        let bar = build_menu_bar(
-            self.model.clone(),
-            self.font.clone(),
-            MenuOrientation::Vertical,
-        );
-        self.children = vec![Box::new(bar)];
-        let strip_y = self.bounds.y + self.bounds.height - SIDEBAR_MENU_H;
-        let bar_rect = Rect::new(self.bounds.x, strip_y, SIDEBAR_W, SIDEBAR_MENU_H);
-        if let Some(bar) = self.children.first_mut() {
-            bar.layout(Size::new(SIDEBAR_W, SIDEBAR_MENU_H));
-            bar.set_bounds(bar_rect);
-        }
-        agg_gui::animation::request_draw();
-    }
-}
-
 impl Widget for MenuBarHost {
     fn type_name(&self) -> &'static str {
         "MenuBarHost"
@@ -490,13 +447,12 @@ impl Widget for MenuBarHost {
         available
     }
     fn is_visible(&self) -> bool {
-        // Visible on every screen — the title screen wants the same
-        // Options/Help menus the gameplay screens get (so e.g. the
-        // Debug submenu and Toggle Fullscreen are always reachable).
-        // Hide only when the chrome layout is in sidebar mode, where
-        // the same actions live in the vertical `SidebarMenuHost`.
-        let chrome = layout::compute(Size::new(self.bounds.width, self.bounds.height));
-        chrome.mode != ChromeMode::Sidebar
+        // Visible on every screen — the title screen wants the
+        // same Options/Help menus the gameplay screens get (so
+        // e.g. the Debug submenu and Toggle Fullscreen are always
+        // reachable). No more sidebar variant to hide for; the
+        // bottom strip is always the active chrome.
+        true
     }
     /// Claim only the bottom MENU_BAR_H pixels for ordinary input;
     /// without this the OverlayStack's top→bottom hit-test stops
@@ -523,65 +479,6 @@ impl Widget for MenuBarHost {
     }
 }
 
-impl Widget for SidebarMenuHost {
-    fn type_name(&self) -> &'static str {
-        "SidebarMenuHost"
-    }
-    fn bounds(&self) -> Rect {
-        self.bounds
-    }
-    fn set_bounds(&mut self, bounds: Rect) {
-        self.bounds = bounds;
-        let strip_x = bounds.x;
-        let strip_w = SIDEBAR_W;
-        let strip_h = SIDEBAR_MENU_H;
-        let strip_y = bounds.y + bounds.height - strip_h;
-        let bar_rect = Rect::new(strip_x, strip_y, strip_w, strip_h);
-        if let Some(bar) = self.children.first_mut() {
-            bar.set_bounds(bar_rect);
-        }
-    }
-    fn children(&self) -> &[Box<dyn Widget>] {
-        &self.children
-    }
-    fn children_mut(&mut self) -> &mut Vec<Box<dyn Widget>> {
-        &mut self.children
-    }
-    fn layout(&mut self, available: Size) -> Size {
-        if let Some(bar) = self.children.first_mut() {
-            bar.layout(Size::new(SIDEBAR_W, SIDEBAR_MENU_H));
-        }
-        available
-    }
-    fn is_visible(&self) -> bool {
-        // Mirror the menu-on-every-screen rule from `MenuBarHost`: the
-        // sidebar variant only kicks in for landscape-mobile-shaped
-        // viewports, so visibility just gates on chrome mode (not on
-        // whether a game is in progress).
-        let chrome = layout::compute(Size::new(self.bounds.width, self.bounds.height));
-        chrome.mode == ChromeMode::Sidebar
-    }
-    fn hit_test(&self, local_pos: Point) -> bool {
-        if !self.is_visible() {
-            return false;
-        }
-        let top = self.bounds.height;
-        let bottom = self.bounds.height - SIDEBAR_MENU_H;
-        local_pos.x >= 0.0
-            && local_pos.x <= SIDEBAR_W
-            && local_pos.y >= bottom
-            && local_pos.y <= top
-    }
-    fn paint(&mut self, _ctx: &mut dyn DrawCtx) {
-        self.sync_state();
-    }
-    fn on_event(&mut self, _event: &Event) -> EventResult {
-        EventResult::Ignored
-    }
-    fn needs_draw(&self) -> bool {
-        self.children.iter().any(|c| c.needs_draw())
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -765,10 +662,14 @@ mod tests {
             "fresh AppModel must start on the title screen"
         );
         let menus = build_menus(&m);
-        let titles: Vec<&str> = menus.iter().map(|t| t.label.as_str()).collect();
+        // Single top-level "Menu" entry with Game/Options/Help as
+        // submenus underneath.
+        assert_eq!(menus.len(), 1);
+        assert_eq!(menus[0].label, "Menu");
+        let labels = submenu_labels(&menus[0].items);
         assert!(
-            titles.contains(&"Options"),
-            "Options menu should be visible on the title screen, got {titles:?}"
+            labels.contains(&"Options".to_string()),
+            "Options submenu should be present on the title screen, got {labels:?}"
         );
     }
 
@@ -778,8 +679,8 @@ mod tests {
         // The Debug submenu hosts a single "Performance Window" entry
         // (no separate Debug Mode gate — opening the window IS the
         // debug intent).  Visible on every screen, including the title.
-        let menu = options_menu(&m, m.kind);
-        let debug = find_submenu(&menu, "Debug").expect("Debug submenu");
+        let items = options_menu_items(&m, m.kind);
+        let debug = find_submenu(&items, "Debug").expect("Debug submenu");
         assert_eq!(
             visible_action_labels(&debug),
             vec!["Performance Window", "Generate Seed Games\u{2026}"]
@@ -793,11 +694,21 @@ mod tests {
         assert!(!m.show_performance_window.get());
     }
 
-    /// Walk a top-level menu's entries and return a clone of the
-    /// nested submenu whose label matches `title`.  Used by the Debug-
-    /// menu tests above to assert what the user sees.
-    fn find_submenu(menu: &TopMenu, title: &str) -> Option<MenuItem> {
-        for entry in &menu.items {
+    fn submenu_labels(items: &[MenuEntry]) -> Vec<String> {
+        items
+            .iter()
+            .filter_map(|e| match e {
+                MenuEntry::Item(it) if it.has_submenu() => Some(it.label.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Walk an entry list and return a clone of the nested submenu
+    /// whose label matches `title`.  Used by the Debug-menu tests
+    /// above to assert what the user sees.
+    fn find_submenu(items: &[MenuEntry], title: &str) -> Option<MenuItem> {
+        for entry in items {
             if let MenuEntry::Item(item) = entry {
                 if item.label == title && item.has_submenu() {
                     return Some(item.clone());

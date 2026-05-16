@@ -6,13 +6,11 @@
 //! glyph painted to the left of its label. The buttons live in
 //! `self.children` and the framework's hit-test + paint walk does
 //! the heavy lifting — the HUD itself just decides which subset
-//! to show for the active variant and positions them in either:
-//!
-//! * `ChromeMode::Standard` — horizontal strip across the bottom
-//!   of the viewport. Default for desktop and portrait phones.
-//! * `ChromeMode::Sidebar` — vertical column on the LEFT side of
-//!   the viewport with the menu bar still pinned to the top. Used
-//!   on landscape-mobile so the playfield gets the full height.
+//! to show for the active variant and positions them as a
+//! horizontal strip at the bottom of the viewport (just above
+//! the menu bar). When the strip's natural width exceeds the
+//! viewport, the buttons collapse to a right-edge hamburger that
+//! toggles a vertical popup column.
 
 use std::sync::Arc;
 
@@ -26,7 +24,7 @@ use agg_gui::widgets::{Button, ButtonTheme, LabelAlign};
 
 use super::app_model::{Screen, SharedModel};
 use super::icons::{FA_BARS, FA_EXPAND, FA_HOME, FA_LIGHTBULB, FA_REFRESH, FA_UNDO};
-use super::layout::{self, ChromeMode};
+use super::layout;
 
 const HUD_BG: Color = Color::from_rgba8(0x09, 0x52, 0x2c, 0xe0);
 const BTN_BG: Color = Color::from_rgb8(0x1f, 0x4d, 0x2e);
@@ -36,15 +34,9 @@ const BTN_BORDER: Color = Color::from_rgba8(0xff, 0xff, 0xff, 0x80);
 const BTN_TEXT: Color = Color::from_rgb8(0xff, 0xff, 0xff);
 const TXT: Color = Color::from_rgb8(0xff, 0xff, 0xff);
 
-/// Standard-mode button height + horizontal gap (horizontal strip).
+/// Button height + horizontal gap for the bottom strip.
 const STD_BTN_H: f64 = 36.0;
 const STD_BTN_GAP: f64 = 12.0;
-
-/// Sidebar-mode button height and vertical gap.
-const SIDE_BTN_H: f64 = 44.0;
-const SIDE_BTN_GAP: f64 = 10.0;
-const SIDE_PAD_X: f64 = 12.0;
-const SIDE_PAD_TOP: f64 = 12.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Action {
@@ -280,82 +272,59 @@ impl HudWidget {
         }
         let ham = self.hamburger_idx();
         let popup_open = self.hamburger_open();
-        match chrome.mode {
-            ChromeMode::Standard => {
-                let action_count = n.saturating_sub(1);
-                let strip_w = self.measure_action_strip();
-                let compact = strip_w + STD_BTN_GAP * 2.0 > hud.width;
-                if !compact {
-                    // Wide enough: lay actions in a centered strip
-                    // and stash the hamburger off-screen so it
-                    // doesn't paint or accept clicks.
-                    let probe = Size::new(hud.width, STD_BTN_H);
-                    let widths: Vec<f64> = (0..action_count)
-                        .map(|i| self.children[i].layout(probe).width)
-                        .collect();
-                    let total_w: f64 =
-                        widths.iter().sum::<f64>() + STD_BTN_GAP * (action_count as f64 - 1.0);
-                    let start_x = hud.x + (hud.width - total_w) / 2.0;
-                    let y = hud.y + (hud.height - STD_BTN_H) / 2.0;
-                    let mut x = start_x;
-                    for (i, w) in widths.iter().enumerate() {
-                        self.children[i].set_bounds(Rect::new(x, y, *w, STD_BTN_H));
-                        x += *w + STD_BTN_GAP;
-                    }
-                    self.children[ham].set_bounds(Rect::new(-9999.0, -9999.0, 0.0, 0.0));
-                } else {
-                    // Compact: hamburger at the left edge of the
-                    // HUD; action buttons either off-screen (popup
-                    // closed) or stacked vertically above the
-                    // hamburger (popup open).
-                    let probe = Size::new(hud.width, STD_BTN_H);
-                    let ham_w = self.children[ham].layout(probe).width;
-                    let ham_y = hud.y + (hud.height - STD_BTN_H) / 2.0;
-                    let ham_x = hud.x + STD_BTN_GAP;
-                    self.children[ham].set_bounds(Rect::new(ham_x, ham_y, ham_w, STD_BTN_H));
-                    if popup_open {
-                        // Find the widest action button so the
-                        // column has a uniform width.
-                        let widths: Vec<f64> = (0..action_count)
-                            .map(|i| self.children[i].layout(probe).width)
-                            .collect();
-                        let col_w = widths
-                            .iter()
-                            .cloned()
-                            .fold(0.0_f64, f64::max)
-                            .max(ham_w);
-                        let col_x = ham_x;
-                        // Stack upward from above the HUD strip.
-                        let bottom = hud.y + hud.height + STD_BTN_GAP;
-                        for (i, _w) in widths.iter().enumerate() {
-                            let y = bottom + i as f64 * (STD_BTN_H + STD_BTN_GAP);
-                            self.children[i].set_bounds(Rect::new(col_x, y, col_w, STD_BTN_H));
-                        }
-                    } else {
-                        for i in 0..action_count {
-                            self.children[i]
-                                .set_bounds(Rect::new(-9999.0, -9999.0, 0.0, 0.0));
-                        }
-                    }
-                }
+        let action_count = n.saturating_sub(1);
+        let strip_w = self.measure_action_strip();
+        let compact = strip_w + STD_BTN_GAP * 2.0 > hud.width;
+        if !compact {
+            // Wide enough: lay actions in a centered strip and
+            // stash the hamburger off-screen so it doesn't paint
+            // or accept clicks.
+            let probe = Size::new(hud.width, STD_BTN_H);
+            let widths: Vec<f64> = (0..action_count)
+                .map(|i| self.children[i].layout(probe).width)
+                .collect();
+            let total_w: f64 =
+                widths.iter().sum::<f64>() + STD_BTN_GAP * (action_count as f64 - 1.0);
+            let start_x = hud.x + (hud.width - total_w) / 2.0;
+            let y = hud.y + (hud.height - STD_BTN_H) / 2.0;
+            let mut x = start_x;
+            for (i, w) in widths.iter().enumerate() {
+                self.children[i].set_bounds(Rect::new(x, y, *w, STD_BTN_H));
+                x += *w + STD_BTN_GAP;
             }
-            ChromeMode::Sidebar => {
-                // Sidebar mode keeps the legacy vertical stack;
-                // hamburger stays hidden.
-                let action_count = n.saturating_sub(1);
-                let btn_w = hud.width - SIDE_PAD_X * 2.0;
-                let x = hud.x + SIDE_PAD_X;
-                let top_of_first = hud.y + hud.height - SIDE_PAD_TOP;
-                for i in 0..action_count {
-                    let y = top_of_first
-                        - SIDE_BTN_H
-                        - i as f64 * (SIDE_BTN_H + SIDE_BTN_GAP);
-                    self.children[i].set_bounds(Rect::new(x, y, btn_w, SIDE_BTN_H));
-                    self.children[i].layout(Size::new(btn_w, SIDE_BTN_H));
+            self.children[ham].set_bounds(Rect::new(-9999.0, -9999.0, 0.0, 0.0));
+        } else {
+            // Compact: hamburger at the right edge of the HUD;
+            // action buttons either off-screen (popup closed) or
+            // stacked vertically above the hamburger (popup open).
+            let probe = Size::new(hud.width, STD_BTN_H);
+            let ham_w = self.children[ham].layout(probe).width;
+            let ham_y = hud.y + (hud.height - STD_BTN_H) / 2.0;
+            let ham_x = hud.x + hud.width - ham_w - STD_BTN_GAP;
+            self.children[ham].set_bounds(Rect::new(ham_x, ham_y, ham_w, STD_BTN_H));
+            if popup_open {
+                let widths: Vec<f64> = (0..action_count)
+                    .map(|i| self.children[i].layout(probe).width)
+                    .collect();
+                let col_w = widths
+                    .iter()
+                    .cloned()
+                    .fold(0.0_f64, f64::max)
+                    .max(ham_w);
+                let col_x = ham_x;
+                // Stack upward from above the HUD strip.
+                let bottom = hud.y + hud.height + STD_BTN_GAP;
+                for (i, _w) in widths.iter().enumerate() {
+                    let y = bottom + i as f64 * (STD_BTN_H + STD_BTN_GAP);
+                    self.children[i].set_bounds(Rect::new(col_x, y, col_w, STD_BTN_H));
                 }
-                self.children[ham].set_bounds(Rect::new(-9999.0, -9999.0, 0.0, 0.0));
+            } else {
+                for i in 0..action_count {
+                    self.children[i].set_bounds(Rect::new(-9999.0, -9999.0, 0.0, 0.0));
+                }
             }
         }
+        let _ = chrome.mode;
     }
 
     fn paint_strip(&self, ctx: &mut dyn DrawCtx, hud: Rect) {
@@ -382,17 +351,9 @@ impl HudWidget {
         let Some(m) = ctx.measure_text(&label) else {
             return;
         };
-        match chrome.mode {
-            ChromeMode::Standard => {
-                let baseline = hud.y + m.centered_baseline_y(hud.height);
-                ctx.fill_text(&label, hud.x + 18.0, baseline);
-            }
-            ChromeMode::Sidebar => {
-                let baseline_y = hud.y + 12.0;
-                let lx = hud.x + (hud.width - m.width) / 2.0;
-                ctx.fill_text(&label, lx, baseline_y);
-            }
-        }
+        let baseline = hud.y + m.centered_baseline_y(hud.height);
+        ctx.fill_text(&label, hud.x + 18.0, baseline);
+        let _ = chrome.mode;
     }
 }
 
