@@ -258,6 +258,79 @@ mod tests {
         );
     }
 
+    /// Regression: a click inside the HUD strip (just above the
+    /// bottom menu bar) must reach a Button child so its on_click
+    /// fires. After the bottom-bar consolidation, clicks were
+    /// landing on the right element but the test pins the path so
+    /// future layout shifts don't break it.
+    /// Regression: `HudWidget::sync_children` used to compare its
+    /// cached action list against `actions_for()` AFTER appending
+    /// the hamburger, so the cache key never matched and every
+    /// layout call (= every frame) rebuilt the Button children
+    /// from scratch. That blew away the captured-pointer path
+    /// between MouseDown and MouseUp, so clicks never fired
+    /// `on_click`. Lock the cache key by checking that the child
+    /// addresses survive a second layout call.
+    #[test]
+    fn hud_buttons_stable_across_relayout() {
+        let (mut app, model) = build_solitaire_app();
+        model.borrow_mut().start_game_with_seed(
+            crate::games::GameKind::Klondike,
+            42,
+        );
+        let viewport = Size::new(1024.0, 768.0);
+        app.layout(viewport);
+        // Collect Button pointer identities after the first layout.
+        let click = Point::new(viewport.width * 0.5, 50.0);
+        let path_a = hit_test_subtree(app.root(), click).unwrap();
+        let addr_a = button_address(app.root(), &path_a);
+        // Relayout (the render loop calls app.layout every frame).
+        app.layout(viewport);
+        let path_b = hit_test_subtree(app.root(), click).unwrap();
+        let addr_b = button_address(app.root(), &path_b);
+        assert_eq!(
+            addr_a, addr_b,
+            "HUD Button at the same path must survive relayout — \
+             rebuilding every frame loses click capture",
+        );
+    }
+
+    fn button_address(root: &dyn Widget, path: &[usize]) -> usize {
+        let mut w: &dyn Widget = root;
+        for &i in path {
+            w = w.children()[i].as_ref();
+        }
+        w as *const dyn Widget as *const () as usize
+    }
+
+    #[test]
+    fn hud_strip_click_hits_a_button() {
+        let (mut app, model) = build_solitaire_app();
+        // Start a game so the HUD is visible.
+        model.borrow_mut().start_game_with_seed(
+            crate::games::GameKind::Klondike,
+            42,
+        );
+        let viewport = Size::new(1024.0, 768.0);
+        app.layout(viewport);
+        // HUD strip lives at y=[26, 74] in Y-up (immediately
+        // above the menu bar at y=[0, 26]). Pick a click point
+        // safely inside that band and near the centre of the
+        // viewport — that's where the buttons centre-align.
+        let click = Point::new(viewport.width * 0.5, 50.0);
+        let path = hit_test_subtree(app.root(), click)
+            .expect("HUD-strip click must hit something");
+        let chain = type_chain_for_path(app.root(), &path);
+        assert!(
+            chain.contains(&"HudWidget"),
+            "HUD-strip click must reach HudWidget, but landed on {chain:?}"
+        );
+        assert!(
+            chain.contains(&"Button"),
+            "HUD-strip click must reach a Button child, but landed on {chain:?}"
+        );
+    }
+
     /// Companion check: clicking the title-screen body (well below the
     /// menu strip) still reaches `TitleWidget`, so the buttons remain
     /// usable from the title screen.

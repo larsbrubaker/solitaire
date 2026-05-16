@@ -201,18 +201,23 @@ impl HudWidget {
     /// don't have to rebuild the entire vec when the viewport
     /// resizes between wide and narrow.
     fn sync_children(&mut self) {
-        let mut want = self.actions_for();
+        // Cache key is the per-variant action list WITHOUT the
+        // hamburger; the hamburger is always appended, so we'd
+        // otherwise rebuild every layout because `actions_for()`
+        // never includes it. (Rebuilding every frame tears down
+        // every Button's internal pressed/hovered state, so click
+        // capture between MouseDown and MouseUp gets lost.)
+        let want = self.actions_for();
         if want == self.last_actions {
             return;
         }
+        self.last_actions = want.clone();
         self.children.clear();
         self.actions.clear();
         let font_size: f64 = 16.0;
-        // Append the hamburger after the per-variant actions.
-        // Layout decides which subset gets visible bounds based on
-        // available width + popup state.
-        want.push(Action::Hamburger);
-        for action in &want {
+        let mut all = want;
+        all.push(Action::Hamburger);
+        for action in &all {
             let model = self.model.clone();
             let a = *action;
             let btn = Button::new(action.label(), self.font.clone())
@@ -224,7 +229,6 @@ impl HudWidget {
             self.children.push(Box::new(btn));
             self.actions.push(*action);
         }
-        self.last_actions = want;
     }
 
     /// Index of the hamburger child (always last after
