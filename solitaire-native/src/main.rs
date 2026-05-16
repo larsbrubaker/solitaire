@@ -28,6 +28,7 @@ use solitaire_core::ui::build_solitaire_app;
 use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize, Position};
 use winit::event::{ElementState, Event, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
+use winit::window::Icon as WinitIcon;
 use winit::window::{Fullscreen, Window, WindowAttributes};
 
 const WINDOW_STATE_KEY: &str = "solitaire-native:window-state:v1";
@@ -276,6 +277,15 @@ impl Gpu {
     }
 }
 
+/// Build the OS-level window icon from the procedurally-generated
+/// RGBA buffer in `solitaire_core::branding`. Returning `None`
+/// quietly when the RGBA buffer fails to convert (size mismatch,
+/// etc.) — the window still opens, just without a taskbar icon.
+fn build_window_icon() -> Option<WinitIcon> {
+    let (w, h, rgba) = solitaire_core::branding::app_icon_rgba();
+    WinitIcon::from_rgba(rgba, w, h).ok()
+}
+
 fn main() {
     let _ = dotenvy::dotenv();
     register_file_storage_io();
@@ -285,6 +295,7 @@ fn main() {
 
     let mut window_attributes = WindowAttributes::default()
         .with_title("Solitaire")
+        .with_window_icon(build_window_icon())
         .with_inner_size(LogicalSize::new(
             saved_window.map_or(DEFAULT_WINDOW_W, |s| s.width),
             saved_window.map_or(DEFAULT_WINDOW_H, |s| s.height),

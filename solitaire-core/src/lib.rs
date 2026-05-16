@@ -1,5 +1,6 @@
 //! Solitaire core: game logic, widgets, and Supabase client. Target-agnostic.
 
+pub mod branding;
 pub mod cards;
 pub mod consts;
 pub mod games;

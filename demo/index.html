@@ -10,6 +10,11 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="theme-color" content="#0c6b3a" />
+    <!-- Favicon: inline SVG mirroring the procedural app icon
+         in `solitaire_core::branding`. Felt-green tile with a
+         white rounded-rect card and a red heart pip — readable
+         at 16 px. Inline keeps the bundle a single artefact. -->
+    <link rel="icon" type="image/svg+xml" href='data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" fill="%230c522c"/><rect x="10" y="6" width="44" height="52" rx="5" ry="5" fill="white" stroke="%23333" stroke-width="1"/><path d="M 32 24 C 32 16 22 16 22 26 C 22 32 32 38 32 46 C 32 38 42 32 42 26 C 42 16 32 16 32 24 Z" fill="%23d01a1a"/></svg>' />
     <title>Solitaire</title>
     <style>
       /* Canvas fills the entire viewport. We avoid the
