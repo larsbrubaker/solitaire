@@ -226,24 +226,22 @@ mod tests {
 
     /// Regression: clicking inside the menu strip on the **title**
     /// screen must route to `MenuBarHost`, not to `TitleWidget`.
-    /// `TitleWidget` paints behind the menu and (deliberately) claims
-    /// its full bounds for hit-testing of the game-selection buttons,
-    /// so the overlay stack must place the menu above it for clicks in
-    /// the bottom 26 px strip to reach the menu bar.
+    /// `TitleWidget` paints behind the menu and (deliberately)
+    /// claims its full bounds for hit-testing of the
+    /// game-selection buttons, so the overlay stack must place the
+    /// menu above it for clicks in the top chrome strip to reach
+    /// the menu bar.
     #[test]
     fn menu_strip_click_on_title_screen_hits_menu_bar() {
         let (mut app, _model) = build_solitaire_app();
-        // Desktop-shaped viewport so chrome layout picks `Standard`
-        // (bottom-aligned menu bar, not the sidebar variant). Aspect
-        // matters: `chrome::compute` switches to `Sidebar` when
-        // `w > h*1.5 && h < 900`, so 1024x768 keeps us in Standard.
         let viewport = Size::new(1024.0, 768.0);
         app.layout(viewport);
 
-        // Menu bar lives in the bottom 26 px (Y-up: y close to 0).
-        // Pick a point safely inside the strip and away from the
-        // corners so we exercise an active hit region.
-        let click = Point::new(200.0, 8.0);
+        // Menu cascade button sits in the LEFT slice of the top
+        // chrome strip (Y-up: y near `viewport.height`). Pick a
+        // point inside both the menu slice and the strip's mid
+        // band so we exercise an active hit region.
+        let click = Point::new(40.0, viewport.height - 24.0);
         let path = hit_test_subtree(app.root(), click)
             .expect("click inside the menu strip must hit something");
         let chain = type_chain_for_path(app.root(), &path);
@@ -280,8 +278,13 @@ mod tests {
         );
         let viewport = Size::new(1024.0, 768.0);
         app.layout(viewport);
-        // Collect Button pointer identities after the first layout.
-        let click = Point::new(viewport.width * 0.5, 50.0);
+        // Collect Button pointer identities after the first
+        // layout. Sample child[0]'s bounds so the click lands on a
+        // button instead of a gap between buttons.
+        let mut hud: &dyn agg_gui::widget::Widget = app.root();
+        hud = hud.children()[3].as_ref(); // root → game → title → hud
+        let b = hud.children()[0].bounds();
+        let click = Point::new(b.x + b.width * 0.5, viewport.height - 24.0);
         let path_a = hit_test_subtree(app.root(), click).unwrap();
         let addr_a = button_address(app.root(), &path_a);
         // Relayout (the render loop calls app.layout every frame).
@@ -313,11 +316,20 @@ mod tests {
         );
         let viewport = Size::new(1024.0, 768.0);
         app.layout(viewport);
-        // HUD strip lives at y=[26, 74] in Y-up (immediately
-        // above the menu bar at y=[0, 26]). Pick a click point
-        // safely inside that band and near the centre of the
-        // viewport — that's where the buttons centre-align.
-        let click = Point::new(viewport.width * 0.5, 50.0);
+        // HUD strip lives at the TOP of the viewport (Y-up: y in
+        // [viewport.height - HUD_STRIP_H, viewport.height]). Pick a
+        // click on the FIRST button by sampling the bounds of
+        // HudWidget's child[0] — we don't want to be brittle about
+        // pixel positions of the gap between buttons.
+        let strip_mid_y = viewport.height - 24.0;
+        let mut hud: &dyn agg_gui::widget::Widget = app.root();
+        let menu_strip_idx = 3usize; // root → game → title → hud
+        hud = hud.children()[menu_strip_idx].as_ref();
+        let first_btn_bounds = hud.children()[0].bounds();
+        let click = Point::new(
+            first_btn_bounds.x + first_btn_bounds.width * 0.5,
+            strip_mid_y,
+        );
         let path = hit_test_subtree(app.root(), click)
             .expect("HUD-strip click must hit something");
         let chain = type_chain_for_path(app.root(), &path);
