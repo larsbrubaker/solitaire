@@ -52,6 +52,13 @@ impl SolverBudget {
     }
 }
 
+/// One search choice — a single tableau move is one move, a stock
+/// "deal a row" action is a vec of 10 moves applied as an
+/// atomic unit. The solver treats each Choice as one branch in
+/// the DFS so partial-deal intermediate states are never explored
+/// (the player can't reach them either).
+type Choice = Vec<Move>;
+
 pub fn solve(piles: &PileSet, budget: SolverBudget) -> SolveResult {
     // Single shared mutable state — every node mutates the same
     // `PileSet` via apply_move on push and revert_move on pop.
@@ -68,8 +75,8 @@ pub fn solve(piles: &PileSet, budget: SolverBudget) -> SolveResult {
     let mut stack: Vec<Frame> = Vec::with_capacity(256);
     stack.push(Frame {
         applied: Vec::new(),
-        moves: generate_ordered_moves(&state),
-        next_move_idx: 0,
+        choices: generate_choices(&state),
+        next_idx: 0,
     });
 
     let mut nodes = 0u64;
@@ -77,16 +84,16 @@ pub fn solve(piles: &PileSet, budget: SolverBudget) -> SolveResult {
         // Borrow-check the frame as briefly as possible — we need
         // to mutate `state` between consults, so we don't hold a
         // long-lived &mut Frame.
-        let (m, exhausted) = {
+        let (choice, exhausted) = {
             let Some(frame) = stack.last_mut() else {
                 break;
             };
-            if frame.next_move_idx >= frame.moves.len() {
+            if frame.next_idx >= frame.choices.len() {
                 (None, true)
             } else {
-                let m = frame.moves[frame.next_move_idx];
-                frame.next_move_idx += 1;
-                (Some(m), false)
+                let c = std::mem::take(&mut frame.choices[frame.next_idx]);
+                frame.next_idx += 1;
+                (Some(c), false)
             }
         };
 
@@ -108,12 +115,15 @@ pub fn solve(piles: &PileSet, budget: SolverBudget) -> SolveResult {
             return SolveResult::Timeout;
         }
 
-        let m = m.unwrap();
-        // Apply the chosen move + any forced collapses, recording
-        // each one so we can revert on pop.
-        let mut applied: Vec<Move> = Vec::with_capacity(2);
-        apply_move(&mut state, &m);
-        applied.push(m);
+        let choice = choice.unwrap();
+        // Apply each move in the choice + any forced collapses,
+        // recording every applied move so the parent can be
+        // restored exactly on backtrack.
+        let mut applied: Vec<Move> = Vec::with_capacity(choice.len() + 2);
+        for m in &choice {
+            apply_move(&mut state, m);
+            applied.push(*m);
+        }
         while let Some(am) = collapse_step(&state) {
             apply_move(&mut state, &am);
             applied.push(am);
@@ -129,11 +139,11 @@ pub fn solve(piles: &PileSet, budget: SolverBudget) -> SolveResult {
             }
             continue;
         }
-        let child_moves = generate_ordered_moves(&state);
+        let child_choices = generate_choices(&state);
         stack.push(Frame {
             applied,
-            moves: child_moves,
-            next_move_idx: 0,
+            choices: child_choices,
+            next_idx: 0,
         });
     }
     SolveResult::Exhausted
@@ -143,8 +153,8 @@ struct Frame {
     /// Moves applied (in order) to reach this frame's state from
     /// the parent frame's state. Reverted in reverse order on pop.
     applied: Vec<Move>,
-    moves: Vec<Move>,
-    next_move_idx: usize,
+    choices: Vec<Choice>,
+    next_idx: usize,
 }
 
 fn is_won(piles: &PileSet) -> bool {
@@ -281,7 +291,7 @@ fn collapse_step(piles: &PileSet) -> Option<Move> {
     None
 }
 
-fn generate_ordered_moves(piles: &PileSet) -> Vec<Move> {
+fn generate_choices(piles: &PileSet) -> Vec<Choice> {
     let mut scored: Vec<(i32, Move)> = Vec::new();
     for src_id in CASCADE_FIRST..=CASCADE_LAST {
         let src = piles.get(src_id);
@@ -355,11 +365,18 @@ fn generate_ordered_moves(piles: &PileSet) -> Vec<Move> {
         }
     }
     scored.sort_by(|a, b| b.0.cmp(&a.0));
-    let mut out: Vec<Move> = scored.into_iter().map(|(_, m)| m).collect();
+    let mut out: Vec<Choice> = scored.into_iter().map(|(_, m)| vec![m]).collect();
+    // Stock deal is an atomic 10-card broadcast: one card per
+    // cascade, applied in left-to-right order. Treating it as a
+    // single Choice keeps the solver from exploring nonsensical
+    // partial-deal states. Pushed last so it's the lowest-priority
+    // option in FIFO traversal.
     if piles.get(STOCK).len() >= N_CASCADES {
+        let mut deal: Choice = Vec::with_capacity(N_CASCADES);
         for col in 0..N_CASCADES {
-            out.push(Move::simple(STOCK, 1, CASCADE_FIRST + col as u8).with_flip_moved());
+            deal.push(Move::simple(STOCK, 1, CASCADE_FIRST + col as u8).with_flip_moved());
         }
+        out.push(deal);
     }
     out
 }
@@ -436,6 +453,58 @@ mod tests {
             .cards
             .push(Card::new(crate::cards::Suit::Spades, Rank::King)); // face-down
         assert_ne!(hash_state(&a), hash_state(&b));
+    }
+
+    /// Real-seed smoke test (ignored by default — too slow for CI).
+    /// Run with `cargo test -p solitaire-core --release
+    /// spider_solver -- --ignored --nocapture` to benchmark the
+    /// solver on a handful of 1-suit Spider deals. Prints per-seed
+    /// classification + elapsed so we can see how much the
+    /// Solvitaire optimizations help.
+    #[ignore]
+    #[test]
+    fn benchmark_one_suit_spider_seeds() {
+        bench(Spider::one_suit(), "1-suit", 20);
+    }
+
+    #[ignore]
+    #[test]
+    fn benchmark_two_suit_spider_seeds() {
+        bench(Spider::two_suit(), "2-suit", 20);
+    }
+
+    #[ignore]
+    #[test]
+    fn benchmark_four_suit_spider_seeds() {
+        bench(Spider::four_suit(), "4-suit", 20);
+    }
+
+    fn bench(rules_template: Spider, label: &str, count: u64) {
+        use crate::session::GameSession;
+        let budget_per_seed = std::time::Duration::from_secs(5);
+        let max_nodes = 5_000_000u64;
+        let mut won = 0;
+        let mut exhausted = 0;
+        let mut timeout = 0;
+        for seed in 0u64..count {
+            // Spider isn't Clone; rebuild a fresh instance each
+            // loop iteration matching the template's suit_count.
+            let rules = Spider::new(rules_template.suit_count);
+            let s = GameSession::new(rules, seed);
+            let start = web_time::Instant::now();
+            let budget = SolverBudget::from_duration(budget_per_seed, max_nodes);
+            let r = solve(&s.piles, budget);
+            let elapsed = start.elapsed();
+            println!("{label} seed {seed:3}: {r:?} in {:?}", elapsed);
+            match r {
+                SolveResult::Won => won += 1,
+                SolveResult::Exhausted => exhausted += 1,
+                SolveResult::Timeout => timeout += 1,
+            }
+        }
+        println!(
+            "{label} Spider: {won} won, {exhausted} exhausted, {timeout} timeout (of {count})"
+        );
     }
 
     #[test]
