@@ -85,7 +85,11 @@ impl HudWidget {
                 Btn::Shuffle,
                 Btn::Home,
             ],
-            Some(crate::games::GameKind::Spider) => vec![
+            // Hint button on Spider AND Klondike — both have a
+            // heuristic ranker (`best_spider_hint`, `best_klondike_hint`)
+            // that picks the recommended next move.
+            Some(crate::games::GameKind::Spider)
+            | Some(crate::games::GameKind::Klondike) => vec![
                 Btn::Fullscreen,
                 Btn::Undo,
                 Btn::NewDeal,
@@ -173,7 +177,7 @@ impl HudWidget {
                 model.try_moms_shuffle();
             }
             Btn::Hint => {
-                model.show_spider_hint();
+                model.show_hint();
             }
             Btn::Home => {
                 model.request_main_menu();
@@ -371,12 +375,14 @@ impl Widget for HudWidget {
                 agg_gui::animation::request_draw();
                 EventResult::Consumed
             }
-            'h' if matches!(kind, Some(crate::games::GameKind::Spider))
-                && !modifiers.ctrl
+            'h' if matches!(
+                kind,
+                Some(crate::games::GameKind::Spider) | Some(crate::games::GameKind::Klondike)
+            ) && !modifiers.ctrl
                 && !modifiers.alt
                 && !modifiers.meta =>
             {
-                self.model.borrow_mut().show_spider_hint();
+                self.model.borrow_mut().show_hint();
                 agg_gui::animation::request_draw();
                 EventResult::Consumed
             }

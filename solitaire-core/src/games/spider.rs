@@ -13,23 +13,13 @@ use crate::cards::{spider_deck, Card, Rank, Suit};
 use crate::piles::{PileId, PileKind, PileLayout, PileSet, PileSlot};
 use crate::session::{apply_move, Move};
 
+use super::hint::Hint;
 use super::{GameRules, CARD_ASPECT};
 
-/// Hint surfaced by the HUD's Hint button. Either a recommended cascade
-/// move (source pile + start index + tail length + destination) or a
-/// recommendation to deal from the stock when no tableau move exists.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SpiderHint {
-    Move {
-        from: PileId,
-        start_idx: usize,
-        take: u8,
-        to: PileId,
-    },
-    StockDeal {
-        stock: PileId,
-    },
-}
+/// Back-compat alias for the previous Spider-specific enum name.
+/// Kept so other crates depending on `SpiderHint` keep compiling
+/// while the rest of the codebase moves to the shared `Hint`.
+pub type SpiderHint = Hint;
 
 const FOUND_FIRST: PileId = 0;
 const FOUND_LAST: PileId = 7;

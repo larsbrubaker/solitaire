@@ -155,7 +155,7 @@ fn game_menu(model: &AppModel) -> TopMenu {
                 .into(),
         );
         match model.kind {
-            Some(GameKind::Spider) => {
+            Some(GameKind::Spider) | Some(GameKind::Klondike) => {
                 items.push(MenuItem::action("Hint", "hint").shortcut("H").into());
             }
             Some(GameKind::MomsSolitaire) => {
@@ -344,7 +344,7 @@ fn handle_action(model: &mut AppModel, action: &str) {
             }
             model.clear_spider_hint();
         }
-        "hint" => model.show_spider_hint(),
+        "hint" => model.show_hint(),
         "shuffle" => {
             model.try_moms_shuffle();
         }

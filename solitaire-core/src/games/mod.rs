@@ -3,7 +3,9 @@
 //! the active session behind a `DynGameSession` trait object.
 
 pub mod freecell;
+pub mod hint;
 pub mod klondike;
+pub mod klondike_hint;
 pub mod klondike_solver;
 pub mod ms_freecell;
 pub mod moms;
