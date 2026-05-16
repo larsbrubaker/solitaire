@@ -82,14 +82,10 @@ pub struct MenuBarHost {
 impl MenuBarHost {
     pub fn new(model: SharedModel, font: Arc<Font>) -> Self {
         let snapshot = MenuSnapshot::from(&model.borrow());
-        // `HorizontalBottom` flips the popup direction so menus
-        // rise UPWARD out of the bar — the bar lives at the very
-        // bottom of the viewport now, paired with the HUD strip.
-        let bar = build_menu_bar(
-            model.clone(),
-            font.clone(),
-            MenuOrientation::HorizontalBottom,
-        );
+        // Top-of-viewport chrome — `Horizontal` opens popups
+        // DOWNWARD (toward smaller y in Y-up) so the menu drops
+        // into the playfield area below.
+        let bar = build_menu_bar(model.clone(), font.clone(), MenuOrientation::Horizontal);
         Self {
             bounds: Rect::default(),
             children: vec![Box::new(bar)],
@@ -398,23 +394,30 @@ impl MenuBarHost {
         let bar = build_menu_bar(
             self.model.clone(),
             self.font.clone(),
-            MenuOrientation::HorizontalBottom,
+            MenuOrientation::Horizontal,
         );
         self.children = vec![Box::new(bar)];
-        // Menu bar sits at the BOTTOM of the viewport (Y-up: y=0
-        // closest to the thumb). Use the `layout::compute()` slice
-        // directly so it stays in sync with the playfield + HUD.
-        let chrome = super::layout::compute(Size::new(
-            self.bounds.width,
-            self.bounds.height,
-        ));
-        let bar_rect = chrome.menu_rect;
+        // Menu cascade button shares the top strip with the HUD
+        // action buttons. Position the inner bar inside the menu
+        // slice with a vertical centring offset so its 26 px
+        // height sits in the middle of the 48 px strip.
+        let chrome = super::layout::compute(Size::new(self.bounds.width, self.bounds.height));
+        let bar_rect = inner_bar_rect(chrome.menu_rect);
         if let Some(bar) = self.children.first_mut() {
-            bar.layout(Size::new(self.bounds.width, MENU_BAR_H));
+            bar.layout(Size::new(bar_rect.width, MENU_BAR_H));
             bar.set_bounds(bar_rect);
         }
         agg_gui::animation::request_draw();
     }
+}
+
+/// Position the inner `MenuBar` widget INSIDE the chrome's menu
+/// slice — vertically centred so the 26 px bar sits in the middle
+/// of the 48 px combined strip and lines up visually with the
+/// action buttons next to it.
+fn inner_bar_rect(menu_slot: Rect) -> Rect {
+    let y = menu_slot.y + (menu_slot.height - MENU_BAR_H) * 0.5;
+    Rect::new(menu_slot.x, y, menu_slot.width, MENU_BAR_H)
 }
 
 impl Widget for MenuBarHost {
@@ -426,12 +429,13 @@ impl Widget for MenuBarHost {
     }
     fn set_bounds(&mut self, bounds: Rect) {
         self.bounds = bounds;
-        // Bar sits at the BOTTOM of the viewport (Y-up: y=0 is the
-        // floor closest to the thumb). Position from the chrome
-        // layout helper so menu / HUD / playfield stay aligned.
+        // Position the inner `MenuBar` inside the menu slice of
+        // the shared top strip — `inner_bar_rect` vertically
+        // centres the 26 px bar inside the 48 px strip so it lines
+        // up with the HUD action buttons next to it.
         let chrome = layout::compute(Size::new(bounds.width, bounds.height));
         if let Some(bar) = self.children.first_mut() {
-            bar.set_bounds(chrome.menu_rect);
+            bar.set_bounds(inner_bar_rect(chrome.menu_rect));
         }
     }
     fn children(&self) -> &[Box<dyn Widget>] {
@@ -441,8 +445,10 @@ impl Widget for MenuBarHost {
         &mut self.children
     }
     fn layout(&mut self, available: Size) -> Size {
+        let chrome = layout::compute(available);
+        let bar_rect = inner_bar_rect(chrome.menu_rect);
         if let Some(bar) = self.children.first_mut() {
-            bar.layout(Size::new(available.width, MENU_BAR_H));
+            bar.layout(Size::new(bar_rect.width, MENU_BAR_H));
         }
         available
     }
@@ -450,11 +456,11 @@ impl Widget for MenuBarHost {
         // Visible on every screen — the title screen wants the
         // same Options/Help menus the gameplay screens get (so
         // e.g. the Debug submenu and Toggle Fullscreen are always
-        // reachable). No more sidebar variant to hide for; the
-        // bottom strip is always the active chrome.
+        // reachable). The chrome strip lives at the top of the
+        // viewport regardless of which screen is active.
         true
     }
-    /// Claim only the bottom MENU_BAR_H pixels for ordinary input;
+    /// Claim only the menu-slice rect of the shared top strip;
     /// without this the OverlayStack's top→bottom hit-test stops
     /// at us (full window bounds) and never reaches HudWidget /
     /// GameWidget below — same gotcha HudWidget calls out in its
@@ -465,8 +471,11 @@ impl Widget for MenuBarHost {
         if !self.is_visible() {
             return false;
         }
-        // Bar sits at Y-up y=0..MENU_BAR_H now.
-        local_pos.y >= 0.0 && local_pos.y <= MENU_BAR_H
+        let m = layout::compute(Size::new(self.bounds.width, self.bounds.height)).menu_rect;
+        local_pos.x >= m.x
+            && local_pos.x <= m.x + m.width
+            && local_pos.y >= m.y
+            && local_pos.y <= m.y + m.height
     }
     fn paint(&mut self, _ctx: &mut dyn DrawCtx) {
         self.sync_state();
