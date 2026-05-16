@@ -35,7 +35,7 @@ use game_widget::GameWidget;
 use play_deal_dialog::PlayDealDialog;
 use help_widget::HelpDialog;
 use hud_widget::HudWidget;
-use menu_widget::{MenuBarHost, SidebarMenuHost};
+use menu_widget::MenuBarHost;
 use overlay_stack::OverlayStack;
 use title_widget::TitleWidget;
 
@@ -60,12 +60,54 @@ pub fn load_fa_font() -> Arc<Font> {
     Arc::new(Font::from_slice(FA_FONT_BYTES).expect("solitaire FA font"))
 }
 
+/// Solitaire-branded visuals — start from agg-gui's `dark` palette
+/// and override the chrome / accent colours so the menu bar, popup
+/// dropdowns, and any `ctx.visuals()`-driven widget paint in the
+/// same dark-green palette as our hand-themed Buttons + TextField.
+fn solitaire_visuals() -> agg_gui::theme::Visuals {
+    use agg_gui::color::Color;
+    let mut v = agg_gui::theme::Visuals::dark();
+    // Green felt frame matching `HUD_BG` (~0x095 220x2c with alpha).
+    v.top_bar_bg = Color::from_rgb8(0x09, 0x52, 0x2c);
+    v.bg_color = Color::from_rgb8(0x06, 0x3a, 0x1f);
+    v.panel_fill = Color::from_rgb8(0x12, 0x33, 0x21);
+    // Menu popups + dialog windows: dark green panel matching the
+    // PANEL_BG used by `play_deal_dialog`.
+    v.window_fill = Color::from_rgb8(0x1a, 0x2c, 0x20);
+    v.window_title_fill = Color::from_rgb8(0x12, 0x22, 0x18);
+    v.window_title_fill_drag = Color::from_rgb8(0x18, 0x2c, 0x20);
+    v.window_stroke = Color::from_rgba8(0xff, 0xff, 0xff, 0x40);
+    v.window_title_text = Color::from_rgb8(0xff, 0xd7, 0x00);
+    // Hover / active accent: brighter green so the highlight reads
+    // against the dark felt background. Matches BTN_BG_HOVER.
+    let accent = Color::from_rgb8(0x29, 0x68, 0x3e);
+    v.accent = accent;
+    v.accent_hovered = Color::from_rgb8(0x36, 0x82, 0x4e);
+    v.accent_pressed = Color::from_rgb8(0x18, 0x3d, 0x24);
+    v.accent_focus = Color::from_rgba8(0x29, 0x68, 0x3e, 0x73);
+    v.widget_stroke_active = v.accent_pressed;
+    // Subtle widget surface for muted Buttons, ToggleSwitch tracks.
+    v.widget_bg = Color::from_rgb8(0x1f, 0x4d, 0x2e);
+    v.widget_bg_hovered = Color::from_rgb8(0x29, 0x68, 0x3e);
+    v.widget_stroke = Color::from_rgba8(0xff, 0xff, 0xff, 0x55);
+    // Selection (text fields, list rows): translucent gold to match
+    // the title / hint accent in the play-deal dialog.
+    v.selection_bg = Color::from_rgba8(0xff, 0xd7, 0x00, 0x55);
+    v.selection_bg_unfocused = Color::from_rgba8(0xff, 0xd7, 0x00, 0x33);
+    v
+}
+
 /// Build the shared Solitaire application. Returns the [`App`] hosting the
 /// widget tree (title screen + game widget + HUD, switched via the
 /// shared `AppModel`) and a clone of the [`SharedModel`] so the
 /// platform shell can push frame timings, drain pending URLs, etc.
 pub fn build_solitaire_app() -> (App, SharedModel) {
     let model = shared_model();
+    // Apply the Solitaire dark-green visuals once at startup so
+    // every `ctx.visuals()`-driven paint (menu bar, popups,
+    // ToggleSwitch, sliders, etc.) sits in the same palette as
+    // our hand-themed Buttons + TextField.
+    agg_gui::theme::set_visuals(solitaire_visuals());
     let font = load_default_font();
     let fa_font = load_fa_font();
     // Seed an empty stand-in atlas at default card dimensions. The
@@ -77,7 +119,6 @@ pub fn build_solitaire_app() -> (App, SharedModel) {
     let game = GameWidget::new(model.clone(), font.clone(), atlas);
     let hud = HudWidget::new(model.clone(), font.clone(), fa_font.clone());
     let menu = MenuBarHost::new(model.clone(), font.clone());
-    let sidebar_menu = SidebarMenuHost::new(model.clone(), font.clone());
     let help = HelpDialog::new(model.clone(), font.clone());
     let confirm = ConfirmDialog::new(model.clone(), font.clone());
     let play_deal = PlayDealDialog::new(model.clone(), font.clone(), fa_font.clone());
@@ -85,28 +126,26 @@ pub fn build_solitaire_app() -> (App, SharedModel) {
     let seed_gen_window = build_seed_gen_window(&model, font.clone());
     let root = AppRootWidget::new(model.clone());
 
-    // Painted bottom→top, hit-tested top→bottom. Confirmation and help
-    // overlays sit at the very top so their scrims cover the menu bar and
-    // the title screen chrome equally. Only ONE of `menu` / `sidebar_menu`
-    // is visible at a time (gated by chrome mode); both registered so the
-    // swap is automatic when the viewport changes. The Performance window
-    // lives just under HelpDialog so its title bar is reachable above the
-    // menu / HUD but modal overlays still scrim over it.
+    // Painted bottom→top, hit-tested top→bottom. Confirmation and
+    // help overlays sit at the very top so their scrims cover the
+    // bottom chrome and the title screen chrome equally. The
+    // Performance window lives just under HelpDialog so its title
+    // bar is reachable above the menu / HUD but modal overlays
+    // still scrim over it.
     //
-    // `title` MUST sit below the two menu hosts: `TitleWidget`'s
-    // default `hit_test` claims its full bounds (the entire viewport),
-    // so if it were stacked above `menu`/`sidebar_menu` the menu's
-    // top-strip clicks would be swallowed before they reached
-    // `MenuBarHost`.  With the menu on top, its narrow `hit_test`
-    // (only the 26 px menu strip) lets clicks on title-screen buttons
-    // fall through to the title widget below.
+    // `title` MUST sit below the menu host: `TitleWidget`'s
+    // default `hit_test` claims its full bounds (the entire
+    // viewport), so if it were stacked above `menu` the menu
+    // strip's clicks would be swallowed before they reached
+    // `MenuBarHost`. With the menu on top, its narrow `hit_test`
+    // (only the 26 px bottom strip) lets clicks on title-screen
+    // buttons fall through to the title widget below.
     let stack = OverlayStack::new()
         .add(Box::new(root))
         .add(Box::new(game))
         .add(Box::new(title))
         .add(Box::new(hud))
         .add(Box::new(menu))
-        .add(Box::new(sidebar_menu))
         .add(Box::new(perf_window))
         .add(Box::new(seed_gen_window))
         .add(Box::new(help))
