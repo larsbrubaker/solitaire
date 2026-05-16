@@ -46,12 +46,20 @@ pub const TARGET_SEED_COUNT: u64 = 8_000;
 /// off the front). Keeps the mutex payload bounded.
 const LOG_CAPACITY: usize = 200;
 
-/// Per-seed solver budget. Generous on time but capped on nodes so
-/// a single pathological deal can't stall the whole sweep.
+/// Per-seed solver budgets. Spider 4-suit is the slowest patience
+/// variant in published research (Solvitaire's JAIR paper notes
+/// Spider as the only game its solver reports with wider-than-0.1 %
+/// confidence intervals) so it gets a much bigger budget than
+/// Klondike. Node caps stop a single pathological deal from
+/// stalling the whole sweep.
 #[cfg(not(target_arch = "wasm32"))]
-const PER_SEED_DURATION: std::time::Duration = std::time::Duration::from_secs(15);
+const SPIDER_PER_SEED_DURATION: std::time::Duration = std::time::Duration::from_secs(120);
 #[cfg(not(target_arch = "wasm32"))]
-const PER_SEED_MAX_NODES: u64 = 2_000_000;
+const SPIDER_PER_SEED_MAX_NODES: u64 = 50_000_000;
+#[cfg(not(target_arch = "wasm32"))]
+const KLONDIKE_PER_SEED_DURATION: std::time::Duration = std::time::Duration::from_secs(30);
+#[cfg(not(target_arch = "wasm32"))]
+const KLONDIKE_PER_SEED_MAX_NODES: u64 = 10_000_000;
 
 #[derive(Clone, Debug, Default)]
 pub struct SeedGenStatus {
@@ -273,16 +281,16 @@ fn run(status: Arc<Mutex<SeedGenStatus>>, variant: Variant) {
             Variant::Spider => {
                 let session = GameSession::new(Spider::four_suit(), seed);
                 let budget = spider_solver::SolverBudget::from_duration(
-                    PER_SEED_DURATION,
-                    PER_SEED_MAX_NODES,
+                    SPIDER_PER_SEED_DURATION,
+                    SPIDER_PER_SEED_MAX_NODES,
                 );
                 spider_solver::solve(&session.piles, budget).into()
             }
             Variant::Klondike => {
                 let session = GameSession::new(Klondike::with_draw_count(1), seed);
                 let budget = klondike_solver::SolverBudget::from_duration(
-                    PER_SEED_DURATION,
-                    PER_SEED_MAX_NODES,
+                    KLONDIKE_PER_SEED_DURATION,
+                    KLONDIKE_PER_SEED_MAX_NODES,
                     1,
                 );
                 solve_klondike(&session.piles, budget)
@@ -297,17 +305,27 @@ fn run(status: Arc<Mutex<SeedGenStatus>>, variant: Variant) {
                 s.won += 1;
                 let (won, lost, timed_out) = (s.won, s.lost, s.timed_out);
                 s.log.push(format!(
-                    "[{label}] seed {seed:>8} WON in {ms:>5} ms (won {won} / lost {lost} / timeout {timed_out})",
+                    "[{label}] seed {seed:>8} WON     in {ms:>5} ms  (won {won}/lost {lost}/timeout {timed_out})",
                     ms = elapsed.as_millis(),
                 ));
             }
             SolveOutcome::Exhausted => {
                 let mut s = status.lock().expect("status lock");
                 s.lost += 1;
+                let (won, lost, timed_out) = (s.won, s.lost, s.timed_out);
+                s.log.push(format!(
+                    "[{label}] seed {seed:>8} unwin   in {ms:>5} ms  (won {won}/lost {lost}/timeout {timed_out})",
+                    ms = elapsed.as_millis(),
+                ));
             }
             SolveOutcome::Timeout => {
                 let mut s = status.lock().expect("status lock");
                 s.timed_out += 1;
+                let (won, lost, timed_out) = (s.won, s.lost, s.timed_out);
+                s.log.push(format!(
+                    "[{label}] seed {seed:>8} timeout in {ms:>5} ms  (won {won}/lost {lost}/timeout {timed_out})",
+                    ms = elapsed.as_millis(),
+                ));
             }
         }
     }
