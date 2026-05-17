@@ -408,7 +408,7 @@ fn generate_choices(piles: &PileSet) -> Vec<Choice> {
                 if !legal {
                     continue;
                 }
-                // Solvitaire-style prune: a single-card move from a
+                // SPEC § 3 prune P1: a single-card move from a
                 // pile of length 1 onto an empty pile is a pure
                 // no-op (the source becomes empty, the dest becomes
                 // a singleton — symmetric to the start state under
@@ -497,8 +497,8 @@ mod tests {
     #[test]
     fn hash_state_collapses_tableau_column_permutations() {
         // Two boards that differ only in tableau column order
-        // should hash to the same TT key — that's the whole point
-        // of the Solvitaire-style pile-order canonicalization.
+        // should hash to the same TT key — that's the whole
+        // point of the SPEC § 2 pile-order canonicalisation.
         let rules = Spider::four_suit();
         let mut a = crate::piles::PileSet::from_slots(
             &rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT),
@@ -631,55 +631,100 @@ mod tests {
         );
     }
 
-    /// Real-seed smoke test (ignored by default — too slow for CI).
-    /// Run with `cargo test -p solitaire-core --release
-    /// spider_solver -- --ignored --nocapture` to benchmark the
-    /// solver on a handful of 1-suit Spider deals. Prints per-seed
-    /// classification + elapsed so we can see how much the
-    /// Solvitaire optimizations help.
+    /// Real-seed smoke benchmark — ignored by default.
+    ///
+    /// Run with:
+    ///   cargo test -p solitaire-core --release spider_solver \
+    ///     -- --ignored --nocapture --test-threads=1
+    ///
+    /// 1-suit uses `smart_solve` with `SuitFlatten`; 2-suit uses
+    /// `smart_solve` with `SuitColour`; 4-suit uses bare `solve`
+    /// (no streamliner). Per-seed verdict + elapsed prints live so
+    /// you can watch progress; end-of-run reports Won / Exhausted /
+    /// Timeout tallies plus Wilson 95 % CI.
     #[ignore]
     #[test]
     fn benchmark_one_suit_spider_seeds() {
-        bench(Spider::one_suit(), "1-suit", 20);
+        bench(1, "1-suit", 20, std::time::Duration::from_secs(5));
     }
 
     #[ignore]
     #[test]
     fn benchmark_two_suit_spider_seeds() {
-        bench(Spider::two_suit(), "2-suit", 20);
+        bench(2, "2-suit", 20, std::time::Duration::from_secs(5));
     }
 
     #[ignore]
     #[test]
     fn benchmark_four_suit_spider_seeds() {
-        bench(Spider::four_suit(), "4-suit", 20);
+        bench(4, "4-suit", 20, std::time::Duration::from_secs(5));
     }
 
-    fn bench(rules_template: Spider, label: &str, count: u64) {
+    /// Statistical-oracle smoke — 100 fresh 4-suit Spider deals at
+    /// a 5-minute per-deal budget. Paper Table 1 reports
+    /// **98.487 % ± 1.513 %** for 4-suit Spider (Blake & Gent
+    /// JAIR 2026). Our 95 % CI should overlap that range to pass
+    /// the SPEC § 8 acceptance gate.
+    ///
+    /// Worst-case wall clock: 100 × 5 min = ~8 hours if every
+    /// deal times out. Realistic: most deals resolve in seconds.
+    #[ignore]
+    #[test]
+    fn smoke_oracle_four_suit_100_seeds() {
+        bench(4, "smoke-4s", 100, std::time::Duration::from_secs(300));
+    }
+
+    fn bench(suit_count: u8, label: &str, count: u64, budget_per_seed: std::time::Duration) {
         use crate::session::GameSession;
-        let budget_per_seed = std::time::Duration::from_secs(5);
-        let max_nodes = 5_000_000u64;
-        let mut won = 0;
-        let mut exhausted = 0;
-        let mut timeout = 0;
+        let max_nodes = 200_000_000u64;
+        let mut won = 0u64;
+        let mut exhausted = 0u64;
+        let mut timeout = 0u64;
+        let started = web_time::Instant::now();
         for seed in 0u64..count {
-            // Spider isn't Clone; rebuild a fresh instance each
-            // loop iteration matching the template's suit_count.
-            let rules = Spider::new(rules_template.suit_count);
+            let rules = Spider::new(suit_count);
             let s = GameSession::new(rules, seed);
             let start = web_time::Instant::now();
             let budget = SolverBudget::from_duration(budget_per_seed, max_nodes);
-            let r = solve(&s.piles, budget);
+            let r = match suit_count {
+                1 => smart_solve(&s.piles, budget, StreamlinerMode::SuitFlatten),
+                2 => smart_solve(&s.piles, budget, StreamlinerMode::SuitColour),
+                _ => solve_with(&s.piles, budget, StreamlinerMode::Strict),
+            };
             let elapsed = start.elapsed();
-            println!("{label} seed {seed:3}: {r:?} in {:?}", elapsed);
+            println!("{label} seed {seed:4}: {r:?} in {:?}", elapsed);
             match r {
                 SolveResult::Won => won += 1,
                 SolveResult::Exhausted => exhausted += 1,
                 SolveResult::Timeout => timeout += 1,
             }
         }
+        let total_elapsed = started.elapsed();
+        let determined = won + exhausted;
+        // Conservative Wilson CI: upper assumes every timeout is
+        // a win; lower assumes every timeout is a loss.
+        let (lo, hi) = if determined + timeout > 0 {
+            let n = (determined + timeout) as f64;
+            let z = 1.96_f64;
+            let z2 = z * z;
+            let p_lo = won as f64 / n;
+            let p_hi = (won + timeout) as f64 / n;
+            let denom_lo = 1.0 + z2 / n;
+            let denom_hi = 1.0 + z2 / n;
+            let centre_lo = (p_lo + z2 / (2.0 * n)) / denom_lo;
+            let centre_hi = (p_hi + z2 / (2.0 * n)) / denom_hi;
+            let radius_lo = z * (p_lo * (1.0 - p_lo) / n + z2 / (4.0 * n * n)).sqrt() / denom_lo;
+            let radius_hi = z * (p_hi * (1.0 - p_hi) / n + z2 / (4.0 * n * n)).sqrt() / denom_hi;
+            (
+                ((centre_lo - radius_lo) * 100.0).max(0.0),
+                ((centre_hi + radius_hi) * 100.0).min(100.0),
+            )
+        } else {
+            (0.0, 0.0)
+        };
         println!(
-            "{label} Spider: {won} won, {exhausted} exhausted, {timeout} timeout (of {count})"
+            "{label} Spider: {won} won, {exhausted} exhausted, {timeout} timeout (of {count}) — \
+             95 % CI [{lo:.3} %, {hi:.3} %] — wall {total_elapsed:?}"
         );
     }
 
