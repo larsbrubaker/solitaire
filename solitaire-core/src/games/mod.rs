@@ -11,6 +11,7 @@ pub mod ms_freecell;
 pub mod moms;
 pub mod seed_generator;
 pub mod spider;
+pub mod spider_reverse_gen;
 pub mod spider_solver;
 pub mod winnable_seeds;
 
