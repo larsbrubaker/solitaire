@@ -674,9 +674,39 @@ mod tests {
         bench(4, "smoke-4s", 100, std::time::Duration::from_secs(300));
     }
 
+    /// Quick-resolve smoke: 100 fresh 4-suit deals at a 60-second
+    /// budget and 50 M node cap. The point isn't to classify hard
+    /// deals — it's to see how many EASY deals our solver
+    /// resolves in seconds. If ≥30 % return Won we have a viable
+    /// solver for the bulk run (just accept that ~70 % time out
+    /// and discard them). If <5 % return Won, the solver needs
+    /// fundamental improvements before any bulk run.
+    ///
+    /// Worst-case wall: 100 × 60 s = 100 min.
+    #[ignore]
+    #[test]
+    fn quick_resolve_four_suit_100_seeds() {
+        bench_with_nodes(
+            4,
+            "quick-4s",
+            100,
+            std::time::Duration::from_secs(60),
+            50_000_000,
+        );
+    }
+
     fn bench(suit_count: u8, label: &str, count: u64, budget_per_seed: std::time::Duration) {
+        bench_with_nodes(suit_count, label, count, budget_per_seed, 200_000_000);
+    }
+
+    fn bench_with_nodes(
+        suit_count: u8,
+        label: &str,
+        count: u64,
+        budget_per_seed: std::time::Duration,
+        max_nodes: u64,
+    ) {
         use crate::session::GameSession;
-        let max_nodes = 200_000_000u64;
         let mut won = 0u64;
         let mut exhausted = 0u64;
         let mut timeout = 0u64;
