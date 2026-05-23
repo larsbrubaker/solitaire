@@ -70,3 +70,7 @@ Auth: Supabase email/password via REST. Tokens cached in a JSON file on native, 
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+---
+
+Part of the [rust-apps](https://github.com/larsbrubaker/rust-apps) suite — a collection of Rust graphics and geometry libraries by Lars Brubaker.
