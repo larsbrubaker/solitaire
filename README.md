@@ -2,6 +2,19 @@
 
 [![Solitaire — play in your browser](readme_hero.png)](https://larsbrubaker.github.io/solitaire/)
 
+## Support the Project
+
+<a href="https://buymeacoffee.com/larsbrubaker"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="50" width="210"></a>
+
+Solitaire is open-source and free to use, maintained in spare time as a labor of love. Friends James Smith and Dan Ruskin help out from time to time too.
+
+If you find it useful, here are a few ways to help keep development going:
+
+- **Donations:** [Buy Me a Coffee](https://buymeacoffee.com/larsbrubaker) — every coffee helps.
+- **Star the repo:** Costs nothing and helps others find the project.
+- **Report issues:** [Open an issue](https://github.com/larsbrubaker/solitaire/issues) for bugs or feature ideas.
+- **Contribute:** PRs welcome — open an issue first to discuss larger changes.
+
 > **▶︎ [Play it in your browser](https://larsbrubaker.github.io/solitaire/)**
 
 Four solitaire variants in Rust — rendered with [agg-gui](https://github.com/larsbrubaker/agg-gui), persisted to Supabase, runs natively (winit + wgpu) and in the browser (WebAssembly).
@@ -66,19 +79,6 @@ Auth: Supabase email/password via REST. Tokens cached in a JSON file on native, 
 | 4 | Spider | done |
 | 5 | Classic | done |
 | 6 | Persistence + leaderboard | pending |
-
-## Support the Project
-
-<a href="https://buymeacoffee.com/larsbrubaker"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="50" width="210"></a>
-
-Solitaire is open-source and free to use, maintained in spare time as a labor of love. Friends James Smith and Dan Ruskin help out from time to time too.
-
-If you find it useful, here are a few ways to help keep development going:
-
-- **Donations:** [Buy Me a Coffee](https://buymeacoffee.com/larsbrubaker) — every coffee helps.
-- **Star the repo:** Costs nothing and helps others find the project.
-- **Report issues:** [Open an issue](https://github.com/larsbrubaker/solitaire/issues) for bugs or feature ideas.
-- **Contribute:** PRs welcome — open an issue first to discuss larger changes.
 
 ## License
 
