@@ -447,7 +447,7 @@ fn generate_choices(piles: &PileSet) -> Vec<Choice> {
             }
         }
     }
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.sort_by_key(|b| std::cmp::Reverse(b.0));
     let mut out: Vec<Choice> = scored.into_iter().map(|(_, m)| vec![m]).collect();
     // Stock deal is an atomic 10-card broadcast: one card per
     // cascade, applied in left-to-right order. Treating it as a

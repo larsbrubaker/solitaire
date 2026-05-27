@@ -268,7 +268,7 @@ fn generate_ordered_moves(piles: &PileSet, draw_count: u8) -> Vec<Move> {
 
     // 5) Stock click — last priority because it doesn't change
     // piles' face-up content, just shuffles stock↔waste.
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.sort_by_key(|b| std::cmp::Reverse(b.0));
     let mut out: Vec<Move> = scored.into_iter().map(|(_, m)| m).collect();
 
     let stock = piles.get(STOCK);
