@@ -1,5 +1,7 @@
 # Solitaire
 
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy_Me_A_Coffee-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/larsbrubaker)
+
 [![Solitaire — play in your browser](readme_hero.png)](https://larsbrubaker.github.io/solitaire/)
 
 > **▶︎ [Play it in your browser](https://larsbrubaker.github.io/solitaire/)**
