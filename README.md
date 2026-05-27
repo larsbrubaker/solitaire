@@ -71,7 +71,7 @@ Auth: Supabase email/password via REST. Tokens cached in a JSON file on native, 
 
 <a href="https://buymeacoffee.com/larsbrubaker"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="50" width="210"></a>
 
-Solitaire is open-source and free to use, maintained in spare time as a labor of love.
+Solitaire is open-source and free to use, maintained in spare time as a labor of love. Friends James Smith and Dan Ruskin help out from time to time too.
 
 If you find it useful, here are a few ways to help keep development going:
 
