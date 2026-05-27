@@ -133,7 +133,7 @@ pub fn start_seed_generation() {
         let st = spider_status();
         if let Ok(mut s) = st.lock() {
             s.log.push("wasm target: generator unavailable".into());
-        }
+        };
     }
     #[cfg(not(target_arch = "wasm32"))]
     {

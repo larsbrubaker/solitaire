@@ -322,7 +322,10 @@ fn main() {
     // doesn't open off-screen and become unreachable from the taskbar.
     if let Some(state) = saved_window.filter(|s| !s.fullscreen) {
         if !position_visible_on_any_monitor(&window, &state) {
-            if let Some(primary) = window.primary_monitor().or_else(|| window.current_monitor()) {
+            if let Some(primary) = window
+                .primary_monitor()
+                .or_else(|| window.current_monitor())
+            {
                 let mp = primary.position();
                 let ms = primary.size();
                 let cx = mp.x + ((ms.width as i32 - state.width as i32) / 2).max(0);

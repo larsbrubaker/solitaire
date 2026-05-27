@@ -488,7 +488,6 @@ impl Widget for MenuBarHost {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

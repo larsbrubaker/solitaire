@@ -129,11 +129,7 @@ pub fn smart_solve(
 /// sound; `SuitFlatten` and `SuitColour` may report `Exhausted` on
 /// genuinely-winnable deals (false negatives) and should be wrapped
 /// in [`smart_solve`] for a guaranteed-sound outer answer.
-pub fn solve_with(
-    piles: &PileSet,
-    budget: SolverBudget,
-    mode: StreamlinerMode,
-) -> SolveResult {
+pub fn solve_with(piles: &PileSet, budget: SolverBudget, mode: StreamlinerMode) -> SolveResult {
     // Single shared mutable state — every node mutates the same
     // `PileSet` via apply_move on push and revert_move on pop.
     // No clone-per-child; the entire search shares one allocation.
@@ -481,13 +477,10 @@ mod tests {
         for fid in FOUND_FIRST..=FOUND_LAST {
             s.piles.get_mut(fid).cards.clear();
             for _ in 0..13 {
-                s.piles
-                    .get_mut(fid)
-                    .cards
-                    .push(crate::cards::Card::new(
-                        crate::cards::Suit::Spades,
-                        Rank::King,
-                    ));
+                s.piles.get_mut(fid).cards.push(crate::cards::Card::new(
+                    crate::cards::Suit::Spades,
+                    Rank::King,
+                ));
             }
         }
         let budget = SolverBudget::from_duration(std::time::Duration::from_millis(50), 1_000);
@@ -602,8 +595,7 @@ mod tests {
                     .push(Card::new(Suit::Spades, Rank::King));
             }
         }
-        let budget =
-            SolverBudget::from_duration(std::time::Duration::from_millis(50), 1_000);
+        let budget = SolverBudget::from_duration(std::time::Duration::from_millis(50), 1_000);
         assert_eq!(
             smart_solve(&s.piles, budget, StreamlinerMode::SuitColour),
             SolveResult::Won

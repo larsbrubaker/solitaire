@@ -32,11 +32,11 @@ use app_model::{shared_model, SharedModel};
 use app_root::AppRootWidget;
 use confirm_dialog::ConfirmDialog;
 use game_widget::GameWidget;
-use play_deal_dialog::PlayDealDialog;
 use help_widget::HelpDialog;
 use hud_widget::HudWidget;
 use menu_widget::MenuBarHost;
 use overlay_stack::OverlayStack;
+use play_deal_dialog::PlayDealDialog;
 use title_widget::TitleWidget;
 
 use crate::render::CardSpriteAtlas;
@@ -272,10 +272,9 @@ mod tests {
     #[test]
     fn hud_buttons_stable_across_relayout() {
         let (mut app, model) = build_solitaire_app();
-        model.borrow_mut().start_game_with_seed(
-            crate::games::GameKind::Klondike,
-            42,
-        );
+        model
+            .borrow_mut()
+            .start_game_with_seed(crate::games::GameKind::Klondike, 42);
         let viewport = Size::new(1024.0, 768.0);
         app.layout(viewport);
         // Collect Button pointer identities after the first
@@ -310,10 +309,9 @@ mod tests {
     fn hud_strip_click_hits_a_button() {
         let (mut app, model) = build_solitaire_app();
         // Start a game so the HUD is visible.
-        model.borrow_mut().start_game_with_seed(
-            crate::games::GameKind::Klondike,
-            42,
-        );
+        model
+            .borrow_mut()
+            .start_game_with_seed(crate::games::GameKind::Klondike, 42);
         let viewport = Size::new(1024.0, 768.0);
         app.layout(viewport);
         // HUD strip lives at the TOP of the viewport (Y-up: y in
@@ -330,8 +328,7 @@ mod tests {
             first_btn_bounds.x + first_btn_bounds.width * 0.5,
             strip_mid_y,
         );
-        let path = hit_test_subtree(app.root(), click)
-            .expect("HUD-strip click must hit something");
+        let path = hit_test_subtree(app.root(), click).expect("HUD-strip click must hit something");
         let chain = type_chain_for_path(app.root(), &path);
         assert!(
             chain.contains(&"HudWidget"),

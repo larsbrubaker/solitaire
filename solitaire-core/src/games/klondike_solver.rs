@@ -304,8 +304,7 @@ mod tests {
                 ));
             }
         }
-        let budget =
-            SolverBudget::from_duration(std::time::Duration::from_millis(50), 1_000, 1);
+        let budget = SolverBudget::from_duration(std::time::Duration::from_millis(50), 1_000, 1);
         assert_eq!(solve(&s.piles, budget), SolveResult::Won);
     }
 }

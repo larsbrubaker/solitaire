@@ -964,15 +964,7 @@ impl Widget for GameWidget {
             // Sit the toast just below the top edge of the playfield so
             // it doesn't collide with the menu bar or the win banner.
             let toast_y = pf.y + pf.height - 80.0;
-            super::toast::paint_toast(
-                ctx,
-                &self.font,
-                pf.x,
-                toast_y,
-                pf.width,
-                &msg,
-                started,
-            );
+            super::toast::paint_toast(ctx, &self.font, pf.x, toast_y, pf.width, &msg, started);
         }
     }
 

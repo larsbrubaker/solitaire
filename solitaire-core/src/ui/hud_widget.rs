@@ -176,8 +176,7 @@ impl HudWidget {
                 Action::Shuffle,
                 Action::Home,
             ],
-            Some(crate::games::GameKind::Spider)
-            | Some(crate::games::GameKind::Klondike) => vec![
+            Some(crate::games::GameKind::Spider) | Some(crate::games::GameKind::Klondike) => vec![
                 Action::Fullscreen,
                 Action::Undo,
                 Action::NewDeal,
@@ -310,11 +309,7 @@ impl HudWidget {
                 let widths: Vec<f64> = (0..action_count)
                     .map(|i| self.children[i].layout(probe).width)
                     .collect();
-                let col_w = widths
-                    .iter()
-                    .cloned()
-                    .fold(0.0_f64, f64::max)
-                    .max(ham_w);
+                let col_w = widths.iter().cloned().fold(0.0_f64, f64::max).max(ham_w);
                 let col_x = ham_x;
                 // Stack upward from above the HUD strip.
                 let bottom = hud.y + hud.height + STD_BTN_GAP;

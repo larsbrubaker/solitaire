@@ -122,11 +122,7 @@ impl MsRand {
     fn next(&mut self) -> u32 {
         // Wrapping ops match Microsoft's i32 overflow behavior; the
         // 0x7FFFFFFF mask drops the sign bit.
-        self.state = self
-            .state
-            .wrapping_mul(214013)
-            .wrapping_add(2531011)
-            & 0x7FFF_FFFF;
+        self.state = self.state.wrapping_mul(214013).wrapping_add(2531011) & 0x7FFF_FFFF;
         (self.state >> 16) & 0x7FFF
     }
 }

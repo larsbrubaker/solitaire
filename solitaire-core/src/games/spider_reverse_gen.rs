@@ -19,8 +19,8 @@
 //! distribution differs from random-shuffle 4-suit Spider. For
 //! shipping a "Winnable deals only" toggle this trade-off is fine.
 
-use rand::{Rng, RngCore, SeedableRng};
 use rand::rngs::StdRng;
+use rand::{Rng, RngCore, SeedableRng};
 
 use crate::cards::{Card, Rank, Suit};
 use crate::piles::{PileId, PileSet};
@@ -68,7 +68,8 @@ fn build_solved_state(suit_count: u8, one_suit: Suit) -> PileSet {
         let fid = FOUND_FIRST + i as u8;
         let pile = piles.get_mut(fid);
         for rank in (1..=13).rev() {
-            pile.cards.push(Card::new(suit, rank_from_u8(rank)).face_up());
+            pile.cards
+                .push(Card::new(suit, rank_from_u8(rank)).face_up());
         }
     }
     piles
@@ -202,7 +203,10 @@ fn phase2_mix_cascades<R: Rng>(state: &mut PileSet, rng: &mut R) {
         let src = CASCADE_FIRST + rng.gen_range(0..N_CASCADES as u8);
         let (suited_len, src_len) = {
             let src_pile = state.get(src);
-            (suited_run_length_at_top(&src_pile.cards), src_pile.cards.len())
+            (
+                suited_run_length_at_top(&src_pile.cards),
+                src_pile.cards.len(),
+            )
         };
         if src_len == 0 {
             continue;
@@ -412,18 +416,9 @@ mod tests {
             let pb = &b.get(pid).cards;
             assert_eq!(pa.len(), pb.len(), "pile {pid} length differs");
             for (i, (x, y)) in pa.iter().zip(pb.iter()).enumerate() {
-                assert_eq!(
-                    x.suit, y.suit,
-                    "pile {pid} card {i} suit differs",
-                );
-                assert_eq!(
-                    x.rank, y.rank,
-                    "pile {pid} card {i} rank differs",
-                );
-                assert_eq!(
-                    x.face_up, y.face_up,
-                    "pile {pid} card {i} face_up differs",
-                );
+                assert_eq!(x.suit, y.suit, "pile {pid} card {i} suit differs",);
+                assert_eq!(x.rank, y.rank, "pile {pid} card {i} rank differs",);
+                assert_eq!(x.face_up, y.face_up, "pile {pid} card {i} face_up differs",);
             }
         }
     }
@@ -437,9 +432,13 @@ mod tests {
         let pa = &a.get(CASCADE_FIRST).cards;
         let pb = &b.get(CASCADE_FIRST).cards;
         let same = pa.len() == pb.len()
-            && pa.iter().zip(pb.iter()).all(|(x, y)| {
-                x.suit == y.suit && x.rank == y.rank
-            });
-        assert!(!same, "different seeds shouldn't produce identical first cascade");
+            && pa
+                .iter()
+                .zip(pb.iter())
+                .all(|(x, y)| x.suit == y.suit && x.rank == y.rank);
+        assert!(
+            !same,
+            "different seeds shouldn't produce identical first cascade"
+        );
     }
 }

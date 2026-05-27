@@ -208,7 +208,12 @@ impl Widget for SeedGenView {
         // Background fill behind the view (the agg-gui Window paints
         // its own chrome but the content rect is transparent).
         ctx.begin_path();
-        ctx.rect(self.bounds.x, self.bounds.y, self.bounds.width, self.bounds.height);
+        ctx.rect(
+            self.bounds.x,
+            self.bounds.y,
+            self.bounds.width,
+            self.bounds.height,
+        );
         ctx.set_fill_color(BG);
         ctx.fill();
 

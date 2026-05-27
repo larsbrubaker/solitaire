@@ -19,8 +19,9 @@ use rand::{Rng, SeedableRng};
 /// found inside Microsoft Solitaire Collection's 1..1,000,000
 /// range — i.e. **eight unwinnable games out of a million**, every
 /// other deal solves.
-pub const MS_FREECELL_UNWINNABLE_LIST: &[u32] =
-    &[11_982, 146_692, 186_216, 455_889, 495_505, 512_118, 517_776, 781_948];
+pub const MS_FREECELL_UNWINNABLE_LIST: &[u32] = &[
+    11_982, 146_692, 186_216, 455_889, 495_505, 512_118, 517_776, 781_948,
+];
 
 /// Legacy alias: the single unwinnable in the classic 32k set.
 pub const MS_FREECELL_UNWINNABLE: u32 = 11_982;

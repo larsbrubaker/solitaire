@@ -180,7 +180,10 @@ impl GameRules for FreeCell {
             let cols = super::ms_freecell::deal_columns(game);
             for (col_idx, col) in cols.iter().enumerate() {
                 for &card in col {
-                    piles.get_mut(CASCADE_FIRST + col_idx as u8).cards.push(card);
+                    piles
+                        .get_mut(CASCADE_FIRST + col_idx as u8)
+                        .cards
+                        .push(card);
                 }
             }
             return;

@@ -29,7 +29,5 @@ pub enum Hint {
     /// API; semantically the same as "click stock to deal" in
     /// both Spider (deals a row across cascades) and Klondike
     /// (draws to waste, or recycles when empty).
-    StockDeal {
-        stock: PileId,
-    },
+    StockDeal { stock: PileId },
 }

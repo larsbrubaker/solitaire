@@ -8,8 +8,8 @@ use crate::piles::PileSet;
 
 use super::hint::Hint;
 use super::klondike::{
-    alt_color_descending, is_tableau, is_valid_run, same_suit_ascending, Klondike,
-    FOUND_FIRST, FOUND_LAST, STOCK, TABLEAU_FIRST, TABLEAU_LAST, WASTE,
+    alt_color_descending, is_tableau, is_valid_run, same_suit_ascending, Klondike, FOUND_FIRST,
+    FOUND_LAST, STOCK, TABLEAU_FIRST, TABLEAU_LAST, WASTE,
 };
 
 /// Pick the highest-value Klondike move for the current board.
@@ -178,8 +178,7 @@ pub fn best_klondike_hint(rules: &Klondike, piles: &PileSet) -> Option<Hint> {
     // legal; if waste has cards, recycling onto the stock is the
     // engine-permitted equivalent. Either way the hint just points
     // the player at the stock pile.
-    let stock_or_waste_nonempty =
-        !piles.get(STOCK).is_empty() || !piles.get(WASTE).is_empty();
+    let stock_or_waste_nonempty = !piles.get(STOCK).is_empty() || !piles.get(WASTE).is_empty();
     if stock_or_waste_nonempty {
         let _ = rules;
         return Some(Hint::StockDeal { stock: STOCK });
@@ -196,8 +195,7 @@ mod tests {
 
     fn empty_klondike() -> (Klondike, PileSet) {
         let rules = Klondike::new();
-        let piles =
-            PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
+        let piles = PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
         (rules, piles)
     }
 

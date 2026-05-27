@@ -453,20 +453,17 @@ pub fn best_spider_hint(piles: &PileSet) -> Option<SpiderHint> {
                 // was suited with moved head). Cards moved together
                 // preserve their internal suited pairs, so only the
                 // two junction points matter.
-                let created_at_dst = dst
-                    .top()
-                    .is_some_and(|t| {
-                        t.face_up
-                            && t.suit == moved_head.suit
-                            && Some(moved_head.rank) == t.rank.next_down()
-                    });
-                let destroyed_at_src = start_idx > 0
-                    && {
-                        let pred = &src.cards[start_idx - 1];
-                        pred.face_up
-                            && pred.suit == moved_head.suit
-                            && Some(moved_head.rank) == pred.rank.next_down()
-                    };
+                let created_at_dst = dst.top().is_some_and(|t| {
+                    t.face_up
+                        && t.suit == moved_head.suit
+                        && Some(moved_head.rank) == t.rank.next_down()
+                });
+                let destroyed_at_src = start_idx > 0 && {
+                    let pred = &src.cards[start_idx - 1];
+                    pred.face_up
+                        && pred.suit == moved_head.suit
+                        && Some(moved_head.rank) == pred.rank.next_down()
+                };
                 let mut m = Move::simple(src_id, take as u8, dst_id);
                 if exposes {
                     m = m.with_flip_source();
@@ -481,8 +478,7 @@ pub fn best_spider_hint(piles: &PileSet) -> Option<SpiderHint> {
                 // both the duplicate-parent shuffle (gain 1, lose 1)
                 // and the wholesale relocation onto an empty cascade
                 // (gain 0, lose 0).
-                let junction_delta =
-                    (created_at_dst as i32) - (destroyed_at_src as i32);
+                let junction_delta = (created_at_dst as i32) - (destroyed_at_src as i32);
                 if !completes && !exposes && junction_delta <= 0 {
                     continue;
                 }
