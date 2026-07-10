@@ -35,16 +35,26 @@ pub struct Pile {
     /// `card_h = card_w * 1.4`) to match the standard playing-card
     /// aspect.
     pub card_h: f64,
-    /// Up to this many of the topmost cards are fanned right by `fan_dx`;
-    /// the rest stack at the origin. Used for the Klondike waste pile in
-    /// 3-card-draw mode. `0` (default) disables the fan.
+    /// Up to this many of the topmost cards are fanned by (`fan_dx`,
+    /// `fan_dy`) per card; the rest stack at the origin. Used for the
+    /// Klondike waste pile in 3-card-draw mode. `0` (default) disables
+    /// the fan.
     pub fan_top_n: u8,
     /// Per-card horizontal offset within the fan group (Y-up coords).
     pub fan_dx: f64,
+    /// Per-card vertical offset within the fan group (Y-up coords —
+    /// negative fans downward on screen). Used when the waste sits in
+    /// a side column in the wide-viewport layout.
+    pub fan_dy: f64,
     /// When `true`, an Ace at the top of this pile renders as an empty
     /// gap slot rather than as the Ace card. Mom's Solitaire (Montana)
     /// uses this — Aces are gaps, not playable cards. Default `false`.
     pub render_ace_as_gap: bool,
+    /// Multiplier applied to the layout's fan steps (`PileLayout::
+    /// dy_for`) in `position_for`, so every consumer — painting,
+    /// hit-testing, animations — sees the same stretched fan. Card
+    /// size and the top-N waste fan are unaffected. Default `1.0`.
+    pub fan_scale: f64,
 }
 
 impl Pile {
@@ -62,7 +72,9 @@ impl Pile {
             card_h: slot.card_h,
             fan_top_n: slot.fan_top_n,
             fan_dx: slot.fan_dx,
+            fan_dy: slot.fan_dy,
             render_ace_as_gap: slot.render_ace_as_gap,
+            fan_scale: slot.fan_scale,
         }
     }
 
@@ -79,7 +91,9 @@ impl Pile {
         self.card_h = slot.card_h;
         self.fan_top_n = slot.fan_top_n;
         self.fan_dx = slot.fan_dx;
+        self.fan_dy = slot.fan_dy;
         self.render_ace_as_gap = slot.render_ace_as_gap;
+        self.fan_scale = slot.fan_scale;
     }
 
     pub fn top(&self) -> Option<&Card> {
@@ -105,26 +119,30 @@ impl Pile {
             let prev_prev = if i >= 2 { self.cards.get(i - 2) } else { None };
             let prev = self.cards.get(i - 1);
             let curr = self.cards.get(i);
-            y += self.layout.dy_for(self.card_h, prev_prev, prev, curr);
+            // `fan_scale` stretches every fan step — this is the single
+            // seam all consumers (paint, hit-test, animation) resolve
+            // positions through, so they stay consistent.
+            y += self.layout.dy_for(self.card_h, prev_prev, prev, curr) * self.fan_scale;
         }
-        let x = self.origin_x + self.fan_x_offset(idx);
-        (x, y)
+        let (fan_dx, fan_dy) = self.fan_offset(idx);
+        (self.origin_x + fan_dx, y + fan_dy)
     }
 
-    /// X offset applied to card `idx` due to top-N fan (waste pile in
-    /// 3-draw Klondike). Returns 0 when no fan is configured or `idx` is
-    /// below the fan group.
-    fn fan_x_offset(&self, idx: usize) -> f64 {
-        if self.fan_top_n == 0 || self.fan_dx == 0.0 {
-            return 0.0;
+    /// (x, y) offset applied to card `idx` due to top-N fan (waste
+    /// pile in 3-draw Klondike). Returns (0, 0) when no fan is
+    /// configured or `idx` is below the fan group.
+    fn fan_offset(&self, idx: usize) -> (f64, f64) {
+        if self.fan_top_n == 0 || (self.fan_dx == 0.0 && self.fan_dy == 0.0) {
+            return (0.0, 0.0);
         }
         let n = self.cards.len();
         let top_n = (self.fan_top_n as usize).min(n);
         let fan_base = n.saturating_sub(top_n);
         if idx >= fan_base {
-            (idx - fan_base) as f64 * self.fan_dx
+            let k = (idx - fan_base) as f64;
+            (k * self.fan_dx, k * self.fan_dy)
         } else {
-            0.0
+            (0.0, 0.0)
         }
     }
 

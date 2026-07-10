@@ -14,7 +14,7 @@ use crate::piles::{PileId, PileKind, PileLayout, PileSet, PileSlot};
 use crate::session::{apply_move, Move};
 
 use super::hint::Hint;
-use super::{GameRules, CARD_ASPECT};
+use super::GameRules;
 
 /// Back-compat alias for the previous Spider-specific enum name.
 /// Kept so other crates depending on `SpiderHint` keep compiling
@@ -30,6 +30,14 @@ const N_CASCADES: usize = 10;
 
 /// Top row has 8 foundations + a 1-column gap + stock = 10 columns.
 const TOP_COLS: usize = 10;
+/// Total columns in the side-column arrangement: 1 left (the 8
+/// foundations stacked with overlapping origins) + 10 cascades + 1
+/// right (stock).
+const SIDE_COLS: usize = 12;
+/// Vertical spacing between consecutive foundation-slot origins in
+/// the side-column layout, as a fraction of card height. Foundations
+/// are dead piles holding completed suits, so heavy overlap is fine.
+const SIDE_FOUNDATION_STEP: f64 = 0.15;
 /// Vertical budget in card-heights — top row + tableau fan. The normal
 /// fan step is intentionally tight, so a typical Spider column still
 /// fits without compacting suited runs differently from other cards.
@@ -155,19 +163,23 @@ fn destination_run_score(piles: &PileSet, dst: PileId) -> usize {
 
 impl GameRules for Spider {
     fn pile_layout(&self, rect: Rect) -> Vec<PileSlot> {
-        // 10 columns horizontally (max of top-row count and cascade
-        // count, both = 10 once the foundation gap is included).
-        let col_gap = 10.0;
-        let row_gap = 12.0;
-        let card_w_by_width = (rect.width - col_gap * (TOP_COLS as f64 - 1.0)) / TOP_COLS as f64;
-        let card_h_by_height = (rect.height - row_gap) / VERT_BUDGET_CARDS;
-        let card_h = (card_w_by_width * CARD_ASPECT).min(card_h_by_height);
-        let card_w = card_h / CARD_ASPECT;
-        let col_pitch = card_w + col_gap;
-        let used_w = TOP_COLS as f64 * card_w + (TOP_COLS as f64 - 1.0) * col_gap;
-        let left = rect.x + (rect.width - used_w) / 2.0;
-        let top_row_origin_y = rect.y + rect.height - card_h;
-        let tableau_origin_y = top_row_origin_y - (card_h + row_gap);
+        // Two candidate arrangements — the classic top row (10
+        // columns, foundations + stock above the cascades) and a
+        // side-column layout (12 columns: foundations stacked in one
+        // left column, cascades center, stock right) that frees a full
+        // card-height for the cascades on wide viewports. Whichever
+        // yields the larger card wins.
+        let (fit, arrangement) =
+            super::pick_board_fit(rect, TOP_COLS, SIDE_COLS, 10.0, 12.0, VERT_BUDGET_CARDS);
+        // Stretch cascade fan steps into leftover vertical space (width-
+        // bound portrait viewports). Worst-case Spider cascade: 5
+        // face-down cards under a K→A run of 13 face-up cards.
+        let fan_scale =
+            super::tableau_fan_scale(rect, &fit, arrangement, 12.0, VERT_BUDGET_CARDS, 5, 13);
+        let (card_w, card_h) = (fit.card_w, fit.card_h);
+        let col_pitch = fit.col_pitch;
+        let left = fit.left;
+        let top_row_origin_y = fit.top_row_origin_y;
         let mk = |id: PileId, kind: PileKind, layout: PileLayout, col: f64, base_y: f64| {
             PileSlot::new(
                 id,
@@ -180,33 +192,77 @@ impl GameRules for Spider {
             )
         };
         let mut out = Vec::with_capacity(19);
-        // 8 foundations across columns 0..7.
-        for i in 0..8u8 {
-            out.push(mk(
-                FOUND_FIRST + i,
-                PileKind::Foundation,
-                PileLayout::Stacked,
-                i as f64,
-                top_row_origin_y,
-            ));
-        }
-        // Stock at column 9 (column 8 left as a visual gap).
-        out.push(mk(
-            STOCK,
-            PileKind::Stock,
-            PileLayout::Stacked,
-            9.0,
-            top_row_origin_y,
-        ));
-        // 10 cascades on the row below, with uniform visible fan spacing.
-        for i in 0..N_CASCADES as u8 {
-            out.push(mk(
-                CASCADE_FIRST + i,
-                PileKind::Tableau,
-                PileLayout::FannedDown,
-                i as f64,
-                tableau_origin_y,
-            ));
+        match arrangement {
+            super::BoardArrangement::TopRow => {
+                let tableau_origin_y = top_row_origin_y - fit.row_pitch;
+                // 8 foundations across columns 0..7.
+                for i in 0..8u8 {
+                    out.push(mk(
+                        FOUND_FIRST + i,
+                        PileKind::Foundation,
+                        PileLayout::Stacked,
+                        i as f64,
+                        top_row_origin_y,
+                    ));
+                }
+                // Stock at column 9 (column 8 left as a visual gap).
+                out.push(mk(
+                    STOCK,
+                    PileKind::Stock,
+                    PileLayout::Stacked,
+                    9.0,
+                    top_row_origin_y,
+                ));
+                // 10 cascades on the row below, with uniform visible
+                // fan spacing.
+                for i in 0..N_CASCADES as u8 {
+                    out.push(
+                        mk(
+                            CASCADE_FIRST + i,
+                            PileKind::Tableau,
+                            PileLayout::FannedDown,
+                            i as f64,
+                            tableau_origin_y,
+                        )
+                        .with_fan_scale(fan_scale),
+                    );
+                }
+            }
+            super::BoardArrangement::SideColumns => {
+                // Left column: all 8 foundations stacked with heavily
+                // overlapping origins, stepping downward from the top.
+                for i in 0..8u8 {
+                    out.push(mk(
+                        FOUND_FIRST + i,
+                        PileKind::Foundation,
+                        PileLayout::Stacked,
+                        0.0,
+                        top_row_origin_y - i as f64 * card_h * SIDE_FOUNDATION_STEP,
+                    ));
+                }
+                // Right column: stock, top-aligned.
+                out.push(mk(
+                    STOCK,
+                    PileKind::Stock,
+                    PileLayout::Stacked,
+                    11.0,
+                    top_row_origin_y,
+                ));
+                // 10 cascades spanning the full height in the center
+                // columns (no visual gap column in this layout).
+                for i in 0..N_CASCADES as u8 {
+                    out.push(
+                        mk(
+                            CASCADE_FIRST + i,
+                            PileKind::Tableau,
+                            PileLayout::FannedDown,
+                            (1 + i) as f64,
+                            top_row_origin_y,
+                        )
+                        .with_fan_scale(fan_scale),
+                    );
+                }
+            }
         }
         out
     }
@@ -522,3 +578,7 @@ pub fn best_spider_hint(piles: &PileSet) -> Option<SpiderHint> {
 #[cfg(test)]
 #[path = "spider_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "spider_layout_tests.rs"]
+mod layout_tests;

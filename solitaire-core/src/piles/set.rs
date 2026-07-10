@@ -56,10 +56,12 @@ impl PileSet {
     }
 
     /// Hit-test the entire playfield. Iterates piles in order; the first
-    /// hit wins. Tableau columns are tested before stock/waste/foundations
-    /// only by virtue of their declaration order in the variant's slot
-    /// table — but in practice the bounding rects don't overlap so order
-    /// doesn't matter.
+    /// hit wins, so overlapping bounding rects resolve to the lowest pile
+    /// id. That's acceptable because the only piles that currently
+    /// overlap — Spider's side-column foundation slots, stacked at
+    /// 0.15·card_h steps — accept no manual interaction (manual
+    /// foundation drops are illegal in Spider); every other variant's
+    /// rects are disjoint.
     pub fn hit_test(&self, x: f64, y: f64) -> Option<HitResult> {
         for p in &self.piles {
             if let Some(hit) = p.hit_test(x, y) {

@@ -60,6 +60,8 @@ struct HintAnim {
     dst_y: f64,
     card_w: f64,
     card_h: f64,
+    /// Source pile's fan-step scale, so the ghost fans like the pile.
+    fan_scale: f64,
     start_at: web_time::Instant,
     slide_dur: std::time::Duration,
     fade_dur: std::time::Duration,
@@ -734,6 +736,7 @@ impl GameWidget {
             dst_y: dy,
             card_w: src.card_w,
             card_h: src.card_h,
+            fan_scale: src.fan_scale,
             start_at: web_time::Instant::now(),
             slide_dur: std::time::Duration::from_millis(550),
             fade_dur: std::time::Duration::from_millis(300),
@@ -755,7 +758,7 @@ impl GameWidget {
         if alpha <= 0.0 {
             return;
         }
-        let fan = anim.card_h * crate::piles::FAN_DOWN_FACE_UP;
+        let fan = anim.card_h * crate::piles::FAN_DOWN_FACE_UP * anim.fan_scale;
         ctx.set_global_alpha(alpha);
         for (i, card) in anim.cards.iter().enumerate() {
             let y = by - i as f64 * fan;
@@ -770,17 +773,18 @@ impl GameWidget {
         // Use the source pile's card dimensions so a Mom's Solitaire
         // card stays sized correctly while floating at the cursor.
         let model = self.model.borrow();
-        let (card_w, card_h) = model
+        let (card_w, card_h, fan_scale) = model
             .session
             .as_ref()
             .map(|s| {
                 let p = s.piles().get(drag.source_pile);
-                (p.card_w, p.card_h)
+                (p.card_w, p.card_h, p.fan_scale)
             })
-            .unwrap_or((90.0, 126.0));
+            .unwrap_or((90.0, 126.0, 1.0));
         drop(model);
-        // Fan offset for the dragged stack matches the face-up tableau step.
-        let fan = card_h * FAN_DOWN_FACE_UP;
+        // Fan offset for the dragged stack matches the face-up tableau
+        // step, including the source pile's stretched fan scale.
+        let fan = card_h * FAN_DOWN_FACE_UP * fan_scale;
         for (i, card) in drag.cards.iter().enumerate() {
             let y = by - i as f64 * fan;
             paint_card_at(ctx, card, bx, y, card_w, card_h, &self.atlas);

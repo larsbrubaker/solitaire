@@ -9,7 +9,7 @@ use crate::cards::{Card, Rank};
 use crate::piles::{PileId, PileKind, PileLayout, PileSet, PileSlot};
 use crate::session::Move;
 
-use super::{GameRules, CARD_ASPECT};
+use super::GameRules;
 
 // Pile ids:
 pub(super) const STOCK: PileId = 0;
@@ -21,6 +21,9 @@ pub(super) const TABLEAU_LAST: PileId = 12;
 
 /// Number of tableau columns (= horizontal layout width budget).
 const COLS: usize = 7;
+/// Total columns in the side-column arrangement: 1 left (stock +
+/// waste) + 7 tableau + 2 right (foundations 2x2).
+const SIDE_COLS: usize = 10;
 /// Vertical budget in card-heights. Klondike's tableau starts with up
 /// to 7 cards in column 6 and grows from there, but face-down rows
 /// fan with the smaller offset and players rarely accumulate beyond
@@ -89,23 +92,24 @@ pub(super) fn is_valid_run(cards: &[Card]) -> bool {
 
 impl GameRules for Klondike {
     fn pile_layout(&self, rect: Rect) -> Vec<PileSlot> {
-        // 7 columns horizontally, with a small gutter between cards.
-        // Vertical budget covers stock/waste/foundations row plus the
-        // tableau fan; mid-game fans rarely exceed VERT_BUDGET_CARDS.
-        let col_gap = 12.0;
-        let row_gap = 12.0;
-        let card_w_by_width = (rect.width - col_gap * (COLS as f64 - 1.0)) / COLS as f64;
-        let card_h_by_height = (rect.height - row_gap) / VERT_BUDGET_CARDS;
-        let card_h = (card_w_by_width * CARD_ASPECT).min(card_h_by_height);
-        let card_w = card_h / CARD_ASPECT;
-        let col_pitch = card_w + col_gap;
-        let row_pitch = card_h + row_gap;
-        // Center horizontally inside `rect`.
-        let used_w = COLS as f64 * card_w + (COLS as f64 - 1.0) * col_gap;
-        let left = rect.x + (rect.width - used_w) / 2.0;
+        // Two candidate arrangements — the classic top row (7 columns,
+        // stock/waste/foundations above the tableau) and a side-column
+        // layout (10 columns: stock+waste left, tableau center,
+        // foundations 2x2 right) that frees a full card-height for the
+        // tableau on wide viewports. Whichever yields the larger card
+        // wins.
+        let (fit, arrangement) =
+            super::pick_board_fit(rect, COLS, SIDE_COLS, 12.0, 12.0, VERT_BUDGET_CARDS);
+        // Stretch tableau fan steps into leftover vertical space (width-
+        // bound portrait viewports). Worst-case Klondike column: 6
+        // face-down cards under a K→A run of 13 face-up cards.
+        let fan_scale =
+            super::tableau_fan_scale(rect, &fit, arrangement, 12.0, VERT_BUDGET_CARDS, 6, 13);
+        let (card_w, card_h) = (fit.card_w, fit.card_h);
+        let col_pitch = fit.col_pitch;
+        let left = fit.left;
         // Y-up: top row sits near the top of the playfield rect.
-        let top_row_origin_y = rect.y + rect.height - card_h;
-        let tableau_origin_y = top_row_origin_y - row_pitch;
+        let top_row_origin_y = fit.top_row_origin_y;
         let mk = |id: PileId, kind: PileKind, layout: PileLayout, col: f64, base_y: f64| {
             PileSlot::new(
                 id,
@@ -118,43 +122,99 @@ impl GameRules for Klondike {
             )
         };
         let mut out = Vec::with_capacity(13);
-        out.push(mk(
-            STOCK,
-            PileKind::Stock,
-            PileLayout::Stacked,
-            0.0,
-            top_row_origin_y,
-        ));
-        let mut waste = mk(
-            WASTE,
-            PileKind::Waste,
-            PileLayout::Stacked,
-            1.0,
-            top_row_origin_y,
-        );
-        if self.draw_count > 1 {
-            // Waste fan width is ~27 % of card width — matches the
-            // historical 24 px against 90 px cards.
-            waste = waste.with_waste_fan(self.draw_count, card_w * 0.27);
-        }
-        out.push(waste);
-        for i in 0..4u8 {
-            out.push(mk(
-                FOUND_FIRST + i,
-                PileKind::Foundation,
-                PileLayout::Stacked,
-                (3 + i) as f64,
-                top_row_origin_y,
-            ));
-        }
-        for i in 0..COLS as u8 {
-            out.push(mk(
-                TABLEAU_FIRST + i,
-                PileKind::Tableau,
-                PileLayout::FannedDown,
-                i as f64,
-                tableau_origin_y,
-            ));
+        match arrangement {
+            super::BoardArrangement::TopRow => {
+                let tableau_origin_y = top_row_origin_y - fit.row_pitch;
+                out.push(mk(
+                    STOCK,
+                    PileKind::Stock,
+                    PileLayout::Stacked,
+                    0.0,
+                    top_row_origin_y,
+                ));
+                let mut waste = mk(
+                    WASTE,
+                    PileKind::Waste,
+                    PileLayout::Stacked,
+                    1.0,
+                    top_row_origin_y,
+                );
+                if self.draw_count > 1 {
+                    // Waste fan width is ~27 % of card width — matches
+                    // the historical 24 px against 90 px cards.
+                    waste = waste.with_waste_fan(self.draw_count, card_w * 0.27);
+                }
+                out.push(waste);
+                for i in 0..4u8 {
+                    out.push(mk(
+                        FOUND_FIRST + i,
+                        PileKind::Foundation,
+                        PileLayout::Stacked,
+                        (3 + i) as f64,
+                        top_row_origin_y,
+                    ));
+                }
+                for i in 0..COLS as u8 {
+                    out.push(
+                        mk(
+                            TABLEAU_FIRST + i,
+                            PileKind::Tableau,
+                            PileLayout::FannedDown,
+                            i as f64,
+                            tableau_origin_y,
+                        )
+                        .with_fan_scale(fan_scale),
+                    );
+                }
+            }
+            super::BoardArrangement::SideColumns => {
+                // Left column: stock on top, waste one row below it —
+                // the 3-draw fan runs DOWNWARD here (negative Y-up dy)
+                // since there is no horizontal room in a single column.
+                out.push(mk(
+                    STOCK,
+                    PileKind::Stock,
+                    PileLayout::Stacked,
+                    0.0,
+                    top_row_origin_y,
+                ));
+                let mut waste = mk(
+                    WASTE,
+                    PileKind::Waste,
+                    PileLayout::Stacked,
+                    0.0,
+                    top_row_origin_y - fit.row_pitch,
+                );
+                if self.draw_count > 1 {
+                    waste = waste.with_waste_fan_dy(self.draw_count, -card_h * 0.27);
+                }
+                out.push(waste);
+                // Right two columns: foundations in a 2x2 grid, top
+                // row flush with the playfield top.
+                for i in 0..4u8 {
+                    out.push(mk(
+                        FOUND_FIRST + i,
+                        PileKind::Foundation,
+                        PileLayout::Stacked,
+                        (8 + i % 2) as f64,
+                        top_row_origin_y - (i / 2) as f64 * fit.row_pitch,
+                    ));
+                }
+                // Tableau spans the full playfield height in the
+                // center columns.
+                for i in 0..COLS as u8 {
+                    out.push(
+                        mk(
+                            TABLEAU_FIRST + i,
+                            PileKind::Tableau,
+                            PileLayout::FannedDown,
+                            (1 + i) as f64,
+                            top_row_origin_y,
+                        )
+                        .with_fan_scale(fan_scale),
+                    );
+                }
+            }
         }
         out
     }
@@ -529,6 +589,130 @@ mod tests {
         apply_move(&mut piles, &m);
         assert_eq!(piles.get(WASTE).len(), 1);
         assert!(piles.get(WASTE).top().unwrap().face_up);
+    }
+
+    #[test]
+    fn wide_rect_picks_side_column_layout() {
+        let rules = Klondike::with_draw_count(3);
+        let rect = Rect::new(0.0, 0.0, 1600.0, 700.0);
+        let slots = rules.pile_layout(rect);
+        let top = crate::games::fit_cards(rect, 7, 12.0, 12.0, 4.5);
+        let side = crate::games::fit_cards(rect, 10, 12.0, 12.0, 3.5);
+        assert!(
+            side.card_h > top.card_h,
+            "side candidate must win on a wide rect"
+        );
+        let eq = |a: f64, b: f64| (a - b).abs() < 1e-9;
+        // Card size comes from the winning 10-column side fit.
+        assert!(eq(slots[STOCK as usize].card_h, side.card_h));
+        // Left column: stock on top, waste one row below with a
+        // downward vertical fan.
+        assert!(eq(slots[STOCK as usize].origin_x, side.left));
+        assert!(eq(slots[STOCK as usize].origin_y, side.top_row_origin_y));
+        let w = &slots[WASTE as usize];
+        assert!(eq(w.origin_x, side.left));
+        assert!(eq(w.origin_y, side.top_row_origin_y - side.row_pitch));
+        assert_eq!(w.fan_top_n, 3);
+        assert!(eq(w.fan_dx, 0.0));
+        assert!(eq(w.fan_dy, -side.card_h * 0.27));
+        // Tableau: columns 1..=7, flush with the playfield top (full
+        // height).
+        for i in 0..7u8 {
+            let t = &slots[(TABLEAU_FIRST + i) as usize];
+            assert!(eq(t.origin_x, side.left + (1 + i) as f64 * side.col_pitch));
+            assert!(eq(t.origin_y, side.top_row_origin_y));
+        }
+        // Foundations: 2x2 grid in columns 8 and 9.
+        for i in 0..4u8 {
+            let f = &slots[(FOUND_FIRST + i) as usize];
+            assert!(eq(
+                f.origin_x,
+                side.left + (8 + i % 2) as f64 * side.col_pitch
+            ));
+            assert!(eq(
+                f.origin_y,
+                side.top_row_origin_y - (i / 2) as f64 * side.row_pitch
+            ));
+        }
+    }
+
+    #[test]
+    fn tall_rect_keeps_top_row_layout() {
+        let rules = Klondike::with_draw_count(3);
+        let slots = rules.pile_layout(Rect::new(0.0, 0.0, 390.0, 800.0));
+        let eq = |a: f64, b: f64| (a - b).abs() < 1e-6;
+        // Pin the historical top-row layout: width-bound cards of
+        // (390 - 6*12) / 7 = 45.428… wide, aspect 1.4.
+        let card_w = 318.0 / 7.0;
+        let card_h = card_w * crate::games::CARD_ASPECT;
+        let col_pitch = card_w + 12.0;
+        assert!(eq(slots[STOCK as usize].card_h, card_h));
+        assert!(eq(slots[STOCK as usize].origin_x, 0.0));
+        assert!(eq(slots[STOCK as usize].origin_y, 800.0 - card_h));
+        let w = &slots[WASTE as usize];
+        assert!(eq(w.origin_x, col_pitch));
+        assert!(eq(w.origin_y, 800.0 - card_h));
+        assert_eq!(w.fan_top_n, 3);
+        assert!(eq(w.fan_dx, card_w * 0.27));
+        assert!(eq(w.fan_dy, 0.0));
+        // Foundations start in column 3 of the top row; tableau sits
+        // one row-pitch below, starting at column 0.
+        assert!(eq(slots[FOUND_FIRST as usize].origin_x, 3.0 * col_pitch));
+        assert!(eq(slots[FOUND_FIRST as usize].origin_y, 800.0 - card_h));
+        assert!(eq(slots[TABLEAU_FIRST as usize].origin_x, 0.0));
+        assert!(eq(
+            slots[TABLEAU_FIRST as usize].origin_y,
+            800.0 - card_h - (card_h + 12.0)
+        ));
+    }
+
+    #[test]
+    fn portrait_rect_scales_tableau_fans() {
+        let rules = Klondike::new();
+        let rect = Rect::new(0.0, 0.0, 390.0, 800.0);
+        let slots = rules.pile_layout(rect);
+        let scale = slots[TABLEAU_FIRST as usize].fan_scale;
+        assert!(scale > 1.0, "portrait rect must stretch tableau fans");
+        assert!(scale <= 2.0);
+        for i in 0..COLS as u8 {
+            assert_eq!(slots[(TABLEAU_FIRST + i) as usize].fan_scale, scale);
+        }
+        // Only tableau piles stretch — stock/waste/foundations keep 1.0
+        // (and the waste's top-N fan offsets are untouched).
+        assert_eq!(slots[STOCK as usize].fan_scale, 1.0);
+        assert_eq!(slots[WASTE as usize].fan_scale, 1.0);
+        for i in 0..4u8 {
+            assert_eq!(slots[(FOUND_FIRST + i) as usize].fan_scale, 1.0);
+        }
+        // Worst-case column (6 face-down + K→A run of 13 face-up) must
+        // still fit above the playfield bottom at this scale.
+        let mut pile = crate::piles::Pile::from_slot(&slots[TABLEAU_FIRST as usize]);
+        for _ in 0..6 {
+            pile.cards
+                .push(Card::new(crate::cards::Suit::Spades, Rank::King));
+        }
+        for _ in 0..13 {
+            pile.cards
+                .push(Card::new(crate::cards::Suit::Spades, Rank::King).face_up());
+        }
+        let (_, y_bottom) = pile.position_for(pile.cards.len() - 1);
+        assert!(
+            y_bottom >= rect.y,
+            "worst-case pile bottom {y_bottom} overflows the playfield"
+        );
+    }
+
+    #[test]
+    fn height_bound_rect_keeps_default_fan_scale() {
+        let rules = Klondike::new();
+        let slots = rules.pile_layout(Rect::new(0.0, 0.0, 1600.0, 700.0));
+        for i in 0..COLS as u8 {
+            let s = slots[(TABLEAU_FIRST + i) as usize].fan_scale;
+            assert!(
+                (s - 1.0).abs() < 1e-9,
+                "height-bound fit must not stretch fans, got {s}"
+            );
+        }
     }
 
     #[test]

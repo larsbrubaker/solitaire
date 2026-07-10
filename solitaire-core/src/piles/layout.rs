@@ -8,7 +8,7 @@ use crate::cards::Card;
 pub const FAN_DOWN_FACE_UP: f64 = 0.176;
 /// Fan-down step for a face-down card (smaller — nothing readable on
 /// the back). 0.11 matches the historical 14 px against 126 px cards.
-const FAN_DOWN_FACE_DOWN: f64 = 0.11;
+pub const FAN_DOWN_FACE_DOWN: f64 = 0.11;
 
 /// How successive cards in a pile are visually offset.
 ///
@@ -89,8 +89,11 @@ impl PileLayout {
     }
 
     /// Total Y-up height occupied by `cards` under this layout, given
-    /// the pile's `card_h`. POSITIVE regardless of fan direction.
-    pub fn pile_height(self, card_h: f64, cards: &[Card]) -> f64 {
+    /// the pile's `card_h` and its fan-step scale (`Pile::fan_scale` —
+    /// pass `1.0` for default spacing). Only the fan steps scale; the
+    /// card itself keeps its height. POSITIVE regardless of fan
+    /// direction.
+    pub fn pile_height(self, card_h: f64, fan_scale: f64, cards: &[Card]) -> f64 {
         let n = cards.len();
         if n == 0 {
             return 0.0;
@@ -101,7 +104,7 @@ impl PileLayout {
                 let mut h = card_h;
                 for i in 1..n {
                     let pp = if i >= 2 { cards.get(i - 2) } else { None };
-                    h += -self.dy_for(card_h, pp, cards.get(i - 1), cards.get(i));
+                    h += -self.dy_for(card_h, pp, cards.get(i - 1), cards.get(i)) * fan_scale;
                 }
                 h
             }

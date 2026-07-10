@@ -262,7 +262,10 @@ pub(super) fn snapshot_waste_fan_compaction(
     waste_id: PileId,
 ) -> Vec<(usize, Card, f64, f64)> {
     let waste = piles.get(waste_id);
-    if waste.fan_top_n == 0 || waste.fan_dx == 0.0 || waste.cards.is_empty() {
+    if waste.fan_top_n == 0
+        || (waste.fan_dx == 0.0 && waste.fan_dy == 0.0)
+        || waste.cards.is_empty()
+    {
         return Vec::new();
     }
     let top_n = (waste.fan_top_n as usize).min(waste.cards.len());
@@ -283,7 +286,10 @@ pub(super) fn snapshot_source_waste_reflow(
         return Vec::new();
     }
     let pile = piles.get(m.from);
-    if pile.kind != PileKind::Waste || pile.fan_top_n <= 1 || pile.fan_dx == 0.0 {
+    if pile.kind != PileKind::Waste
+        || pile.fan_top_n <= 1
+        || (pile.fan_dx == 0.0 && pile.fan_dy == 0.0)
+    {
         return Vec::new();
     }
     let take = m.take as usize;

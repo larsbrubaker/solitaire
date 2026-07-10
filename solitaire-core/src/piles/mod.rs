@@ -13,7 +13,7 @@ mod set;
 mod tests;
 
 pub use hit::{HitResult, PileSlot};
-pub use layout::{PileLayout, FAN_DOWN_FACE_UP};
+pub use layout::{PileLayout, FAN_DOWN_FACE_DOWN, FAN_DOWN_FACE_UP};
 pub use pile::{Pile, PileKind};
 pub use set::PileSet;
 

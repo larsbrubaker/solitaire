@@ -694,3 +694,69 @@ fn stock_click_still_blocked_when_stock_too_short() {
     }
     assert!(rules.on_pile_click(&piles, STOCK).is_empty());
 }
+
+#[test]
+fn wide_rect_picks_side_column_layout() {
+    let rules = Spider::four_suit();
+    let rect = Rect::new(0.0, 0.0, 1600.0, 700.0);
+    let slots = rules.pile_layout(rect);
+    let top = crate::games::fit_cards(rect, 10, 10.0, 12.0, 5.0);
+    let side = crate::games::fit_cards(rect, 12, 10.0, 12.0, 4.0);
+    assert!(
+        side.card_h > top.card_h,
+        "side candidate must win on a wide rect"
+    );
+    let eq = |a: f64, b: f64| (a - b).abs() < 1e-9;
+    assert!(eq(slots[STOCK as usize].card_h, side.card_h));
+    // Left column: 8 foundations stacked with overlapping origins,
+    // stepping downward by 0.15 card-heights per slot.
+    for i in 0..8u8 {
+        let f = &slots[(FOUND_FIRST + i) as usize];
+        assert!(eq(f.origin_x, side.left));
+        assert!(eq(
+            f.origin_y,
+            side.top_row_origin_y - i as f64 * side.card_h * 0.15
+        ));
+    }
+    // Cascades: columns 1..=10, full playfield height.
+    for i in 0..10u8 {
+        let t = &slots[(CASCADE_FIRST + i) as usize];
+        assert!(eq(t.origin_x, side.left + (1 + i) as f64 * side.col_pitch));
+        assert!(eq(t.origin_y, side.top_row_origin_y));
+    }
+    // Right column: stock, top-aligned.
+    assert!(eq(
+        slots[STOCK as usize].origin_x,
+        side.left + 11.0 * side.col_pitch
+    ));
+    assert!(eq(slots[STOCK as usize].origin_y, side.top_row_origin_y));
+}
+
+#[test]
+fn tall_rect_keeps_top_row_layout() {
+    let rules = Spider::four_suit();
+    let slots = rules.pile_layout(Rect::new(0.0, 0.0, 390.0, 800.0));
+    let eq = |a: f64, b: f64| (a - b).abs() < 1e-6;
+    // Pin the historical top-row layout: width-bound cards of
+    // (390 - 9*10) / 10 = 30 wide, aspect 1.4 → 42 tall.
+    let card_w = 30.0;
+    let card_h = card_w * crate::games::CARD_ASPECT;
+    let col_pitch = card_w + 10.0;
+    assert!(eq(slots[STOCK as usize].card_h, card_h));
+    // Foundations across columns 0..=7 in the top row; stock at
+    // column 9 (column 8 is the visual gap); cascades one row-pitch
+    // below at column 0.
+    assert!(eq(slots[FOUND_FIRST as usize].origin_x, 0.0));
+    assert!(eq(slots[FOUND_FIRST as usize].origin_y, 800.0 - card_h));
+    assert!(eq(
+        slots[(FOUND_FIRST + 7) as usize].origin_x,
+        7.0 * col_pitch
+    ));
+    assert!(eq(slots[STOCK as usize].origin_x, 9.0 * col_pitch));
+    assert!(eq(slots[STOCK as usize].origin_y, 800.0 - card_h));
+    assert!(eq(slots[CASCADE_FIRST as usize].origin_x, 0.0));
+    assert!(eq(
+        slots[CASCADE_FIRST as usize].origin_y,
+        800.0 - card_h - (card_h + 12.0)
+    ));
+}
