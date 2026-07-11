@@ -34,9 +34,11 @@ const TOP_COLS: usize = 10;
 /// foundations stacked with overlapping origins) + 10 cascades + 1
 /// right (stock).
 const SIDE_COLS: usize = 12;
-/// Vertical spacing between consecutive foundation-slot origins in
-/// the side-column layout, as a fraction of card height. Foundations
-/// are dead piles holding completed suits, so heavy overlap is fine.
+/// FLOOR for the vertical spacing between consecutive foundation-slot
+/// origins in the side-column layout, as a fraction of card height —
+/// the cramped-viewport minimum. `stacked_side_step` spreads the 8
+/// slots wider than this when the column has room. Foundations are dead
+/// piles holding completed suits, so heavy overlap is fine.
 const SIDE_FOUNDATION_STEP: f64 = 0.15;
 /// Vertical budget in card-heights for the top-row layout — sized for a
 /// typical Spider column depth. Deeper columns compress their fan
@@ -255,15 +257,25 @@ impl GameRules for Spider {
                 }
             }
             super::BoardArrangement::SideColumns => {
-                // Left column: all 8 foundations stacked with heavily
+                // Left column: all 8 foundations stacked with
                 // overlapping origins, stepping downward from the top.
+                // The step spreads the 8 slots across the full column
+                // height so they don't cram at the top of an otherwise
+                // empty column.
+                let found_step = super::stacked_side_step(
+                    rect.height,
+                    card_h,
+                    8,
+                    card_h * SIDE_FOUNDATION_STEP,
+                    10.0,
+                );
                 for i in 0..8u8 {
                     out.push(mk(
                         FOUND_FIRST + i,
                         PileKind::Foundation,
                         PileLayout::Stacked,
                         0.0,
-                        top_row_origin_y - i as f64 * card_h * SIDE_FOUNDATION_STEP,
+                        top_row_origin_y - i as f64 * found_step,
                     ));
                 }
                 // Right column: stock, top-aligned.

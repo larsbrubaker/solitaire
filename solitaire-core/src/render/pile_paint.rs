@@ -33,14 +33,27 @@ use super::atlas::CardSpriteAtlas;
 use super::{FELT_GREEN_DARK, SLOT_BORDER};
 
 /// Mom's Solitaire gap fill — a soft inner panel inside the slot
-/// border so the Ace cells read clearly as drop targets, distinct
-/// from the felt and from a Klondike-style empty pile placeholder.
+/// border so the Ace cells read clearly as drop targets.
 const MOMS_GAP_FILL: Color = FELT_GREEN_DARK;
 
-/// Paint an empty-slot placeholder. Cheap (one rounded-rect stroke) so
+/// Opaque fill for empty-slot placeholders. Derived from the darker
+/// felt so each socket reads as a slightly inset panel against the
+/// lighter background felt. Crucially it is OPAQUE (alpha 255), so
+/// where the stacked side-columns overlap their empty slots, a slot
+/// occludes the ones behind it and the column reads as a physical
+/// stack of card sockets rather than a ladder of intersecting
+/// wireframe outlines.
+const EMPTY_SLOT_FILL: Color = FELT_GREEN_DARK;
+
+/// Paint an empty-slot placeholder: an opaque felt-derived fill with the
+/// slot border stroked on top. Cheap (one rounded-rect fill + stroke) so
 /// no atlas entry is needed. Caller passes the slot's per-pile
 /// dimensions so Mom's Solitaire's smaller cells render correctly.
 pub fn paint_empty_slot(ctx: &mut dyn DrawCtx, x: f64, y: f64, w: f64, h: f64) {
+    ctx.begin_path();
+    ctx.rounded_rect(x, y, w, h, CARD_CORNER_R);
+    ctx.set_fill_color(EMPTY_SLOT_FILL);
+    ctx.fill();
     ctx.begin_path();
     ctx.rounded_rect(x, y, w, h, CARD_CORNER_R);
     ctx.set_stroke_color(SLOT_BORDER);

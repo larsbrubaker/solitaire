@@ -167,23 +167,24 @@ fn side_stacked_wins_on_moderately_wide_rect() {
     let side2x2 = crate::games::fit_cards(STACKED_RECT, 12, 10.0, 12.0, 3.2);
     assert!(fit.card_h > top.card_h && fit.card_h > side2x2.card_h);
     assert!(eq(slots[CELL_FIRST as usize].card_h, fit.card_h));
-    // Cells all share column 0, stepping DOWN by 0.28·card_h.
+    // Cells share column 0 and foundations column 9, both stepping
+    // DOWN. RE-PINNED: the step now spreads across the full column
+    // height (clamped to [0.28·card_h floor, card_h + col_gap]) instead
+    // of a fixed 0.28·card_h. This tall column spreads past the floor.
+    let min_step = fit.card_h * STACKED_STEP;
+    let cap = fit.card_h + 10.0;
+    let step = ((STACKED_RECT.height - fit.card_h) / 3.0).clamp(min_step, cap);
+    assert!(step > min_step, "tall column must spread past the floor");
     for i in 0..4u8 {
         let c = &slots[(CELL_FIRST + i) as usize];
         assert!(eq(c.origin_x, fit.left));
-        assert!(eq(
-            c.origin_y,
-            fit.top_row_origin_y - i as f64 * fit.card_h * STACKED_STEP
-        ));
+        assert!(eq(c.origin_y, fit.top_row_origin_y - i as f64 * step));
     }
     // Foundations all share column 9, same stacking.
     for i in 0..4u8 {
         let f = &slots[(FOUND_FIRST + i) as usize];
         assert!(eq(f.origin_x, fit.left + 9.0 * fit.col_pitch));
-        assert!(eq(
-            f.origin_y,
-            fit.top_row_origin_y - i as f64 * fit.card_h * STACKED_STEP
-        ));
+        assert!(eq(f.origin_y, fit.top_row_origin_y - i as f64 * step));
     }
     // Cascades: columns 1..=8, full playfield height.
     for i in 0..8u8 {

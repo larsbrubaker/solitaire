@@ -709,15 +709,26 @@ fn wide_rect_picks_side_column_layout() {
     let eq = |a: f64, b: f64| (a - b).abs() < 1e-9;
     assert!(eq(slots[STOCK as usize].card_h, side.card_h));
     // Left column: 8 foundations stacked with overlapping origins,
-    // stepping downward by 0.15 card-heights per slot.
+    // spread across the full column height. RE-PINNED: the step is no
+    // longer a fixed 0.15·card_h — it spreads to fill `rect.height`,
+    // clamped to [floor, card_h + col_gap]. Here the column has ample
+    // room, so the step exceeds the 0.15 floor.
+    let min_step = side.card_h * 0.15;
+    let cap = side.card_h + 10.0;
+    let step = ((rect.height - side.card_h) / 7.0).clamp(min_step, cap);
+    assert!(step > min_step, "wide column must spread past the floor");
     for i in 0..8u8 {
         let f = &slots[(FOUND_FIRST + i) as usize];
         assert!(eq(f.origin_x, side.left));
-        assert!(eq(
-            f.origin_y,
-            side.top_row_origin_y - i as f64 * side.card_h * 0.15
-        ));
+        assert!(eq(f.origin_y, side.top_row_origin_y - i as f64 * step));
     }
+    // The 8 slots span no more than the full column height (extent =
+    // card_h + 7·step ≤ rect.height when the step isn't floor-clamped).
+    let extent = side.card_h + 7.0 * step;
+    assert!(
+        extent <= rect.height + 1e-9,
+        "stack overflows column height"
+    );
     // Cascades: columns 1..=10, full playfield height.
     for i in 0..10u8 {
         let t = &slots[(CASCADE_FIRST + i) as usize];

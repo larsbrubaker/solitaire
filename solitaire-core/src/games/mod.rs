@@ -220,6 +220,48 @@ pub(crate) fn tableau_fan_scale(
     scale.clamp(1.0, 2.0)
 }
 
+/// Vertical step between successive origins for a stacked side-column
+/// of `n` overlapping slots (Spider's foundation column, Klondike /
+/// FreeCell's SideStacked cells & foundations). Instead of a fixed
+/// fraction of `card_h`, the step SPREADS the stack into the column's
+/// available height so a short stack doesn't cram against the top of a
+/// mostly-empty column:
+///
+/// ```text
+/// step = ((available_height - card_h) / (n - 1)).clamp(min_step, card_h + col_gap)
+/// ```
+///
+/// The floor `min_step` (each game's former fixed step, in pixels) keeps
+/// slots readable on cramped viewports; the cap `card_h + col_gap` is
+/// full separation — one card plus a gap apart — beyond which we stop
+/// spreading. The stack stays TOP-ALIGNED at the column top (callers
+/// step downward from `top_row_origin_y`); this returns only the step,
+/// never centers or bottom-aligns.
+///
+/// Degenerate inputs (n < 2, non-finite / non-positive `card_h`,
+/// non-finite `available_height`, or a non-finite raw step) fall back to
+/// `min_step` so no NaN can reach the clamp (a prior review caught
+/// exactly such a panic). The clamp bounds are ordered defensively so an
+/// oversized `min_step` can never invert them.
+pub(crate) fn stacked_side_step(
+    available_height: f64,
+    card_h: f64,
+    n: usize,
+    min_step: f64,
+    col_gap: f64,
+) -> f64 {
+    if n < 2 || !card_h.is_finite() || card_h <= 0.0 || !available_height.is_finite() {
+        return min_step;
+    }
+    let raw = (available_height - card_h) / (n as f64 - 1.0);
+    if !raw.is_finite() {
+        return min_step;
+    }
+    let lo = min_step;
+    let hi = (card_h + col_gap).max(lo);
+    raw.clamp(lo, hi)
+}
+
 pub trait GameRules: 'static {
     /// Compute pile positions, sizes, and rendering config for the
     /// given playfield rect in SCREEN coordinates. The game picks a
@@ -314,5 +356,85 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A cramped column (available height barely more than a card) can't
+    /// spread the slots, so the step pins to the `min_step` floor.
+    #[test]
+    fn stacked_side_step_cramped_column_uses_floor() {
+        let card_h = 100.0;
+        let min_step = card_h * 0.28;
+        // available - card_h = 30 → raw = 30/3 = 10 < 28 floor.
+        let step = stacked_side_step(card_h + 30.0, card_h, 4, min_step, 12.0);
+        assert!(
+            (step - min_step).abs() < 1e-9,
+            "cramped step {step} != floor"
+        );
+    }
+
+    /// A tall column spreads the slots fully but never beyond the cap
+    /// (`card_h + col_gap`) — one card plus a gap apart.
+    #[test]
+    fn stacked_side_step_tall_column_caps_at_full_separation() {
+        let card_h = 100.0;
+        let col_gap = 12.0;
+        let min_step = card_h * 0.28;
+        // Huge available height → raw is enormous → clamps to the cap.
+        let step = stacked_side_step(10_000.0, card_h, 4, min_step, col_gap);
+        assert!(
+            (step - (card_h + col_gap)).abs() < 1e-9,
+            "step {step} not capped"
+        );
+    }
+
+    /// Between floor and cap the step spreads, origins step monotonically
+    /// downward, and the stack's extent never exceeds the column height.
+    #[test]
+    fn stacked_side_step_spreads_monotonic_within_column() {
+        let card_h = 90.0;
+        let available = 358.0;
+        let col_gap = 10.0;
+        let n = 8;
+        let min_step = card_h * 0.15;
+        let step = stacked_side_step(available, card_h, n, min_step, col_gap);
+        assert!(step > min_step, "step {step} should spread past floor");
+        assert!(step <= card_h + col_gap, "step {step} exceeds cap");
+        // Origins step strictly downward from the top (top-aligned).
+        let top = available; // arbitrary top origin
+        let mut prev = top + 1.0;
+        for i in 0..n {
+            let y = top - i as f64 * step;
+            assert!(y < prev, "origins not monotonic at slot {i}");
+            prev = y;
+        }
+        // Extent (top slot's top edge down to bottom slot's origin) fits.
+        let extent = card_h + (n as f64 - 1.0) * step;
+        assert!(
+            extent <= available + 1e-9,
+            "extent {extent} exceeds column {available}"
+        );
+    }
+
+    /// Degenerate inputs fall back to `min_step` with no NaN reaching the
+    /// clamp (mirrors the `tableau_fan_scale` panic guard).
+    #[test]
+    fn stacked_side_step_degenerate_inputs_fall_back_to_floor() {
+        let min_step = 20.0;
+        // n < 2, non-finite / non-positive card_h, non-finite height.
+        assert_eq!(stacked_side_step(500.0, 100.0, 1, min_step, 12.0), min_step);
+        assert_eq!(stacked_side_step(500.0, 0.0, 4, min_step, 12.0), min_step);
+        assert_eq!(stacked_side_step(500.0, -5.0, 4, min_step, 12.0), min_step);
+        assert_eq!(
+            stacked_side_step(500.0, f64::NAN, 4, min_step, 12.0),
+            min_step
+        );
+        assert_eq!(
+            stacked_side_step(f64::NAN, 100.0, 4, min_step, 12.0),
+            min_step
+        );
+        assert_eq!(
+            stacked_side_step(f64::INFINITY, 100.0, 4, min_step, 12.0),
+            min_step
+        );
     }
 }

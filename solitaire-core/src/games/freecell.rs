@@ -39,9 +39,10 @@ const VERT_BUDGET_CARDS: f64 = 4.0;
 /// Vertical budget in card-heights for the side-column layouts (the
 /// cascades span the full playfield height).
 const SIDE_BUDGET_CARDS: f64 = 3.2;
-/// Vertical step between successive cell / foundation slot origins in
-/// the stacked side columns, as a fraction of card height. Four slots
-/// span 1 + 3·step = 1.84 card-heights.
+/// FLOOR for the stacked side-column step (cells & foundations), as a
+/// fraction of card height. `stacked_side_step` spreads the 4 slots
+/// wider than this when the column has room; this is the cramped-
+/// viewport minimum.
 const STACKED_STEP: f64 = 0.28;
 
 pub struct FreeCell {
@@ -262,6 +263,12 @@ impl GameRules for FreeCell {
                 }
             }
             super::BoardArrangement::SideStacked => {
+                // Both the cell column (col 0) and foundation column
+                // (col 9) stack 4 slots with overlapping origins. The
+                // step spreads the 4 slots across the full column height
+                // instead of clustering them at the top.
+                let stack_step =
+                    super::stacked_side_step(rect.height, card_h, 4, card_h * STACKED_STEP, 10.0);
                 // Left column (col 0): 4 free cells stacked with
                 // overlapping origins, stepping downward from the top.
                 for i in 0..4u8 {
@@ -270,7 +277,7 @@ impl GameRules for FreeCell {
                         PileKind::Cell,
                         PileLayout::Stacked,
                         0.0,
-                        top_row_origin_y - i as f64 * card_h * STACKED_STEP,
+                        top_row_origin_y - i as f64 * stack_step,
                     ));
                 }
                 // Right column (col 9): 4 foundations stacked the same
@@ -281,7 +288,7 @@ impl GameRules for FreeCell {
                         PileKind::Foundation,
                         PileLayout::Stacked,
                         9.0,
-                        top_row_origin_y - i as f64 * card_h * STACKED_STEP,
+                        top_row_origin_y - i as f64 * stack_step,
                     ));
                 }
                 // Cascades: columns 1..=8, full playfield height.

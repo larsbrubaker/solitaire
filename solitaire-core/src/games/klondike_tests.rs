@@ -222,15 +222,18 @@ fn side_stacked_wins_on_moderately_wide_rect() {
     // Left column: stock on top, waste one row below.
     assert!(eq(slots[STOCK as usize].origin_x, fit.left));
     assert!(eq(slots[WASTE as usize].origin_x, fit.left));
-    // All four foundations share column 8, stepping DOWN by
-    // 0.28·card_h per slot.
+    // All four foundations share column 8, stepping DOWN. RE-PINNED:
+    // the step now spreads across the full column height (clamped to
+    // [0.28·card_h floor, card_h + col_gap]) instead of a fixed
+    // 0.28·card_h. This tall column spreads past the floor.
+    let min_step = fit.card_h * STACKED_FOUNDATION_STEP;
+    let cap = fit.card_h + 12.0;
+    let step = ((STACKED_RECT.height - fit.card_h) / 3.0).clamp(min_step, cap);
+    assert!(step > min_step, "tall column must spread past the floor");
     for i in 0..4u8 {
         let f = &slots[(FOUND_FIRST + i) as usize];
         assert!(eq(f.origin_x, fit.left + 8.0 * fit.col_pitch));
-        assert!(eq(
-            f.origin_y,
-            fit.top_row_origin_y - i as f64 * fit.card_h * STACKED_FOUNDATION_STEP
-        ));
+        assert!(eq(f.origin_y, fit.top_row_origin_y - i as f64 * step));
     }
     // Tableau columns 1..=7, full height.
     for i in 0..7u8 {

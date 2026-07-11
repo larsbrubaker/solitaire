@@ -64,8 +64,12 @@ impl PileSet {
     /// one pile's rect contains the point, so the iteration direction
     /// can't change which single pile matches. Reverse order only
     /// matters where rects overlap — the stacked side-column layouts
-    /// (Klondike foundations at 0.28·card_h steps, FreeCell cells and
-    /// foundations likewise, Spider foundations at 0.15·card_h). A drop
+    /// (Klondike/FreeCell/Spider foundations and FreeCell cells). Those
+    /// step values are no longer fixed: `games::stacked_side_step`
+    /// computes the per-layout step at runtime, using the old constants
+    /// (0.28·card_h for Klondike/FreeCell, 0.15·card_h for Spider) only
+    /// as FLOORS and otherwise spreading the slots into the available
+    /// column height (up to full, non-overlapping separation). A drop
     /// there resolves to the topmost slot; if that slot rejects the move,
     /// `game_widget::drag::resolve_overlapping_target` re-points it at the
     /// first same-kind sibling that legally accepts (dragging a completed

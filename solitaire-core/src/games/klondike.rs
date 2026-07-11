@@ -38,9 +38,10 @@ const VERT_BUDGET_CARDS: f64 = 3.6;
 /// tableau spans the full playfield height, so it needs fewer reserved
 /// card-heights than the top-row layout).
 const SIDE_BUDGET_CARDS: f64 = 2.8;
-/// Vertical step between successive foundation-slot origins in the
-/// stacked side column, as a fraction of card height. Four foundations
-/// span 1 + 3·step = 1.84 card-heights.
+/// FLOOR for the vertical step between successive foundation-slot
+/// origins in the stacked side column, as a fraction of card height.
+/// `stacked_side_step` spreads the 4 slots wider than this when the
+/// column has room; this is the cramped-viewport minimum.
 const STACKED_FOUNDATION_STEP: f64 = 0.28;
 
 pub struct Klondike {
@@ -281,13 +282,22 @@ impl GameRules for Klondike {
                 out.push(waste);
                 // Right column (col 8): all 4 foundations stacked with
                 // overlapping origins, stepping downward from the top.
+                // The step spreads the 4 slots across the full column
+                // height rather than clustering them near the top.
+                let found_step = super::stacked_side_step(
+                    rect.height,
+                    card_h,
+                    4,
+                    card_h * STACKED_FOUNDATION_STEP,
+                    12.0,
+                );
                 for i in 0..4u8 {
                     out.push(mk(
                         FOUND_FIRST + i,
                         PileKind::Foundation,
                         PileLayout::Stacked,
                         8.0,
-                        top_row_origin_y - i as f64 * card_h * STACKED_FOUNDATION_STEP,
+                        top_row_origin_y - i as f64 * found_step,
                     ));
                 }
                 // Tableau: columns 1..=7, full playfield height.
