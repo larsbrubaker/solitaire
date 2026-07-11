@@ -39,12 +39,37 @@ fn portrait_rect_scales_cascade_fans() {
 #[test]
 fn height_bound_rect_keeps_default_fan_scale() {
     let rules = Spider::four_suit();
-    let slots = rules.pile_layout(Rect::new(0.0, 0.0, 1600.0, 700.0));
+    // Wide, short rect → height binds for the winning arrangement.
+    let slots = rules.pile_layout(Rect::new(0.0, 0.0, 2000.0, 500.0));
     for i in 0..N_CASCADES as u8 {
         let s = slots[(CASCADE_FIRST + i) as usize].fan_scale;
         assert!(
             (s - 1.0).abs() < 1e-9,
             "height-bound fit must not stretch fans, got {s}"
         );
+    }
+}
+
+#[test]
+fn initial_deal_fits_uncompressed_on_phone_rects() {
+    use crate::session::GameSession;
+    // Deepest fresh cascade is 6 cards (5 face-down + 1 face-up):
+    // 1 + 5·0.11 = 1.55 card-heights, under the 3.2-card side budget →
+    // no fan compression on turn one, either orientation.
+    for rect in [
+        Rect::new(0.0, 0.0, 908.0, 358.0),
+        Rect::new(0.0, 0.0, 351.0, 740.0),
+    ] {
+        let mut s = GameSession::new(Spider::four_suit(), 1);
+        s.relayout(rect);
+        for id in CASCADE_FIRST..=CASCADE_LAST {
+            let p = s.piles.get(id);
+            let natural = p.layout.pile_height(p.card_h, p.fan_scale, &p.cards);
+            assert!(
+                natural <= p.max_fan_extent + 1e-6,
+                "cascade {id} natural extent {natural} exceeds cap {} at {rect:?}",
+                p.max_fan_extent
+            );
+        }
     }
 }

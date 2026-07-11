@@ -55,6 +55,13 @@ pub struct Pile {
     /// hit-testing, animations — sees the same stretched fan. Card
     /// size and the top-N waste fan are unaffected. Default `1.0`.
     pub fan_scale: f64,
+    /// Maximum vertical extent (SCREEN px) the pile's full fan may
+    /// occupy. `0.0` (default) = unlimited. When a pile's natural fan
+    /// (card height + scaled fan steps) would exceed this, every step
+    /// is compressed uniformly so the full extent lands exactly on
+    /// `max_fan_extent`. See [`Pile::position_for`] and
+    /// [`crate::piles::PileSlot::max_fan_extent`].
+    pub max_fan_extent: f64,
 }
 
 impl Pile {
@@ -75,6 +82,7 @@ impl Pile {
             fan_dy: slot.fan_dy,
             render_ace_as_gap: slot.render_ace_as_gap,
             fan_scale: slot.fan_scale,
+            max_fan_extent: slot.max_fan_extent,
         }
     }
 
@@ -94,6 +102,7 @@ impl Pile {
         self.fan_dy = slot.fan_dy;
         self.render_ace_as_gap = slot.render_ace_as_gap;
         self.fan_scale = slot.fan_scale;
+        self.max_fan_extent = slot.max_fan_extent;
     }
 
     pub fn top(&self) -> Option<&Card> {
@@ -114,18 +123,62 @@ impl Pile {
 
     /// Y-up position of the bottom-left of card at `idx`.
     pub fn position_for(&self, idx: usize) -> (f64, f64) {
+        let compression = self.fan_compression();
         let mut y = self.origin_y;
         for i in 1..=idx {
             let prev_prev = if i >= 2 { self.cards.get(i - 2) } else { None };
             let prev = self.cards.get(i - 1);
             let curr = self.cards.get(i);
-            // `fan_scale` stretches every fan step — this is the single
-            // seam all consumers (paint, hit-test, animation) resolve
-            // positions through, so they stay consistent.
-            y += self.layout.dy_for(self.card_h, prev_prev, prev, curr) * self.fan_scale;
+            // `fan_scale` stretches every fan step and `compression`
+            // (<= 1.0) shrinks it back so a deep pile never overruns
+            // `max_fan_extent`. This is the single seam all consumers
+            // (paint, hit-test, animation) resolve positions through,
+            // so they stay consistent.
+            y += self.layout.dy_for(self.card_h, prev_prev, prev, curr)
+                * self.fan_scale
+                * compression;
         }
         let (fan_dx, fan_dy) = self.fan_offset(idx);
         (self.origin_x + fan_dx, y + fan_dy)
+    }
+
+    /// Uniform multiplier applied to every (already `fan_scale`-stretched)
+    /// fan step so the pile's full vertical extent — card height plus the
+    /// summed fan steps — never exceeds `max_fan_extent`. Returns:
+    /// - `1.0` when `max_fan_extent` is unlimited (`<= 0.0`), the natural
+    ///   fan already fits, or any input is non-finite (no compression);
+    /// - `0.0` when `max_fan_extent <= card_h` (collapse to a stack — no
+    ///   room for any fan);
+    /// - otherwise `(max_fan_extent - card_h) / steps_total`, landing the
+    ///   full extent exactly on `max_fan_extent`.
+    ///
+    /// Guards mirror `games::tableau_fan_scale`: NO NaN may reach a
+    /// consumer's clamp, so every division and comparison is checked.
+    fn fan_compression(&self) -> f64 {
+        if self.max_fan_extent <= 0.0 {
+            return 1.0;
+        }
+        // Natural total fan-step sum (already includes `fan_scale`).
+        // `pile_height` returns card_h + summed scaled steps; subtract
+        // the card so only the fan steps remain.
+        let steps_total = self
+            .layout
+            .pile_height(self.card_h, self.fan_scale, &self.cards)
+            - self.card_h;
+        if !steps_total.is_finite() || steps_total <= 0.0 {
+            return 1.0;
+        }
+        if self.card_h + steps_total <= self.max_fan_extent {
+            return 1.0;
+        }
+        if self.max_fan_extent <= self.card_h {
+            return 0.0;
+        }
+        let factor = (self.max_fan_extent - self.card_h) / steps_total;
+        if !factor.is_finite() {
+            return 1.0;
+        }
+        factor
     }
 
     /// (x, y) offset applied to card `idx` due to top-N fan (waste

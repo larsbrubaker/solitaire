@@ -55,15 +55,24 @@ impl PileSet {
         &mut self.piles[id as usize]
     }
 
-    /// Hit-test the entire playfield. Iterates piles in order; the first
-    /// hit wins, so overlapping bounding rects resolve to the lowest pile
-    /// id. That's acceptable because the only piles that currently
-    /// overlap — Spider's side-column foundation slots, stacked at
-    /// 0.15·card_h steps — accept no manual interaction (manual
-    /// foundation drops are illegal in Spider); every other variant's
-    /// rects are disjoint.
+    /// Hit-test the entire playfield. Iterates piles in REVERSE id order
+    /// and returns the first hit, so among overlapping piles the one
+    /// painted LAST (highest id — paint order is id order) wins. That is
+    /// the visually-topmost pile, which is what the player is pointing at.
+    ///
+    /// For disjoint layouts this is identical to a forward scan: at most
+    /// one pile's rect contains the point, so the iteration direction
+    /// can't change which single pile matches. Reverse order only
+    /// matters where rects overlap — the stacked side-column layouts
+    /// (Klondike foundations at 0.28·card_h steps, FreeCell cells and
+    /// foundations likewise, Spider foundations at 0.15·card_h). A drop
+    /// there resolves to the topmost slot; if that slot rejects the move,
+    /// `game_widget::drag::resolve_overlapping_target` re-points it at the
+    /// first same-kind sibling that legally accepts (dragging a completed
+    /// Spider K→A run onto a foundation, an Ace onto a Klondike
+    /// foundation, a card into an occupied-topmost FreeCell cell, …).
     pub fn hit_test(&self, x: f64, y: f64) -> Option<HitResult> {
-        for p in &self.piles {
+        for p in self.piles.iter().rev() {
             if let Some(hit) = p.hit_test(x, y) {
                 return Some(hit);
             }

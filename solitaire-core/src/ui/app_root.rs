@@ -1,5 +1,15 @@
-//! Bottom layer of the widget stack — paints the felt background and a
+//! Bottom layer of the widget stack — paints the felt background, the
+//! single continuous chrome-strip background across the top, and a
 //! "win" overlay if the active session has been won.
+//!
+//! The chrome strip is painted HERE (rather than by the menu / HUD
+//! widgets) for two reasons: this widget paints FIRST (bottom of the
+//! `OverlayStack`), so the menu bar and HUD buttons composite on top of
+//! one uninterrupted bar; and it is visible on EVERY screen, so the
+//! home screen gets the same full-width strip the game screens do
+//! instead of a lone floating "Menu" box. The fill uses the theme's
+//! `top_bar_bg`, which is exactly what the agg-gui `MenuBar` paints
+//! behind itself, so the menu slice blends seamlessly into the strip.
 
 use agg_gui::draw_ctx::DrawCtx;
 use agg_gui::event::{Event, EventResult};
@@ -51,6 +61,19 @@ impl Widget for AppRootWidget {
         ctx.begin_path();
         ctx.rect(0.0, 0.0, b.width, b.height);
         ctx.set_fill_color(FELT_GREEN);
+        ctx.fill();
+
+        // ONE continuous chrome strip across the top of the viewport,
+        // spanning the menu area + the HUD area. Painted with the same
+        // `top_bar_bg` the `MenuBar` fills behind itself so the two
+        // never read as mismatched boxes. `layout::compute` derives the
+        // strip height per layout (it grows on touch), so this tracks
+        // the touch latch automatically.
+        let strip = super::layout::compute(Size::new(b.width, b.height)).strip_rect;
+        let strip_bg = ctx.visuals().top_bar_bg;
+        ctx.begin_path();
+        ctx.rect(strip.x, strip.y, strip.width, strip.height);
+        ctx.set_fill_color(strip_bg);
         ctx.fill();
 
         // Persist Performance window state on idle.  This widget paints

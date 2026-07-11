@@ -187,6 +187,175 @@ fn fan_scale_propagates_from_slot_and_apply_slot() {
 }
 
 #[test]
+fn max_fan_extent_compresses_deep_pile_to_exact_extent() {
+    // A tall fanned-down pile whose natural extent overruns a 300px cap.
+    let mut p = Pile::from_slot(
+        &PileSlot::new(
+            0,
+            PileKind::Tableau,
+            PileLayout::FannedDown,
+            100.0,
+            500.0,
+            CARD_W,
+            CARD_H,
+        )
+        .with_max_fan_extent(300.0),
+    );
+    for _ in 0..12 {
+        p.cards.push(k_of_spades());
+    }
+    let natural = PileLayout::FannedDown.pile_height(CARD_H, 1.0, &p.cards);
+    assert!(natural > 300.0, "test needs a pile that overflows the cap");
+    // Full extent = top edge of card[0] (origin_y + card_h) down to the
+    // bottom edge of the last card (its position_for y). Must land
+    // exactly on the cap.
+    let (_, y_last) = p.position_for(p.cards.len() - 1);
+    let extent = (500.0 + CARD_H) - y_last;
+    assert!(
+        (extent - 300.0).abs() < 1e-9,
+        "compressed extent {extent} should equal the 300px cap"
+    );
+}
+
+#[test]
+fn max_fan_extent_leaves_shallow_pile_unchanged() {
+    // Same pile with and without a generous cap the fan never reaches.
+    let base = {
+        let mut p = pile(0, PileKind::Tableau, PileLayout::FannedDown, 100.0, 500.0);
+        for _ in 0..3 {
+            p.cards.push(k_of_spades());
+        }
+        p
+    };
+    let mut capped = base.clone();
+    capped.max_fan_extent = 100_000.0; // far beyond the 3-card fan
+    for idx in 0..base.cards.len() {
+        assert_eq!(base.position_for(idx), capped.position_for(idx));
+    }
+}
+
+#[test]
+fn max_fan_extent_zero_means_unlimited() {
+    // The default (0.0) must never compress, no matter how deep.
+    let mut p = pile(0, PileKind::Tableau, PileLayout::FannedDown, 100.0, 500.0);
+    assert_eq!(p.max_fan_extent, 0.0);
+    for _ in 0..30 {
+        p.cards.push(k_of_spades());
+    }
+    let (_, y_last) = p.position_for(p.cards.len() - 1);
+    let natural = PileLayout::FannedDown.pile_height(CARD_H, 1.0, &p.cards);
+    assert!((((500.0 + CARD_H) - y_last) - natural).abs() < 1e-9);
+}
+
+#[test]
+fn max_fan_extent_below_card_height_collapses_to_stack() {
+    // A cap smaller than one card leaves no room for any fan — every
+    // card stacks on the origin (compression factor 0.0). No panic.
+    let mut p = Pile::from_slot(
+        &PileSlot::new(
+            0,
+            PileKind::Tableau,
+            PileLayout::FannedDown,
+            100.0,
+            500.0,
+            CARD_W,
+            CARD_H,
+        )
+        .with_max_fan_extent(CARD_H * 0.5),
+    );
+    for _ in 0..5 {
+        p.cards.push(k_of_spades());
+    }
+    for idx in 0..p.cards.len() {
+        let (_, y) = p.position_for(idx);
+        assert_eq!(y, 500.0, "card {idx} must collapse onto the origin");
+    }
+}
+
+#[test]
+fn hit_test_overlapping_piles_prefers_higher_id() {
+    // Two foundations at the SAME origin (the stacked side-column case),
+    // each with a card. The point sits in the shared rect; the pile
+    // painted last (highest id) is visually on top and must win.
+    let slots = [
+        PileSlot::new(
+            0,
+            PileKind::Foundation,
+            PileLayout::Stacked,
+            100.0,
+            100.0,
+            CARD_W,
+            CARD_H,
+        ),
+        PileSlot::new(
+            1,
+            PileKind::Foundation,
+            PileLayout::Stacked,
+            100.0,
+            100.0,
+            CARD_W,
+            CARD_H,
+        ),
+    ];
+    let mut set = PileSet::from_slots(&slots);
+    set.get_mut(0).cards.push(k_of_spades());
+    set.get_mut(1).cards.push(k_of_spades());
+    assert_eq!(
+        set.hit_test(100.0 + CARD_W / 2.0, 100.0 + CARD_H / 2.0),
+        Some(HitResult::Card {
+            pile: 1,
+            card_idx: 0
+        })
+    );
+}
+
+#[test]
+fn hit_test_disjoint_piles_match_forward_scan() {
+    // Non-overlapping rects: reverse iteration can't change which single
+    // pile contains the point, so the result is identical to the old
+    // lowest-id-wins forward scan.
+    let slots = [
+        PileSlot::new(
+            0,
+            PileKind::Foundation,
+            PileLayout::Stacked,
+            100.0,
+            100.0,
+            CARD_W,
+            CARD_H,
+        ),
+        PileSlot::new(
+            1,
+            PileKind::Foundation,
+            PileLayout::Stacked,
+            500.0,
+            100.0,
+            CARD_W,
+            CARD_H,
+        ),
+    ];
+    let mut set = PileSet::from_slots(&slots);
+    set.get_mut(0).cards.push(k_of_spades());
+    set.get_mut(1).cards.push(k_of_spades());
+    // Point inside pile 0 only.
+    assert_eq!(
+        set.hit_test(110.0, 110.0),
+        Some(HitResult::Card {
+            pile: 0,
+            card_idx: 0
+        })
+    );
+    // Point inside pile 1 only.
+    assert_eq!(
+        set.hit_test(510.0, 110.0),
+        Some(HitResult::Card {
+            pile: 1,
+            card_idx: 0
+        })
+    );
+}
+
+#[test]
 fn waste_fan_only_topmost_is_hittable() {
     let mut p = pile(0, PileKind::Waste, PileLayout::Stacked, 100.0, 200.0);
     for _ in 0..3 {

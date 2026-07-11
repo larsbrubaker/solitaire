@@ -67,7 +67,9 @@ pub fn load_fa_font() -> Arc<Font> {
 fn solitaire_visuals() -> agg_gui::theme::Visuals {
     use agg_gui::color::Color;
     let mut v = agg_gui::theme::Visuals::dark();
-    // Green felt frame matching `HUD_BG` (~0x095 220x2c with alpha).
+    // Dark-green chrome bar. `AppRootWidget` fills the whole top strip
+    // with this same `top_bar_bg` so the menu area (which the MenuBar
+    // paints behind itself) and the HUD area read as one continuous bar.
     v.top_bar_bg = Color::from_rgb8(0x09, 0x52, 0x2c);
     v.bg_color = Color::from_rgb8(0x06, 0x3a, 0x1f);
     v.panel_fill = Color::from_rgb8(0x12, 0x33, 0x21);

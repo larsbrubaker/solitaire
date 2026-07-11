@@ -700,8 +700,8 @@ fn wide_rect_picks_side_column_layout() {
     let rules = Spider::four_suit();
     let rect = Rect::new(0.0, 0.0, 1600.0, 700.0);
     let slots = rules.pile_layout(rect);
-    let top = crate::games::fit_cards(rect, 10, 10.0, 12.0, 5.0);
-    let side = crate::games::fit_cards(rect, 12, 10.0, 12.0, 4.0);
+    let top = crate::games::fit_cards(rect, 10, 10.0, 12.0, 4.0);
+    let side = crate::games::fit_cards(rect, 12, 10.0, 12.0, 3.2);
     assert!(
         side.card_h > top.card_h,
         "side candidate must win on a wide rect"

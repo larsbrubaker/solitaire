@@ -38,10 +38,13 @@ const SIDE_COLS: usize = 12;
 /// the side-column layout, as a fraction of card height. Foundations
 /// are dead piles holding completed suits, so heavy overlap is fine.
 const SIDE_FOUNDATION_STEP: f64 = 0.15;
-/// Vertical budget in card-heights — top row + tableau fan. The normal
-/// fan step is intentionally tight, so a typical Spider column still
-/// fits without compacting suited runs differently from other cards.
-const VERT_BUDGET_CARDS: f64 = 5.0;
+/// Vertical budget in card-heights for the top-row layout — sized for a
+/// typical Spider column depth. Deeper columns compress their fan
+/// (`Pile::max_fan_extent`) rather than shrinking every card.
+const VERT_BUDGET_CARDS: f64 = 4.0;
+/// Vertical budget in card-heights for the side-column layout (the
+/// cascades span the full playfield height).
+const SIDE_BUDGET_CARDS: f64 = 3.2;
 
 pub struct Spider {
     pub suit_count: u8,
@@ -168,14 +171,36 @@ impl GameRules for Spider {
         // side-column layout (12 columns: foundations stacked in one
         // left column, cascades center, stock right) that frees a full
         // card-height for the cascades on wide viewports. Whichever
-        // yields the larger card wins.
-        let (fit, arrangement) =
-            super::pick_board_fit(rect, TOP_COLS, SIDE_COLS, 10.0, 12.0, VERT_BUDGET_CARDS);
+        // yields the larger card wins (ties prefer TopRow).
+        let (fit, arrangement, budget) = super::pick_board_fit(
+            rect,
+            10.0,
+            12.0,
+            &[
+                super::BoardCandidate {
+                    arrangement: super::BoardArrangement::TopRow,
+                    cols: TOP_COLS,
+                    vert_budget: VERT_BUDGET_CARDS,
+                },
+                super::BoardCandidate {
+                    arrangement: super::BoardArrangement::SideColumns,
+                    cols: SIDE_COLS,
+                    vert_budget: SIDE_BUDGET_CARDS,
+                },
+            ],
+        );
         // Stretch cascade fan steps into leftover vertical space (width-
-        // bound portrait viewports). Worst-case Spider cascade: 5
-        // face-down cards under a K→A run of 13 face-up cards.
-        let fan_scale =
-            super::tableau_fan_scale(rect, &fit, arrangement, 12.0, VERT_BUDGET_CARDS, 5, 13);
+        // bound portrait viewports); deep cascades compress back via
+        // `max_fan_extent` below.
+        let fan_scale = super::tableau_fan_scale(rect, &fit, arrangement, 12.0, budget);
+        // Vertical space the cascades may use — TopRow reserves a
+        // card-height (plus a gap) for the top row; the side layout
+        // spans the full playfield.
+        let tableau_extent = if arrangement == super::BoardArrangement::TopRow {
+            rect.height - fit.card_h - 12.0
+        } else {
+            rect.height
+        };
         let (card_w, card_h) = (fit.card_w, fit.card_h);
         let col_pitch = fit.col_pitch;
         let left = fit.left;
@@ -224,7 +249,8 @@ impl GameRules for Spider {
                             i as f64,
                             tableau_origin_y,
                         )
-                        .with_fan_scale(fan_scale),
+                        .with_fan_scale(fan_scale)
+                        .with_max_fan_extent(tableau_extent),
                     );
                 }
             }
@@ -259,10 +285,14 @@ impl GameRules for Spider {
                             (1 + i) as f64,
                             top_row_origin_y,
                         )
-                        .with_fan_scale(fan_scale),
+                        .with_fan_scale(fan_scale)
+                        .with_max_fan_extent(tableau_extent),
                     );
                 }
             }
+            // Spider offers only TopRow and SideColumns candidates, so
+            // `pick_board_fit` never returns SideStacked here.
+            super::BoardArrangement::SideStacked => unreachable!(),
         }
         out
     }

@@ -18,7 +18,9 @@ use agg_gui::event::{Event, EventResult};
 use agg_gui::geometry::{Point, Rect, Size};
 use agg_gui::text::Font;
 use agg_gui::widget::Widget;
-use agg_gui::widgets::menu::{MenuBar, MenuEntry, MenuItem, MenuOrientation, TopMenu, MENU_BAR_H};
+use agg_gui::widgets::menu::{
+    menu_bar_height, MenuBar, MenuEntry, MenuItem, MenuOrientation, TopMenu,
+};
 
 use crate::cards::Suit;
 use crate::games::GameKind;
@@ -404,7 +406,7 @@ impl MenuBarHost {
         let chrome = super::layout::compute(Size::new(self.bounds.width, self.bounds.height));
         let bar_rect = inner_bar_rect(chrome.menu_rect);
         if let Some(bar) = self.children.first_mut() {
-            bar.layout(Size::new(bar_rect.width, MENU_BAR_H));
+            bar.layout(Size::new(bar_rect.width, bar_rect.height));
             bar.set_bounds(bar_rect);
         }
         agg_gui::animation::request_draw();
@@ -412,12 +414,15 @@ impl MenuBarHost {
 }
 
 /// Position the inner `MenuBar` widget INSIDE the chrome's menu
-/// slice — vertically centred so the 26 px bar sits in the middle
-/// of the 48 px combined strip and lines up visually with the
-/// action buttons next to it.
+/// slice — vertically centred so the menu bar sits in the middle of
+/// the combined strip and lines up visually with the action buttons
+/// next to it. Both the bar height and the strip height are queried
+/// per layout (`menu_bar_height()` grows on touch) so the centring
+/// stays correct after the runtime touch latch flips.
 fn inner_bar_rect(menu_slot: Rect) -> Rect {
-    let y = menu_slot.y + (menu_slot.height - MENU_BAR_H) * 0.5;
-    Rect::new(menu_slot.x, y, menu_slot.width, MENU_BAR_H)
+    let bar_h = menu_bar_height();
+    let y = menu_slot.y + (menu_slot.height - bar_h) * 0.5;
+    Rect::new(menu_slot.x, y, menu_slot.width, bar_h)
 }
 
 impl Widget for MenuBarHost {
@@ -448,7 +453,7 @@ impl Widget for MenuBarHost {
         let chrome = layout::compute(available);
         let bar_rect = inner_bar_rect(chrome.menu_rect);
         if let Some(bar) = self.children.first_mut() {
-            bar.layout(Size::new(bar_rect.width, MENU_BAR_H));
+            bar.layout(Size::new(bar_rect.width, bar_rect.height));
         }
         available
     }

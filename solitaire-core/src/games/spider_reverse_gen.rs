@@ -1,8 +1,26 @@
 //! Reverse-shuffle Spider deal generator. Produces deals that are
-//! winnable **by construction**: we start at the solved state (all
-//! 8 K-A suited runs on foundations, empty board, empty stock) and
-//! apply legal inverse moves until we reach a standard Spider
-//! opening layout. The forward solver doesn't need to run.
+//! *strongly biased* toward winnable by starting at the solved
+//! state (all 8 K-A suited runs on foundations, empty board, empty
+//! stock) and applying mostly-legal inverse moves until we reach a
+//! standard Spider opening layout. The forward solver doesn't run.
+//!
+//! HONESTY NOTE — this is NOT a strict winnable-by-construction
+//! generator. Two steps deliberately break the legal-inverse
+//! invariant to force the exact standard opening shape (10 cascades
+//! summing to 54 face-up cards + 50 face-down in stock):
+//!   * the cascade rebalance (`phase2b_rebalance_cascades`) moves
+//!     single arbitrary top cards between cascades, which is not
+//!     always a legal inverse Spider move; and
+//!   * the stock fill / trim lift arbitrary cascade tops into the
+//!     stock face-down.
+//!
+//! So we can no longer claim a replayable forward win exists for
+//! every generated deal. In practice the deals remain heavily
+//! skewed toward solvable because the bulk of the walk (phases 1-2)
+//! is legal, but treat "guaranteed winnable" as an aspiration, not
+//! a proof. If strict winnability is ever required, the rebalance
+//! and stock steps must be reworked to stay inside the legal-inverse
+//! subset.
 //!
 //! Why this exists: the clean-room forward solver
 //! (`spider_solver.rs`) handles 1-suit easily and 2-suit at long
@@ -124,12 +142,14 @@ fn active_suits(suit_count: u8, one_suit: Suit) -> Vec<Suit> {
     }
 }
 
-/// Generate a guaranteed-winnable Spider deal for the given seed.
+/// Generate a Spider deal for the given seed, strongly biased
+/// toward winnable (but not guaranteed — see the module doc; the
+/// rebalance and stock steps aren't strict legal inverses, and no
+/// solving sequence is recorded).
 ///
 /// Returns a `PileSet` shaped like the standard Spider 4-suit
-/// opening (54 cards distributed across 10 cascades + 50 face-down
-/// in stock + empty foundations) that can be solved forward via
-/// the recorded inverse sequence.
+/// opening: 54 cards distributed across 10 cascades + 50 face-down
+/// in stock + empty foundations.
 pub fn generate_winnable_deal(seed: u64, suit_count: u8, one_suit: Suit) -> PileSet {
     let mut rng = StdRng::seed_from_u64(seed);
     // Re-seed deterministically so different seeds give different
@@ -140,30 +160,37 @@ pub fn generate_winnable_deal(seed: u64, suit_count: u8, one_suit: Suit) -> Pile
 }
 
 /// Reverse walk driver. Phases:
+///
 /// 1. Empty foundations: pull each K-A run onto a cascade.
 /// 2. Re-distribute: do random inter-cascade suited-group moves
 ///    to mix cards across cascades.
-/// 3. Move 50 cards into stock: lift "deal rows" (one card per
-///    cascade) back into the stock pile 5 times.
-/// 4. Trim each cascade to its target length by lifting tops
-///    into the stock (face-down).
-/// 5. Set face-down on every non-top cascade card.
+/// 3. Rebalance: force cascade i to hold exactly
+///    `target_cascade_size(i) + 5` cards (11,11,11,11,10×6 = 104).
+/// 4. Move 50 cards into stock: lift "deal rows" (one card per
+///    cascade) back into the stock pile 5 times. After the
+///    rebalance every cascade has 10+ cards so all five rows
+///    always succeed and each cascade lands on its target length.
+/// 5. Safety-net trim (a no-op after the rebalance + stock fill).
+/// 6. Set face-down on every non-top cascade card.
 ///
-/// Stages 2-4 are interleaved randomly under the RNG; the
-/// per-phase moves are deterministic given the RNG. The phase
-/// boundaries are STRICTLY ENFORCED by the driver — each reverse
-/// move stays inside the legal-inverse subset for that phase so
-/// we always have a valid winning sequence we COULD replay
-/// forward (we don't record it; the existence proof is enough).
+/// Phases 1-2 stay inside the legal-inverse subset (any-suit
+/// rank-up build, matching forward Spider). Phase 2b and the stock
+/// lift do NOT — they move arbitrary single cards to force the
+/// exact opening shape, relaxing the strict winnability claim (see
+/// the module doc comment). The moves remain fully deterministic
+/// given the RNG, so `generate_winnable_deal` is reproducible by
+/// seed.
 fn drive_to_opening<R: Rng + RngCore>(state: &mut PileSet, rng: &mut R) {
     // Phase 1: dump foundations onto cascades.
     phase1_dump_foundations(state, rng);
     // Phase 2: mix cascade contents with inverse cascade moves.
     phase2_mix_cascades(state, rng);
+    // Phase 2b: rebalance cascades to target+5 so phase 3 is exact.
+    phase2b_rebalance_cascades(state, rng);
     // Phase 3: stock up. Lift TARGET_STOCK cards off cascade tops
     // back into the stock so they end up face-down.
     phase3_fill_stock(state, rng);
-    // Phase 4: trim each cascade to its target length.
+    // Phase 4: safety-net trim (no-op after 2b + 3).
     phase4_trim_cascades(state, rng);
     // Phase 5: convert all non-top cascade cards to face-down.
     phase5_face_down_below_top(state);
@@ -237,26 +264,53 @@ fn phase2_mix_cascades<R: Rng>(state: &mut PileSet, rng: &mut R) {
     }
 }
 
-fn phase3_fill_stock<R: Rng>(state: &mut PileSet, rng: &mut R) {
-    // We need TARGET_STOCK cards in the stock. Each row-lift
-    // takes 1 card from each cascade (must all be non-empty)
-    // and pushes onto stock, face-down. Five rows = 50.
-    let rows_needed = TARGET_STOCK / N_CASCADES;
-    for _ in 0..rows_needed {
-        // Ensure all 10 cascades are non-empty; if any is empty,
-        // shuffle from a neighbour first.
-        for c in CASCADE_FIRST..=CASCADE_LAST {
-            if state.get(c).cards.is_empty() {
-                // Borrow from a richer cascade.
-                let donor = (CASCADE_FIRST..=CASCADE_LAST)
-                    .max_by_key(|d| state.get(*d).cards.len())
-                    .unwrap();
-                if state.get(donor).cards.len() >= 2 {
-                    let card = state.get_mut(donor).cards.pop().unwrap();
-                    state.get_mut(c).cards.push(card);
-                }
+/// Rebalance cascades so cascade i holds exactly
+/// `target_cascade_size(i) + 5` cards: 11,11,11,11,10,10,10,10,10,10
+/// (sums to 104). Since all 104 cards live on the 10 cascades at
+/// this point, the shape is always achievable.
+///
+/// We repeatedly move the top card of an over-full cascade onto an
+/// under-full one until every cascade matches its target. Sources
+/// and destinations are picked via the RNG so different seeds keep
+/// diverging, and the whole loop is deterministic given the RNG.
+///
+/// NOTE: moving a single arbitrary top card between cascades is not
+/// always a legal inverse Spider move — this step deliberately
+/// relaxes the strict-winnability invariant (see module doc).
+fn phase2b_rebalance_cascades<R: Rng>(state: &mut PileSet, rng: &mut R) {
+    loop {
+        let mut over: Vec<u8> = Vec::new();
+        let mut under: Vec<u8> = Vec::new();
+        for cid in CASCADE_FIRST..=CASCADE_LAST {
+            let i = (cid - CASCADE_FIRST) as usize;
+            let want = target_cascade_size(i) + 5;
+            let have = state.get(cid).cards.len();
+            if have > want {
+                over.push(cid);
+            } else if have < want {
+                under.push(cid);
             }
         }
+        // If nothing is over-full, the total (104) forces every
+        // cascade to be exactly at target, so we're balanced.
+        if over.is_empty() {
+            break;
+        }
+        let src = over[rng.gen_range(0..over.len())];
+        let dst = under[rng.gen_range(0..under.len())];
+        let card = state.get_mut(src).cards.pop().unwrap();
+        state.get_mut(dst).cards.push(card);
+    }
+}
+
+fn phase3_fill_stock<R: Rng>(state: &mut PileSet, rng: &mut R) {
+    // After phase 2b every cascade holds target+5 cards, so all 10
+    // cascades are guaranteed non-empty for all five rows. Each
+    // row-lift takes 1 card from each cascade and pushes it onto the
+    // stock face-down. Five rows = 50 = TARGET_STOCK, and each
+    // cascade is left at exactly its target length.
+    let rows_needed = TARGET_STOCK / N_CASCADES;
+    for _ in 0..rows_needed {
         // Pick column visit order randomly.
         let mut order: Vec<u8> = (CASCADE_FIRST..=CASCADE_LAST).collect();
         for i in (1..order.len()).rev() {
@@ -264,18 +318,24 @@ fn phase3_fill_stock<R: Rng>(state: &mut PileSet, rng: &mut R) {
             order.swap(i, j);
         }
         for cid in order {
-            if let Some(mut card) = state.get_mut(cid).cards.pop() {
-                card.face_up = false;
-                state.get_mut(STOCK).cards.push(card);
-            }
+            let mut card = state
+                .get_mut(cid)
+                .cards
+                .pop()
+                .expect("cascade non-empty after rebalance");
+            card.face_up = false;
+            state.get_mut(STOCK).cards.push(card);
         }
     }
 }
 
 fn phase4_trim_cascades<R: Rng>(state: &mut PileSet, rng: &mut R) {
-    // After phase 3 we have 54 cards across cascades but maybe
-    // unevenly. Trim each to its target by lifting extras into
-    // the stock as face-down.
+    // Safety net only. After phase 2b + phase 3 every cascade is
+    // already at its target length, so this loop lifts nothing. It
+    // stays as a cheap guard against future changes to the earlier
+    // phases; the trim itself would move arbitrary tops face-down
+    // into the stock (also a non-legal-inverse move — see module
+    // doc), but it never fires in the current pipeline.
     for cid in CASCADE_FIRST..=CASCADE_LAST {
         let i = (cid - CASCADE_FIRST) as usize;
         let target = target_cascade_size(i);

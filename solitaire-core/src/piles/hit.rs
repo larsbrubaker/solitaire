@@ -37,6 +37,15 @@ pub struct PileSlot {
     /// spread out for readability. Card size is unaffected; the top-N
     /// waste fan (`fan_dx`/`fan_dy`) is unaffected. Default `1.0`.
     pub fan_scale: f64,
+    /// Maximum vertical extent (in SCREEN pixels) the pile's full fan
+    /// may occupy — from the top edge of card[0] down to the bottom of
+    /// the deepest fanned card. `0.0` (the default) means unlimited: no
+    /// compression. Games set this on tableau piles to the vertical
+    /// space the winning board layout reserves for the tableau, so a
+    /// pile that grows past that budget compresses its fan steps (see
+    /// `Pile::position_for`) rather than overflowing the playfield.
+    /// Card size and the top-N waste fan are unaffected.
+    pub max_fan_extent: f64,
 }
 
 impl PileSlot {
@@ -65,6 +74,7 @@ impl PileSlot {
             fan_dy: 0.0,
             render_ace_as_gap: false,
             fan_scale: 1.0,
+            max_fan_extent: 0.0,
         }
     }
 
@@ -93,6 +103,13 @@ impl PileSlot {
     /// spacing). See [`PileSlot::fan_scale`].
     pub fn with_fan_scale(mut self, scale: f64) -> Self {
         self.fan_scale = scale;
+        self
+    }
+
+    /// Cap the pile's full fan extent at `extent` SCREEN pixels
+    /// (`0.0` = unlimited). See [`PileSlot::max_fan_extent`].
+    pub fn with_max_fan_extent(mut self, extent: f64) -> Self {
+        self.max_fan_extent = extent;
         self
     }
 }

@@ -15,6 +15,10 @@ const MAX_LINES: usize = 800;
 // and external test suites. Do not exclude first-party source trees just because
 // a file is generated-looking; if it is checked into a source/package directory
 // and may be touched by an agent, it should be counted.
+//
+// Matching semantics (see `is_excluded`): entries with no '/' match ANY directory
+// with that name at any depth (e.g. `node_modules` also covers `demo/node_modules`).
+// Entries containing '/' are root-relative prefix matches (e.g. `demo/dist`).
 const EXCLUDED_DIRS: &[&str] = &[
     ".git",
     ".github",
@@ -25,6 +29,13 @@ const EXCLUDED_DIRS: &[&str] = &[
     "demo/public/pkg",
     "reference",
 ];
+
+// Machine-generated lockfiles that are not first-party source. `package-lock.json`
+// is the npm analog of `Cargo.lock` (which this scan already ignores because the
+// "lock" extension isn't checked): it is regenerated on every `npm install` and
+// splitting it is meaningless. Matched by file name at any depth. Do NOT add
+// first-party JSON here — only genuinely machine-owned output.
+const EXCLUDED_FILES: &[&str] = &["package-lock.json"];
 
 // Text formats that are part of the project surface area for humans and AI
 // agents. This intentionally includes JS/HTML/CSS/TS, so wasm package glue and
@@ -88,12 +99,23 @@ fn visit_files(root: &Path, dir: &Path, offenders: &mut Vec<(usize, PathBuf)>) {
 fn is_excluded(root: &Path, path: &Path) -> bool {
     let rel = path.strip_prefix(root).unwrap_or(path);
     let rel = rel.to_string_lossy().replace('\\', "/");
-    EXCLUDED_DIRS
-        .iter()
-        .any(|excluded| rel == *excluded || rel.starts_with(&format!("{excluded}/")))
+    EXCLUDED_DIRS.iter().any(|excluded| {
+        if excluded.contains('/') {
+            // Root-relative prefix match (e.g. "demo/dist").
+            rel == *excluded || rel.starts_with(&format!("{excluded}/"))
+        } else {
+            // Bare directory name: match any path component at any depth.
+            rel.split('/').any(|component| component == *excluded)
+        }
+    })
 }
 
 fn should_check_file(path: &Path) -> bool {
+    if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
+        if EXCLUDED_FILES.contains(&name) {
+            return false;
+        }
+    }
     path.extension()
         .and_then(|ext| ext.to_str())
         .map(|ext| {

@@ -285,6 +285,26 @@ pub fn render(width: u32, height: u32, frame_ms: f64) {
     NEEDS_DRAW.with(|cell| cell.set(false));
 }
 
+/// Feed the client platform into agg-gui at boot so touch-device sizing
+/// turns on for phones / tablets. The JS shell calls this once, before
+/// the first render, passing `navigator.userAgent` and
+/// `matchMedia("(pointer: coarse)").matches`.
+///
+/// Mirrors the detection in agg-gui's `web_shell::apply_client_platform`
+/// (OS name for shortcut labels, input profile for touch sizing, and the
+/// on-screen keyboard) but Solitaire's shell owns the calls. Deliberately
+/// does NOT touch `ux_scale`: Solitaire runs at ux_scale 1.0 and the
+/// touch-target growth (bigger menu rows / HUD buttons / chrome strip) is
+/// handled entirely inside agg-gui's menu metrics + Solitaire's layout.
+#[wasm_bindgen]
+pub fn set_client_platform(user_agent: &str, pointer_coarse: bool) {
+    let profile = agg_gui::input_profile::input_profile_from_hint(user_agent, pointer_coarse);
+    agg_gui::input_profile::set_input_profile(profile);
+    agg_gui::set_platform(agg_gui::platform_from_name(user_agent));
+    agg_gui::widgets::on_screen_keyboard::set_enabled(profile.is_mobile_touch());
+    mark_dirty();
+}
+
 #[wasm_bindgen]
 pub fn set_device_pixel_ratio(dpr: f64) {
     agg_gui::set_device_scale(dpr.max(0.5));

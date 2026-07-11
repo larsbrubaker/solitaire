@@ -27,8 +27,22 @@ const N_CASCADES: usize = 8;
 /// Total columns in the side-column arrangement: 2 left (free cells
 /// 2x2) + 8 cascades + 2 right (foundations 2x2).
 const SIDE_COLS: usize = 12;
-/// Vertical budget in card-heights (top row + tableau fan).
-const VERT_BUDGET_CARDS: f64 = 5.5;
+/// Total columns in the stacked side-column arrangement: 1 left (4
+/// cells in ONE overlapping column) + 8 cascades + 1 right (4
+/// foundations in ONE overlapping column). Two fewer columns than
+/// [`SIDE_COLS`], so cards get wider whenever width binds.
+const STACKED_COLS: usize = 10;
+/// Vertical budget in card-heights for the top-row layout — sized for a
+/// typical cascade depth. Deeper cascades compress their fan
+/// (`Pile::max_fan_extent`) rather than shrinking every card.
+const VERT_BUDGET_CARDS: f64 = 4.0;
+/// Vertical budget in card-heights for the side-column layouts (the
+/// cascades span the full playfield height).
+const SIDE_BUDGET_CARDS: f64 = 3.2;
+/// Vertical step between successive cell / foundation slot origins in
+/// the stacked side columns, as a fraction of card height. Four slots
+/// span 1 + 3·step = 1.84 card-heights.
+const STACKED_STEP: f64 = 0.28;
 
 pub struct FreeCell {
     /// When `Some(n)`, `deal()` reproduces Microsoft FreeCell game
@@ -118,19 +132,47 @@ fn max_movable(piles: &PileSet, dest: PileId) -> usize {
 
 impl GameRules for FreeCell {
     fn pile_layout(&self, rect: Rect) -> Vec<PileSlot> {
-        // Two candidate arrangements — the classic top row (8 columns,
-        // cells + foundations above the cascades) and a side-column
-        // layout (12 columns: cells 2x2 left, cascades center,
-        // foundations 2x2 right) that frees a full card-height for the
-        // cascades on wide viewports. Whichever yields the larger card
-        // wins.
-        let (fit, arrangement) =
-            super::pick_board_fit(rect, N_CASCADES, SIDE_COLS, 10.0, 12.0, VERT_BUDGET_CARDS);
+        // Three candidate arrangements — the classic top row (8 cols,
+        // cells + foundations above the cascades), a side-column layout
+        // (12 cols: cells 2x2 left, cascades center, foundations 2x2
+        // right), and a stacked side-column layout (10 cols: cells and
+        // foundations each collapse into one overlapping column, giving
+        // the cascades wider cards). Whichever yields the larger card
+        // wins; ties prefer TopRow, then SideColumns, then SideStacked.
+        let (fit, arrangement, budget) = super::pick_board_fit(
+            rect,
+            10.0,
+            12.0,
+            &[
+                super::BoardCandidate {
+                    arrangement: super::BoardArrangement::TopRow,
+                    cols: N_CASCADES,
+                    vert_budget: VERT_BUDGET_CARDS,
+                },
+                super::BoardCandidate {
+                    arrangement: super::BoardArrangement::SideColumns,
+                    cols: SIDE_COLS,
+                    vert_budget: SIDE_BUDGET_CARDS,
+                },
+                super::BoardCandidate {
+                    arrangement: super::BoardArrangement::SideStacked,
+                    cols: STACKED_COLS,
+                    vert_budget: SIDE_BUDGET_CARDS,
+                },
+            ],
+        );
         // Stretch cascade fan steps into leftover vertical space (width-
-        // bound portrait viewports). FreeCell cascades are all face-up
-        // and can grow long — budget for a 19-card worst case.
-        let fan_scale =
-            super::tableau_fan_scale(rect, &fit, arrangement, 12.0, VERT_BUDGET_CARDS, 0, 19);
+        // bound portrait viewports); deep cascades compress back via
+        // `max_fan_extent` below.
+        let fan_scale = super::tableau_fan_scale(rect, &fit, arrangement, 12.0, budget);
+        // Vertical space the cascades may use — TopRow reserves a
+        // card-height (plus a gap) for the top row; side layouts span
+        // the full playfield.
+        let tableau_extent = if arrangement == super::BoardArrangement::TopRow {
+            rect.height - fit.card_h - 12.0
+        } else {
+            rect.height
+        };
         let (card_w, card_h) = (fit.card_w, fit.card_h);
         let col_pitch = fit.col_pitch;
         let left = fit.left;
@@ -177,7 +219,8 @@ impl GameRules for FreeCell {
                             i as f64,
                             tableau_origin_y,
                         )
-                        .with_fan_scale(fan_scale),
+                        .with_fan_scale(fan_scale)
+                        .with_max_fan_extent(tableau_extent),
                     );
                 }
             }
@@ -213,7 +256,46 @@ impl GameRules for FreeCell {
                             (2 + i) as f64,
                             top_row_origin_y,
                         )
-                        .with_fan_scale(fan_scale),
+                        .with_fan_scale(fan_scale)
+                        .with_max_fan_extent(tableau_extent),
+                    );
+                }
+            }
+            super::BoardArrangement::SideStacked => {
+                // Left column (col 0): 4 free cells stacked with
+                // overlapping origins, stepping downward from the top.
+                for i in 0..4u8 {
+                    out.push(mk(
+                        CELL_FIRST + i,
+                        PileKind::Cell,
+                        PileLayout::Stacked,
+                        0.0,
+                        top_row_origin_y - i as f64 * card_h * STACKED_STEP,
+                    ));
+                }
+                // Right column (col 9): 4 foundations stacked the same
+                // way.
+                for i in 0..4u8 {
+                    out.push(mk(
+                        FOUND_FIRST + i,
+                        PileKind::Foundation,
+                        PileLayout::Stacked,
+                        9.0,
+                        top_row_origin_y - i as f64 * card_h * STACKED_STEP,
+                    ));
+                }
+                // Cascades: columns 1..=8, full playfield height.
+                for i in 0..N_CASCADES as u8 {
+                    out.push(
+                        mk(
+                            CASCADE_FIRST + i,
+                            PileKind::Tableau,
+                            PileLayout::FannedDown,
+                            (1 + i) as f64,
+                            top_row_origin_y,
+                        )
+                        .with_fan_scale(fan_scale)
+                        .with_max_fan_extent(tableau_extent),
                     );
                 }
             }
@@ -389,282 +471,5 @@ impl GameRules for FreeCell {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::cards::Suit;
-    use crate::session::GameSession;
-
-    #[test]
-    fn deal_distributes_52_cards_across_8_cascades() {
-        let s = GameSession::new(FreeCell::new(), 1);
-        let total: usize = (CASCADE_FIRST..=CASCADE_LAST)
-            .map(|id| s.piles.get(id).len())
-            .sum();
-        assert_eq!(total, 52);
-        for id in CASCADE_FIRST..=CASCADE_FIRST + 3 {
-            assert_eq!(s.piles.get(id).len(), 7);
-        }
-        for id in CASCADE_FIRST + 4..=CASCADE_LAST {
-            assert_eq!(s.piles.get(id).len(), 6);
-        }
-        // All cards face-up.
-        for id in CASCADE_FIRST..=CASCADE_LAST {
-            assert!(s.piles.get(id).cards.iter().all(|c| c.face_up));
-        }
-    }
-
-    #[test]
-    fn cell_accepts_single_card() {
-        let rules = FreeCell::new();
-        let mut piles =
-            PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
-        piles
-            .get_mut(CASCADE_FIRST)
-            .cards
-            .push(Card::new(Suit::Hearts, Rank::Two).face_up());
-        let m = Move::simple(CASCADE_FIRST, 1, CELL_FIRST);
-        assert!(rules.legal_move(&piles, &m));
-    }
-
-    #[test]
-    fn cell_rejects_when_full() {
-        let rules = FreeCell::new();
-        let mut piles =
-            PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
-        piles
-            .get_mut(CELL_FIRST)
-            .cards
-            .push(Card::new(Suit::Hearts, Rank::King).face_up());
-        piles
-            .get_mut(CASCADE_FIRST)
-            .cards
-            .push(Card::new(Suit::Hearts, Rank::Two).face_up());
-        let m = Move::simple(CASCADE_FIRST, 1, CELL_FIRST);
-        assert!(!rules.legal_move(&piles, &m));
-    }
-
-    #[test]
-    fn single_click_top_card_prefers_foundation() {
-        let rules = FreeCell::new();
-        let mut piles =
-            PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
-        piles
-            .get_mut(CASCADE_FIRST)
-            .cards
-            .push(Card::new(Suit::Hearts, Rank::Ace).face_up());
-        piles
-            .get_mut(CASCADE_FIRST + 1)
-            .cards
-            .push(Card::new(Suit::Spades, Rank::Two).face_up());
-
-        let m = rules
-            .single_click_move(&piles, CASCADE_FIRST, 0)
-            .expect("ace can move to foundation");
-        assert_eq!(m.from, CASCADE_FIRST);
-        assert_eq!(m.to, FOUND_FIRST);
-        assert_eq!(m.take, 1);
-    }
-
-    #[test]
-    fn single_click_run_moves_to_leftmost_legal_cascade() {
-        let rules = FreeCell::new();
-        let mut piles =
-            PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
-        let src = CASCADE_FIRST + 4;
-        for id in CASCADE_FIRST..=CASCADE_LAST {
-            if id == src {
-                continue;
-            }
-            piles
-                .get_mut(id)
-                .cards
-                .push(Card::new(Suit::Spades, Rank::Two).face_up());
-        }
-        piles
-            .get_mut(src)
-            .cards
-            .push(Card::new(Suit::Clubs, Rank::Ten).face_up());
-        piles
-            .get_mut(src)
-            .cards
-            .push(Card::new(Suit::Hearts, Rank::Nine).face_up());
-
-        let left_dst = CASCADE_FIRST + 1;
-        let right_dst = CASCADE_FIRST + 3;
-        for dst in [left_dst, right_dst] {
-            piles.get_mut(dst).cards.clear();
-            piles
-                .get_mut(dst)
-                .cards
-                .push(Card::new(Suit::Diamonds, Rank::Jack).face_up());
-        }
-
-        let m = rules
-            .single_click_move(&piles, src, 0)
-            .expect("10-9 run can move onto either jack");
-        assert_eq!(m.from, src);
-        assert_eq!(m.to, left_dst);
-        assert_eq!(m.take, 2);
-    }
-
-    #[test]
-    fn wide_rect_picks_side_column_layout() {
-        let rules = FreeCell::new();
-        let rect = Rect::new(0.0, 0.0, 1600.0, 700.0);
-        let slots = rules.pile_layout(rect);
-        let top = crate::games::fit_cards(rect, 8, 10.0, 12.0, 5.5);
-        let side = crate::games::fit_cards(rect, 12, 10.0, 12.0, 4.5);
-        assert!(
-            side.card_h > top.card_h,
-            "side candidate must win on a wide rect"
-        );
-        let eq = |a: f64, b: f64| (a - b).abs() < 1e-9;
-        assert!(eq(slots[CELL_FIRST as usize].card_h, side.card_h));
-        // Free cells: 2x2 grid in columns 0 and 1, top row flush with
-        // the playfield top.
-        for i in 0..4u8 {
-            let c = &slots[(CELL_FIRST + i) as usize];
-            assert!(eq(c.origin_x, side.left + (i % 2) as f64 * side.col_pitch));
-            assert!(eq(
-                c.origin_y,
-                side.top_row_origin_y - (i / 2) as f64 * side.row_pitch
-            ));
-        }
-        // Cascades: columns 2..=9, full playfield height.
-        for i in 0..8u8 {
-            let t = &slots[(CASCADE_FIRST + i) as usize];
-            assert!(eq(t.origin_x, side.left + (2 + i) as f64 * side.col_pitch));
-            assert!(eq(t.origin_y, side.top_row_origin_y));
-        }
-        // Foundations: 2x2 grid in columns 10 and 11.
-        for i in 0..4u8 {
-            let f = &slots[(FOUND_FIRST + i) as usize];
-            assert!(eq(
-                f.origin_x,
-                side.left + (10 + i % 2) as f64 * side.col_pitch
-            ));
-            assert!(eq(
-                f.origin_y,
-                side.top_row_origin_y - (i / 2) as f64 * side.row_pitch
-            ));
-        }
-    }
-
-    #[test]
-    fn tall_rect_keeps_top_row_layout() {
-        let rules = FreeCell::new();
-        let slots = rules.pile_layout(Rect::new(0.0, 0.0, 390.0, 800.0));
-        let eq = |a: f64, b: f64| (a - b).abs() < 1e-6;
-        // Pin the historical top-row layout: width-bound cards of
-        // (390 - 7*10) / 8 = 40 wide, aspect 1.4 → 56 tall.
-        let card_w = 40.0;
-        let card_h = card_w * crate::games::CARD_ASPECT;
-        let col_pitch = card_w + 10.0;
-        assert!(eq(slots[CELL_FIRST as usize].card_h, card_h));
-        // Cells in columns 0..=3, foundations in columns 4..=7, all in
-        // the top row; cascades one row-pitch below at column 0.
-        assert!(eq(slots[CELL_FIRST as usize].origin_x, 0.0));
-        assert!(eq(slots[CELL_FIRST as usize].origin_y, 800.0 - card_h));
-        assert!(eq(slots[FOUND_FIRST as usize].origin_x, 4.0 * col_pitch));
-        assert!(eq(slots[FOUND_FIRST as usize].origin_y, 800.0 - card_h));
-        assert!(eq(slots[CASCADE_FIRST as usize].origin_x, 0.0));
-        assert!(eq(
-            slots[CASCADE_FIRST as usize].origin_y,
-            800.0 - card_h - (card_h + 12.0)
-        ));
-    }
-
-    #[test]
-    fn portrait_rect_scales_cascade_fans() {
-        let rules = FreeCell::new();
-        let rect = Rect::new(0.0, 0.0, 390.0, 800.0);
-        let slots = rules.pile_layout(rect);
-        let scale = slots[CASCADE_FIRST as usize].fan_scale;
-        assert!(scale > 1.0, "portrait rect must stretch cascade fans");
-        assert!(scale <= 2.0);
-        for i in 0..N_CASCADES as u8 {
-            assert_eq!(slots[(CASCADE_FIRST + i) as usize].fan_scale, scale);
-        }
-        // Only cascades stretch — cells and foundations keep 1.0.
-        for i in 0..4u8 {
-            assert_eq!(slots[(CELL_FIRST + i) as usize].fan_scale, 1.0);
-            assert_eq!(slots[(FOUND_FIRST + i) as usize].fan_scale, 1.0);
-        }
-        // Worst-case cascade (19 face-up cards) must still fit above
-        // the playfield bottom at this scale.
-        let mut pile = crate::piles::Pile::from_slot(&slots[CASCADE_FIRST as usize]);
-        for _ in 0..19 {
-            pile.cards
-                .push(Card::new(Suit::Spades, Rank::King).face_up());
-        }
-        let (_, y_bottom) = pile.position_for(pile.cards.len() - 1);
-        assert!(
-            y_bottom >= rect.y,
-            "worst-case cascade bottom {y_bottom} overflows the playfield"
-        );
-    }
-
-    #[test]
-    fn height_bound_rect_keeps_default_fan_scale() {
-        let rules = FreeCell::new();
-        let slots = rules.pile_layout(Rect::new(0.0, 0.0, 1600.0, 700.0));
-        for i in 0..N_CASCADES as u8 {
-            let s = slots[(CASCADE_FIRST + i) as usize].fan_scale;
-            assert!(
-                (s - 1.0).abs() < 1e-9,
-                "height-bound fit must not stretch fans, got {s}"
-            );
-        }
-    }
-
-    #[test]
-    fn multi_card_move_limited_by_empty_cells() {
-        let rules = FreeCell::new();
-        let mut piles =
-            PileSet::from_slots(&rules.pile_layout(crate::session::DEFAULT_PLAYFIELD_RECT));
-        // Fill every cell so empty_cells = 0.
-        for id in CELL_FIRST..=CELL_LAST {
-            piles
-                .get_mut(id)
-                .cards
-                .push(Card::new(Suit::Hearts, Rank::King).face_up());
-        }
-        // Source cascade run: Q♠ J♥ 10♠ (alt-color descending).
-        let src = CASCADE_FIRST;
-        piles
-            .get_mut(src)
-            .cards
-            .push(Card::new(Suit::Spades, Rank::Queen).face_up());
-        piles
-            .get_mut(src)
-            .cards
-            .push(Card::new(Suit::Hearts, Rank::Jack).face_up());
-        piles
-            .get_mut(src)
-            .cards
-            .push(Card::new(Suit::Spades, Rank::Ten).face_up());
-        // Fill every other cascade so empty_cascades = 0 too.
-        for id in (CASCADE_FIRST + 1)..=CASCADE_LAST {
-            piles
-                .get_mut(id)
-                .cards
-                .push(Card::new(Suit::Spades, Rank::Two).face_up());
-        }
-        // Destination = CASCADE_FIRST + 1 (overwrite top so K♥ is on top).
-        let dst = CASCADE_FIRST + 1;
-        piles.get_mut(dst).cards.clear();
-        piles
-            .get_mut(dst)
-            .cards
-            .push(Card::new(Suit::Hearts, Rank::King).face_up());
-        // Re-fill the remaining other cascades.
-        for id in (CASCADE_FIRST + 2)..=CASCADE_LAST {
-            // Already filled above; nothing to do.
-            assert!(!piles.get(id).is_empty());
-        }
-        // With 0 empty cells AND 0 empty cascades, max_movable = 1
-        // — moving 3 cards must fail.
-        let m = Move::simple(src, 3, dst);
-        assert!(!rules.legal_move(&piles, &m));
-    }
-}
+#[path = "freecell_tests.rs"]
+mod tests;

@@ -30,6 +30,16 @@ async function main() {
   const wasm = await import(/* @vite-ignore */ wasmJsUrl);
   await wasm.default(wasmBgUrl);
 
+  // Feed the client platform into the Rust/agg-gui input profile BEFORE
+  // the first render so touch-device sizing (larger menu rows + HUD
+  // buttons + a taller chrome strip) is active from the first frame on
+  // phones and tablets. `(pointer: coarse)` catches iPad-mode Safari,
+  // which hides "iPad" from the user-agent string.
+  if (typeof wasm.set_client_platform === "function") {
+    const pointerCoarse = window.matchMedia?.("(pointer: coarse)")?.matches ?? false;
+    wasm.set_client_platform(navigator.userAgent, pointerCoarse);
+  }
+
   const resizeCanvas = () => {
     const dpr = Math.max(0.5, window.devicePixelRatio || 1);
     // Canvas fills the entire viewport via explicit CSS pixel sizes

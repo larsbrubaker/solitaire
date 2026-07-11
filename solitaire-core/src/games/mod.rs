@@ -103,100 +103,121 @@ pub(crate) fn fit_cards(
     }
 }
 
-/// Which of the two candidate board arrangements a game picked for
-/// the current playfield rect.
+/// Which candidate board arrangement a game picked for the current
+/// playfield rect. Variant order encodes the tie-break preference used
+/// by [`pick_board_fit`]: earlier variants win when two candidates
+/// yield the same card height.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BoardArrangement {
     /// Classic layout: stock/waste/cells/foundations in a row ABOVE
     /// the tableau.
     TopRow,
-    /// Wide-viewport layout: auxiliary piles move into side columns
-    /// and the tableau spans the full playfield height.
+    /// Wide-viewport layout: auxiliary piles move into flanking side
+    /// columns (2x2 grids, or Spider's single stacked foundation
+    /// column) and the tableau spans the full playfield height.
     SideColumns,
+    /// Like `SideColumns`, but each side's auxiliary piles collapse
+    /// into a SINGLE overlapping column so the tableau gets one more
+    /// full-width column. Fewer columns → wider cards when width binds.
+    SideStacked,
 }
 
-/// Compute both layout candidates for a game and pick whichever
-/// yields the LARGER card. `tableau_cols` + `top_budget` describe the
-/// classic top-row arrangement; `side_cols` (tableau plus flanking
-/// side columns) with `top_budget - 1.0` describes the side-column
-/// arrangement, where the freed top row's card-height goes back to
-/// the tableau fan.
-pub(crate) fn pick_board_fit(
-    rect: Rect,
-    tableau_cols: usize,
-    side_cols: usize,
-    col_gap: f64,
-    row_gap: f64,
-    top_budget: f64,
-) -> (CardFit, BoardArrangement) {
-    let top = fit_cards(rect, tableau_cols, col_gap, row_gap, top_budget);
-    let side = fit_cards(rect, side_cols, col_gap, row_gap, top_budget - 1.0);
-    if side.card_h > top.card_h {
-        (side, BoardArrangement::SideColumns)
-    } else {
-        (top, BoardArrangement::TopRow)
+impl BoardArrangement {
+    /// `true` when the tableau spans the full playfield height (every
+    /// side layout), `false` for the top-row layout where one card row
+    /// plus a gap sits above the tableau. Drives the `available`
+    /// vertical space in [`tableau_fan_scale`].
+    fn tableau_full_height(self) -> bool {
+        !matches!(self, BoardArrangement::TopRow)
     }
 }
 
+/// One candidate arrangement for [`pick_board_fit`]: its identity, its
+/// tableau column count, and the vertical budget (in card-heights) used
+/// to size cards by height.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct BoardCandidate {
+    pub arrangement: BoardArrangement,
+    pub cols: usize,
+    pub vert_budget: f64,
+}
+
+/// Evaluate every candidate arrangement and pick whichever yields the
+/// LARGER card. Ties go to the candidate listed EARLIER in `candidates`
+/// (callers order them TopRow, then SideColumns, then SideStacked), so
+/// a height-bound rect where several candidates size identically keeps
+/// the simplest layout. Returns the winning fit, its arrangement, and
+/// its vertical budget (needed by [`tableau_fan_scale`]).
+pub(crate) fn pick_board_fit(
+    rect: Rect,
+    col_gap: f64,
+    row_gap: f64,
+    candidates: &[BoardCandidate],
+) -> (CardFit, BoardArrangement, f64) {
+    let mut best: Option<(CardFit, BoardArrangement, f64)> = None;
+    for cand in candidates {
+        let fit = fit_cards(rect, cand.cols, col_gap, row_gap, cand.vert_budget);
+        // Strictly-greater replacement keeps the earlier (already-seen)
+        // candidate on ties — the tie-break preference.
+        let better = match best {
+            Some((cur, _, _)) => fit.card_h > cur.card_h,
+            None => true,
+        };
+        if better {
+            best = Some((fit, cand.arrangement, cand.vert_budget));
+        }
+    }
+    best.expect("pick_board_fit needs at least one candidate")
+}
+
 /// Fan-step scale for the tableau piles of the arrangement that
-/// [`pick_board_fit`] chose with `top_budget`. When card size was
-/// width-bound (portrait phones), the vertical budget the fit reserved
-/// for the tableau under-uses the playfield — this returns how much
-/// the fan steps can stretch to fill it, in `1.0..=2.0`, additionally
-/// capped so a worst-case pile of `worst_face_down` face-down cards
-/// under `worst_face_up` face-up cards never overflows the rect.
-/// Card size itself must NOT change with this scale — only fan spacing.
+/// [`pick_board_fit`] chose with winning budget `budget`. When card
+/// size was width-bound (portrait phones), the vertical budget the fit
+/// reserved for the tableau under-uses the playfield — this returns how
+/// much the fan steps can stretch to fill it, in `1.0..=2.0`.
+///
+/// Fan overflow no longer needs a cap here: `Pile::max_fan_extent`
+/// compression (see `Pile::position_for`) guarantees a deep pile fits.
+/// This is purely the slack-expansion factor. Card size itself must NOT
+/// change with this scale — only fan spacing.
 pub(crate) fn tableau_fan_scale(
     rect: Rect,
     fit: &CardFit,
     arrangement: BoardArrangement,
     row_gap: f64,
-    top_budget: f64,
-    worst_face_down: usize,
-    worst_face_up: usize,
+    budget: f64,
 ) -> f64 {
     let card_h = fit.card_h;
     // `fit_cards` sizes cards from `card_h_by_height = (rect.height -
     // row_gap) / budget`, i.e. when height binds `rect.height ==
     // row_gap + budget * card_h` exactly. Per arrangement:
-    // - TopRow: budget = top_budget; one card row plus `row_gap` sits
-    //   above the tableau, so
+    // - TopRow: one card row plus `row_gap` sits above the tableau, so
     //     available = rect.height - card_h - row_gap
-    //     assumed   = (top_budget - 1.0) * card_h
+    //     assumed   = (budget - 1.0) * card_h
     //   At the height-bound equality, available == assumed → scale 1.0.
-    // - SideColumns: budget = top_budget - 1.0 and the tableau spans
-    //   the full playfield height, so
+    // - Side layouts: the tableau spans the full playfield height, so
     //     available = rect.height
-    //     assumed   = (top_budget - 1.0) * card_h + row_gap
+    //     assumed   = budget * card_h + row_gap
     //   Again equal (scale exactly 1.0) when height binds.
-    let (available, assumed) = match arrangement {
-        BoardArrangement::TopRow => (rect.height - card_h - row_gap, (top_budget - 1.0) * card_h),
-        BoardArrangement::SideColumns => (rect.height, (top_budget - 1.0) * card_h + row_gap),
+    let (available, assumed) = if arrangement.tableau_full_height() {
+        (rect.height, budget * card_h + row_gap)
+    } else {
+        (rect.height - card_h - row_gap, (budget - 1.0) * card_h)
     };
-    // Worst-case fan extent, in card-heights below the first card's
-    // top edge: 1.0 for the card itself plus one face-down step per
-    // face-down card and one face-up step per face-up card except the
-    // last. Fit requires card_h * (1 + scale * worst_units) <=
-    // available, giving the cap below.
-    let worst_units = worst_face_down as f64 * crate::piles::FAN_DOWN_FACE_DOWN
-        + worst_face_up.saturating_sub(1) as f64 * crate::piles::FAN_DOWN_FACE_UP;
     // Degenerate playfields (e.g. a 96×84 native window mid-resize
-    // yields card_h == 0 and available == 0) would turn the divisions
+    // yields card_h == 0 and available == 0) would turn the division
     // below into NaN, and `f64::clamp` PANICS on a NaN bound. Fall
     // back to the default scale instead.
     if card_h <= 0.0 {
         return 1.0;
     }
-    let fit_cap = (available / card_h - 1.0) / worst_units;
     let scale = available / assumed;
-    if !fit_cap.is_finite() || !scale.is_finite() {
+    if !scale.is_finite() {
         return 1.0;
     }
-    // Never stretch beyond 2.0, never beyond what the worst case fits,
-    // and never compress below the default 1.0 (if even 1.0 overflows,
-    // that's the pre-existing budget trade-off — leave it be).
-    let upper = fit_cap.clamp(1.0, 2.0);
-    scale.clamp(1.0, upper)
+    // Never stretch beyond 2.0, never compress below the default 1.0
+    // (fan compression handles the other end of the range).
+    scale.clamp(1.0, 2.0)
 }
 
 pub trait GameRules: 'static {
@@ -270,6 +291,26 @@ mod tests {
                         g.game_slug(),
                         s.fan_scale
                     );
+                    // `max_fan_extent` can go zero or negative on these
+                    // rects (e.g. rect.height - card_h - row_gap). Fan
+                    // compression must still resolve positions without a
+                    // NaN reaching a clamp/division — build a pile from
+                    // the slot, deal a few cards, and walk every index.
+                    let mut pile = crate::piles::Pile::from_slot(s);
+                    for _ in 0..8 {
+                        pile.cards.push(crate::cards::Card::new(
+                            crate::cards::Suit::Spades,
+                            crate::cards::Rank::King,
+                        ));
+                    }
+                    for idx in 0..pile.cards.len() {
+                        let (x, y) = pile.position_for(idx);
+                        assert!(
+                            x.is_finite() && y.is_finite(),
+                            "{} slot {i} position_for({idx}) = ({x}, {y}) on rect {rect:?}",
+                            g.game_slug(),
+                        );
+                    }
                 }
             }
         }

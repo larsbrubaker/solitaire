@@ -26,7 +26,6 @@ use super::app_model::{Screen, SharedModel};
 use super::icons::{FA_BARS, FA_EXPAND, FA_HOME, FA_LIGHTBULB, FA_REFRESH, FA_UNDO};
 use super::layout;
 
-const HUD_BG: Color = Color::from_rgba8(0x09, 0x52, 0x2c, 0xe0);
 const BTN_BG: Color = Color::from_rgb8(0x1f, 0x4d, 0x2e);
 const BTN_BG_HOVER: Color = Color::from_rgb8(0x29, 0x68, 0x3e);
 const BTN_BG_PRESSED: Color = Color::from_rgb8(0x18, 0x3d, 0x24);
@@ -34,8 +33,9 @@ const BTN_BORDER: Color = Color::from_rgba8(0xff, 0xff, 0xff, 0x80);
 const BTN_TEXT: Color = Color::from_rgb8(0xff, 0xff, 0xff);
 const TXT: Color = Color::from_rgb8(0xff, 0xff, 0xff);
 
-/// Button height + horizontal gap for the bottom strip.
-const STD_BTN_H: f64 = 36.0;
+/// Horizontal gap between HUD action buttons. The button HEIGHT is not
+/// a constant — it comes from [`layout::hud_button_height`], which
+/// floors at the 44 px touch minimum when a touch profile is active.
 const STD_BTN_GAP: f64 = 12.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -246,7 +246,7 @@ impl HudWidget {
     /// whether to switch to compact (hamburger) mode.
     fn measure_action_strip(&mut self) -> f64 {
         let mut total = 0.0;
-        let probe = Size::new(self.bounds.width, STD_BTN_H);
+        let probe = Size::new(self.bounds.width, layout::hud_button_height());
         let action_count = self.children.len().saturating_sub(1);
         for i in 0..action_count {
             let w = self.children[i].layout(probe).width;
@@ -269,6 +269,7 @@ impl HudWidget {
     fn layout_buttons(&mut self) {
         let chrome = self.chrome();
         let hud = chrome.hud_rect;
+        let btn_h = layout::hud_button_height();
         let n = self.children.len();
         if n == 0 {
             return;
@@ -282,17 +283,17 @@ impl HudWidget {
             // Wide enough: lay actions in a centered strip and
             // stash the hamburger off-screen so it doesn't paint
             // or accept clicks.
-            let probe = Size::new(hud.width, STD_BTN_H);
+            let probe = Size::new(hud.width, btn_h);
             let widths: Vec<f64> = (0..action_count)
                 .map(|i| self.children[i].layout(probe).width)
                 .collect();
             let total_w: f64 =
                 widths.iter().sum::<f64>() + STD_BTN_GAP * (action_count as f64 - 1.0);
             let start_x = hud.x + (hud.width - total_w) / 2.0;
-            let y = hud.y + (hud.height - STD_BTN_H) / 2.0;
+            let y = hud.y + (hud.height - btn_h) / 2.0;
             let mut x = start_x;
             for (i, w) in widths.iter().enumerate() {
-                self.children[i].set_bounds(Rect::new(x, y, *w, STD_BTN_H));
+                self.children[i].set_bounds(Rect::new(x, y, *w, btn_h));
                 x += *w + STD_BTN_GAP;
             }
             self.children[ham].set_bounds(Rect::new(-9999.0, -9999.0, 0.0, 0.0));
@@ -300,11 +301,11 @@ impl HudWidget {
             // Compact: hamburger at the right edge of the HUD;
             // action buttons either off-screen (popup closed) or
             // stacked vertically above the hamburger (popup open).
-            let probe = Size::new(hud.width, STD_BTN_H);
+            let probe = Size::new(hud.width, btn_h);
             let ham_w = self.children[ham].layout(probe).width;
-            let ham_y = hud.y + (hud.height - STD_BTN_H) / 2.0;
+            let ham_y = hud.y + (hud.height - btn_h) / 2.0;
             let ham_x = hud.x + hud.width - ham_w - STD_BTN_GAP;
-            self.children[ham].set_bounds(Rect::new(ham_x, ham_y, ham_w, STD_BTN_H));
+            self.children[ham].set_bounds(Rect::new(ham_x, ham_y, ham_w, btn_h));
             if popup_open {
                 let widths: Vec<f64> = (0..action_count)
                     .map(|i| self.children[i].layout(probe).width)
@@ -314,8 +315,8 @@ impl HudWidget {
                 // Stack upward from above the HUD strip.
                 let bottom = hud.y + hud.height + STD_BTN_GAP;
                 for (i, _w) in widths.iter().enumerate() {
-                    let y = bottom + i as f64 * (STD_BTN_H + STD_BTN_GAP);
-                    self.children[i].set_bounds(Rect::new(col_x, y, col_w, STD_BTN_H));
+                    let y = bottom + i as f64 * (btn_h + STD_BTN_GAP);
+                    self.children[i].set_bounds(Rect::new(col_x, y, col_w, btn_h));
                 }
             } else {
                 for i in 0..action_count {
@@ -324,13 +325,6 @@ impl HudWidget {
             }
         }
         let _ = chrome.mode;
-    }
-
-    fn paint_strip(&self, ctx: &mut dyn DrawCtx, hud: Rect) {
-        ctx.begin_path();
-        ctx.rect(hud.x, hud.y, hud.width, hud.height);
-        ctx.set_fill_color(HUD_BG);
-        ctx.fill();
     }
 
     /// Position + paint the Mom's-Solitaire shuffle counter.
@@ -423,11 +417,12 @@ impl Widget for HudWidget {
     }
 
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
-        let chrome = self.chrome();
-        self.paint_strip(ctx, chrome.hud_rect);
+        // The continuous chrome-strip background is painted once by the
+        // felt layer (`AppRootWidget`) so the menu area and this HUD
+        // area read as ONE bar. Here we only paint HUD-local content
+        // (the Mom's shuffle counter); the Button children paint
+        // themselves through the framework's child walk afterwards.
         self.paint_moms_counter(ctx);
-        // The Button children paint themselves through the
-        // framework's child walk after this method returns.
     }
 
     fn on_event(&mut self, _event: &Event) -> EventResult {
