@@ -58,9 +58,6 @@ pub enum ConfirmAction {
     /// Spider suit-count change picked while a game with moves is
     /// in progress.
     ApplySpiderSuitCount(u8),
-    /// Spider 1-suit choice change picked while a game with moves is
-    /// in progress.
-    ApplySpiderOneSuit(Suit),
     /// "Winnable deals only" toggle for Spider picked while a game
     /// with moves is in progress.
     ApplySpiderWinnableOnly(bool),
@@ -314,11 +311,6 @@ impl AppModel {
                 self.save_settings();
                 self.restart_current_deal();
             }
-            ConfirmAction::ApplySpiderOneSuit(suit) => {
-                self.spider_one_suit = suit;
-                self.save_settings();
-                self.restart_current_deal();
-            }
             ConfirmAction::ApplySpiderWinnableOnly(on) => {
                 self.spider_winnable_only = on;
                 self.save_settings();
@@ -545,14 +537,24 @@ impl AppModel {
         }
         let active_one_suit_spider =
             matches!(self.kind, Some(GameKind::Spider)) && self.spider_suit_count == 1;
-        if active_one_suit_spider && self.game_in_progress_has_moves() {
-            self.confirm = Some(ConfirmAction::ApplySpiderOneSuit(suit));
-            return;
-        }
         self.spider_one_suit = suit;
         self.save_settings();
         if active_one_suit_spider {
-            self.restart_current_deal();
+            // In 1-suit Spider every card already shares one suit, so
+            // switching the active suit is purely cosmetic: remap every
+            // card in place instead of re-dealing. All progress — pile
+            // shapes, ranks, and the undo history (moves store only
+            // pile ids + counts, never cards) — is preserved, so there
+            // is nothing to lose and no confirm dialog is needed. A
+            // later `restart_current_deal` re-reads `self.spider_one_suit`
+            // and deals the new suit. The Hint cache references pile ids
+            // + indices (never suits) and stays valid across the swap,
+            // but we clear it so any active ghost preview repaints with
+            // the new suit rather than lingering on the old face.
+            if let Some(session) = self.session.as_mut() {
+                session.remap_all_suits(suit);
+            }
+            self.spider_hint = None;
         }
     }
 

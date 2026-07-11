@@ -4,6 +4,7 @@
 
 use agg_gui::geometry::Rect;
 
+use crate::cards::Suit;
 use crate::games::GameRules;
 use crate::piles::{PileId, PileSet};
 use crate::session::{AppliedMoveRecord, GameSession, Move};
@@ -35,6 +36,13 @@ pub trait DynGameSession {
     fn game_slug(&self) -> &'static str;
     fn seed(&self) -> u64;
     fn has_moves(&self) -> bool;
+    /// Rewrite the suit of EVERY card in every pile to `suit`, in
+    /// place. Used by 1-suit Spider's active-suit swap, where every
+    /// card already shares one suit so the change is purely cosmetic:
+    /// pile shapes, ranks, face-up flags, and the undo history (which
+    /// stores only pile ids + counts, never cards) all stay valid, so
+    /// progress is preserved and undo keeps working.
+    fn remap_all_suits(&mut self, suit: Suit);
     /// Re-run the active rules' `pile_layout` for `rect` and apply
     /// the resulting positions / sizes to the existing piles. Card
     /// stacks are preserved.
@@ -90,6 +98,35 @@ impl<R: GameRules> DynGameSession for GameSession<R> {
     }
     fn has_moves(&self) -> bool {
         !self.undo.is_empty()
+    }
+    fn remap_all_suits(&mut self, suit: Suit) {
+        // Guard the 1-suit-only contract: every card on the board must
+        // already share a single suit, so rewriting them all is a pure
+        // re-skin. Calling this on a mixed-suit session (e.g. 2- or
+        // 4-suit Spider) would silently collapse distinct suits and
+        // corrupt the game — catch that in debug builds. Release
+        // behavior is unchanged.
+        debug_assert!(
+            {
+                let mut seen: Option<Suit> = None;
+                self.piles
+                    .iter()
+                    .flat_map(|p| p.cards.iter())
+                    .all(|c| match seen {
+                        Some(s) => c.suit == s,
+                        None => {
+                            seen = Some(c.suit);
+                            true
+                        }
+                    })
+            },
+            "remap_all_suits called on a mixed-suit session"
+        );
+        for pile in self.piles.iter_mut() {
+            for card in &mut pile.cards {
+                card.suit = suit;
+            }
+        }
     }
     fn relayout(&mut self, rect: Rect) {
         GameSession::relayout(self, rect);

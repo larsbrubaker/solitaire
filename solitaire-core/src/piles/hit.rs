@@ -46,6 +46,15 @@ pub struct PileSlot {
     /// `Pile::position_for`) rather than overflowing the playfield.
     /// Card size and the top-N waste fan are unaffected.
     pub max_fan_extent: f64,
+    /// Whether an empty-slot placeholder is PAINTED when this pile is
+    /// empty. `true` (the default) paints the felt socket + border.
+    /// Stacked side-column groups (Spider's 8 foundations, Klondike /
+    /// FreeCell's SideStacked cells & foundations) set this `false` on
+    /// every slot EXCEPT the first (lowest-id) of the group, so an empty
+    /// column reads as a single socket instead of a ladder of overlapping
+    /// empty slots. PAINT-ONLY: hit-testing and drop-retargeting ignore
+    /// it, so a hidden empty slot stays fully droppable.
+    pub show_empty_slot: bool,
 }
 
 impl PileSlot {
@@ -75,6 +84,7 @@ impl PileSlot {
             render_ace_as_gap: false,
             fan_scale: 1.0,
             max_fan_extent: 0.0,
+            show_empty_slot: true,
         }
     }
 
@@ -110,6 +120,14 @@ impl PileSlot {
     /// (`0.0` = unlimited). See [`PileSlot::max_fan_extent`].
     pub fn with_max_fan_extent(mut self, extent: f64) -> Self {
         self.max_fan_extent = extent;
+        self
+    }
+
+    /// Suppress painting the empty-slot placeholder when this pile is
+    /// empty. See [`PileSlot::show_empty_slot`]. Used by stacked
+    /// side-column groups on every slot except the first of the group.
+    pub fn with_hidden_empty_slot(mut self) -> Self {
+        self.show_empty_slot = false;
         self
     }
 }

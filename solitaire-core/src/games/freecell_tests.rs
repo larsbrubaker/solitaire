@@ -168,23 +168,29 @@ fn side_stacked_wins_on_moderately_wide_rect() {
     assert!(fit.card_h > top.card_h && fit.card_h > side2x2.card_h);
     assert!(eq(slots[CELL_FIRST as usize].card_h, fit.card_h));
     // Cells share column 0 and foundations column 9, both stepping
-    // DOWN. RE-PINNED: the step now spreads across the full column
-    // height (clamped to [0.28·card_h floor, card_h + col_gap]) instead
-    // of a fixed 0.28·card_h. This tall column spreads past the floor.
+    // DOWN. RE-PINNED: the step spreads across the column height but is
+    // now clamped to [0.28·card_h floor, READABLE_STACK_STEP·card_h cap]
+    // so a stacked group stays compact at the column top instead of
+    // spreading into a ladder. This tall column spreads to the cap.
     let min_step = fit.card_h * STACKED_STEP;
-    let cap = fit.card_h + 10.0;
+    let cap = fit.card_h * crate::games::READABLE_STACK_STEP;
     let step = ((STACKED_RECT.height - fit.card_h) / 3.0).clamp(min_step, cap);
     assert!(step > min_step, "tall column must spread past the floor");
     for i in 0..4u8 {
         let c = &slots[(CELL_FIRST + i) as usize];
         assert!(eq(c.origin_x, fit.left));
         assert!(eq(c.origin_y, fit.top_row_origin_y - i as f64 * step));
+        // Only the first (lowest-id) cell of the group paints a
+        // placeholder; the rest hide it so the column is one socket.
+        assert_eq!(c.show_empty_slot, i == 0, "cell {i} show_empty_slot");
     }
     // Foundations all share column 9, same stacking.
     for i in 0..4u8 {
         let f = &slots[(FOUND_FIRST + i) as usize];
         assert!(eq(f.origin_x, fit.left + 9.0 * fit.col_pitch));
         assert!(eq(f.origin_y, fit.top_row_origin_y - i as f64 * step));
+        // Same rule for the foundation group: first slot only.
+        assert_eq!(f.show_empty_slot, i == 0, "foundation {i} show_empty_slot");
     }
     // Cascades: columns 1..=8, full playfield height.
     for i in 0..8u8 {

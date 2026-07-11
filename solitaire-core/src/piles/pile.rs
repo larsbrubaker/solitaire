@@ -62,6 +62,12 @@ pub struct Pile {
     /// `max_fan_extent`. See [`Pile::position_for`] and
     /// [`crate::piles::PileSlot::max_fan_extent`].
     pub max_fan_extent: f64,
+    /// Whether the empty-slot placeholder is PAINTED when this pile is
+    /// empty (see [`crate::piles::PileSlot::show_empty_slot`]). Stacked
+    /// side-column groups clear this on all but the first slot so an
+    /// empty column shows one socket, not a ladder. Paint-only —
+    /// hit-testing and drop-retargeting never consult it.
+    pub show_empty_slot: bool,
 }
 
 impl Pile {
@@ -83,6 +89,7 @@ impl Pile {
             render_ace_as_gap: slot.render_ace_as_gap,
             fan_scale: slot.fan_scale,
             max_fan_extent: slot.max_fan_extent,
+            show_empty_slot: slot.show_empty_slot,
         }
     }
 
@@ -103,6 +110,7 @@ impl Pile {
         self.render_ace_as_gap = slot.render_ace_as_gap;
         self.fan_scale = slot.fan_scale;
         self.max_fan_extent = slot.max_fan_extent;
+        self.show_empty_slot = slot.show_empty_slot;
     }
 
     pub fn top(&self) -> Option<&Card> {

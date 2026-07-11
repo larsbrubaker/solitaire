@@ -220,6 +220,15 @@ pub(crate) fn tableau_fan_scale(
     scale.clamp(1.0, 2.0)
 }
 
+/// Upper bound for the stacked side-column step, as a fraction of
+/// `card_h`. A completed pile only needs a thin sliver of the one behind
+/// it visible to read as a distinct card in the stack, so the step caps
+/// here rather than at full card-plus-gap separation. This keeps a
+/// stacked group compact at the column top: each new completed pile
+/// lands adjacent to the previous one instead of spreading a short stack
+/// across a mostly-empty column (which read as a ladder of empty slots).
+pub(crate) const READABLE_STACK_STEP: f64 = 0.30;
+
 /// Vertical step between successive origins for a stacked side-column
 /// of `n` overlapping slots (Spider's foundation column, Klondike /
 /// FreeCell's SideStacked cells & foundations). Instead of a fixed
@@ -228,15 +237,17 @@ pub(crate) fn tableau_fan_scale(
 /// mostly-empty column:
 ///
 /// ```text
-/// step = ((available_height - card_h) / (n - 1)).clamp(min_step, card_h + col_gap)
+/// step = ((available_height - card_h) / (n - 1)).clamp(min_step, READABLE_STACK_STEP * card_h)
 /// ```
 ///
 /// The floor `min_step` (each game's former fixed step, in pixels) keeps
-/// slots readable on cramped viewports; the cap `card_h + col_gap` is
-/// full separation — one card plus a gap apart — beyond which we stop
-/// spreading. The stack stays TOP-ALIGNED at the column top (callers
-/// step downward from `top_row_origin_y`); this returns only the step,
-/// never centers or bottom-aligns.
+/// slots readable on cramped viewports; the cap
+/// [`READABLE_STACK_STEP`]`* card_h` is a compact readable overlap —
+/// just enough of each pile behind peeks out — beyond which we stop
+/// spreading, so a stacked group sits tightly at the column top. The
+/// stack stays TOP-ALIGNED at the column top (callers step downward from
+/// `top_row_origin_y`); this returns only the step, never centers or
+/// bottom-aligns.
 ///
 /// Degenerate inputs (n < 2, non-finite / non-positive `card_h`,
 /// non-finite `available_height`, or a non-finite raw step) fall back to
@@ -248,7 +259,6 @@ pub(crate) fn stacked_side_step(
     card_h: f64,
     n: usize,
     min_step: f64,
-    col_gap: f64,
 ) -> f64 {
     if n < 2 || !card_h.is_finite() || card_h <= 0.0 || !available_height.is_finite() {
         return min_step;
@@ -258,7 +268,7 @@ pub(crate) fn stacked_side_step(
         return min_step;
     }
     let lo = min_step;
-    let hi = (card_h + col_gap).max(lo);
+    let hi = (READABLE_STACK_STEP * card_h).max(lo);
     raw.clamp(lo, hi)
 }
 
@@ -365,25 +375,26 @@ mod tests {
         let card_h = 100.0;
         let min_step = card_h * 0.28;
         // available - card_h = 30 → raw = 30/3 = 10 < 28 floor.
-        let step = stacked_side_step(card_h + 30.0, card_h, 4, min_step, 12.0);
+        let step = stacked_side_step(card_h + 30.0, card_h, 4, min_step);
         assert!(
             (step - min_step).abs() < 1e-9,
             "cramped step {step} != floor"
         );
     }
 
-    /// A tall column spreads the slots fully but never beyond the cap
-    /// (`card_h + col_gap`) — one card plus a gap apart.
+    /// A tall column spreads the slots but never beyond the readable cap
+    /// (`READABLE_STACK_STEP * card_h`), so a stacked group stays compact
+    /// at the column top rather than spreading into a ladder.
     #[test]
-    fn stacked_side_step_tall_column_caps_at_full_separation() {
+    fn stacked_side_step_tall_column_caps_at_readable_step() {
         let card_h = 100.0;
-        let col_gap = 12.0;
-        let min_step = card_h * 0.28;
+        let min_step = card_h * 0.15;
         // Huge available height → raw is enormous → clamps to the cap.
-        let step = stacked_side_step(10_000.0, card_h, 4, min_step, col_gap);
+        let step = stacked_side_step(10_000.0, card_h, 4, min_step);
         assert!(
-            (step - (card_h + col_gap)).abs() < 1e-9,
-            "step {step} not capped"
+            (step - READABLE_STACK_STEP * card_h).abs() < 1e-9,
+            "step {step} not capped at readable step {}",
+            READABLE_STACK_STEP * card_h
         );
     }
 
@@ -393,12 +404,14 @@ mod tests {
     fn stacked_side_step_spreads_monotonic_within_column() {
         let card_h = 90.0;
         let available = 358.0;
-        let col_gap = 10.0;
         let n = 8;
         let min_step = card_h * 0.15;
-        let step = stacked_side_step(available, card_h, n, min_step, col_gap);
+        let step = stacked_side_step(available, card_h, n, min_step);
         assert!(step > min_step, "step {step} should spread past floor");
-        assert!(step <= card_h + col_gap, "step {step} exceeds cap");
+        assert!(
+            step <= READABLE_STACK_STEP * card_h + 1e-9,
+            "step {step} exceeds readable cap"
+        );
         // Origins step strictly downward from the top (top-aligned).
         let top = available; // arbitrary top origin
         let mut prev = top + 1.0;
@@ -421,19 +434,13 @@ mod tests {
     fn stacked_side_step_degenerate_inputs_fall_back_to_floor() {
         let min_step = 20.0;
         // n < 2, non-finite / non-positive card_h, non-finite height.
-        assert_eq!(stacked_side_step(500.0, 100.0, 1, min_step, 12.0), min_step);
-        assert_eq!(stacked_side_step(500.0, 0.0, 4, min_step, 12.0), min_step);
-        assert_eq!(stacked_side_step(500.0, -5.0, 4, min_step, 12.0), min_step);
+        assert_eq!(stacked_side_step(500.0, 100.0, 1, min_step), min_step);
+        assert_eq!(stacked_side_step(500.0, 0.0, 4, min_step), min_step);
+        assert_eq!(stacked_side_step(500.0, -5.0, 4, min_step), min_step);
+        assert_eq!(stacked_side_step(500.0, f64::NAN, 4, min_step), min_step);
+        assert_eq!(stacked_side_step(f64::NAN, 100.0, 4, min_step), min_step);
         assert_eq!(
-            stacked_side_step(500.0, f64::NAN, 4, min_step, 12.0),
-            min_step
-        );
-        assert_eq!(
-            stacked_side_step(f64::NAN, 100.0, 4, min_step, 12.0),
-            min_step
-        );
-        assert_eq!(
-            stacked_side_step(f64::INFINITY, 100.0, 4, min_step, 12.0),
+            stacked_side_step(f64::INFINITY, 100.0, 4, min_step),
             min_step
         );
     }

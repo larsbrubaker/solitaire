@@ -709,18 +709,23 @@ fn wide_rect_picks_side_column_layout() {
     let eq = |a: f64, b: f64| (a - b).abs() < 1e-9;
     assert!(eq(slots[STOCK as usize].card_h, side.card_h));
     // Left column: 8 foundations stacked with overlapping origins,
-    // spread across the full column height. RE-PINNED: the step is no
-    // longer a fixed 0.15·card_h — it spreads to fill `rect.height`,
-    // clamped to [floor, card_h + col_gap]. Here the column has ample
-    // room, so the step exceeds the 0.15 floor.
+    // spread across the column height. RE-PINNED: the step is no longer
+    // a fixed 0.15·card_h — it spreads toward `rect.height` but is now
+    // clamped to [floor, READABLE_STACK_STEP·card_h] so completed suits
+    // stack compactly at the column top. Here the column has ample room,
+    // so the step reaches the readable cap.
     let min_step = side.card_h * 0.15;
-    let cap = side.card_h + 10.0;
+    let cap = side.card_h * crate::games::READABLE_STACK_STEP;
     let step = ((rect.height - side.card_h) / 7.0).clamp(min_step, cap);
     assert!(step > min_step, "wide column must spread past the floor");
     for i in 0..8u8 {
         let f = &slots[(FOUND_FIRST + i) as usize];
         assert!(eq(f.origin_x, side.left));
         assert!(eq(f.origin_y, side.top_row_origin_y - i as f64 * step));
+        // Only the first (lowest-id) foundation shows an empty
+        // placeholder; the rest hide it so the empty column is a single
+        // socket, not a ladder.
+        assert_eq!(f.show_empty_slot, i == 0, "foundation {i} show_empty_slot");
     }
     // The 8 slots span no more than the full column height (extent =
     // card_h + 7·step ≤ rect.height when the step isn't floor-clamped).

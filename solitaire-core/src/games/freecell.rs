@@ -268,28 +268,39 @@ impl GameRules for FreeCell {
                 // step spreads the 4 slots across the full column height
                 // instead of clustering them at the top.
                 let stack_step =
-                    super::stacked_side_step(rect.height, card_h, 4, card_h * STACKED_STEP, 10.0);
+                    super::stacked_side_step(rect.height, card_h, 4, card_h * STACKED_STEP);
                 // Left column (col 0): 4 free cells stacked with
                 // overlapping origins, stepping downward from the top.
+                // Only the first (lowest-id) cell shows an empty
+                // placeholder; the rest paint nothing until filled so the
+                // group reads as a single socket, not a ladder.
                 for i in 0..4u8 {
-                    out.push(mk(
+                    let mut slot = mk(
                         CELL_FIRST + i,
                         PileKind::Cell,
                         PileLayout::Stacked,
                         0.0,
                         top_row_origin_y - i as f64 * stack_step,
-                    ));
+                    );
+                    if i > 0 {
+                        slot = slot.with_hidden_empty_slot();
+                    }
+                    out.push(slot);
                 }
                 // Right column (col 9): 4 foundations stacked the same
-                // way.
+                // way — again only the first slot shows a placeholder.
                 for i in 0..4u8 {
-                    out.push(mk(
+                    let mut slot = mk(
                         FOUND_FIRST + i,
                         PileKind::Foundation,
                         PileLayout::Stacked,
                         9.0,
                         top_row_origin_y - i as f64 * stack_step,
-                    ));
+                    );
+                    if i > 0 {
+                        slot = slot.with_hidden_empty_slot();
+                    }
+                    out.push(slot);
                 }
                 // Cascades: columns 1..=8, full playfield height.
                 for i in 0..N_CASCADES as u8 {

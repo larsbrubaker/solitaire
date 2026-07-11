@@ -111,7 +111,6 @@ impl ConfirmDialog {
             ConfirmAction::MainMenu => "Main Menu",
             ConfirmAction::ApplyKlondikeDrawCount(_)
             | ConfirmAction::ApplySpiderSuitCount(_)
-            | ConfirmAction::ApplySpiderOneSuit(_)
             | ConfirmAction::ApplySpiderWinnableOnly(_)
             | ConfirmAction::ApplyFreeCellWinnableOnly(_)
             | ConfirmAction::ApplyKlondikeWinnableOnly(_) => "Apply",
@@ -126,7 +125,6 @@ impl ConfirmDialog {
             }
             ConfirmAction::ApplyKlondikeDrawCount(_)
             | ConfirmAction::ApplySpiderSuitCount(_)
-            | ConfirmAction::ApplySpiderOneSuit(_)
             | ConfirmAction::ApplySpiderWinnableOnly(_)
             | ConfirmAction::ApplyFreeCellWinnableOnly(_)
             | ConfirmAction::ApplyKlondikeWinnableOnly(_) => {

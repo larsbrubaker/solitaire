@@ -113,15 +113,23 @@ pub fn paint_pile(
     atlas: &CardSpriteAtlas,
 ) {
     if pile.is_empty() {
-        let (x, y, w, h) = pile.empty_slot_rect();
-        paint_empty_slot(ctx, x, y, w, h);
+        // Stacked side-column groups hide the placeholder on all but the
+        // first slot so an empty column reads as a single socket instead
+        // of a ladder of overlapping empty slots. Hit-testing still
+        // treats the slot as droppable — this is paint-only.
+        if pile.show_empty_slot {
+            let (x, y, w, h) = pile.empty_slot_rect();
+            paint_empty_slot(ctx, x, y, w, h);
+        }
         return;
     }
 
     let stop = hide_from.unwrap_or(pile.cards.len()).min(pile.cards.len());
     if stop == 0 {
-        let (x, y, w, h) = pile.empty_slot_rect();
-        paint_empty_slot(ctx, x, y, w, h);
+        if pile.show_empty_slot {
+            let (x, y, w, h) = pile.empty_slot_rect();
+            paint_empty_slot(ctx, x, y, w, h);
+        }
         return;
     }
 

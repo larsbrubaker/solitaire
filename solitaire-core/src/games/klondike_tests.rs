@@ -223,17 +223,21 @@ fn side_stacked_wins_on_moderately_wide_rect() {
     assert!(eq(slots[STOCK as usize].origin_x, fit.left));
     assert!(eq(slots[WASTE as usize].origin_x, fit.left));
     // All four foundations share column 8, stepping DOWN. RE-PINNED:
-    // the step now spreads across the full column height (clamped to
-    // [0.28·card_h floor, card_h + col_gap]) instead of a fixed
-    // 0.28·card_h. This tall column spreads past the floor.
+    // the step spreads across the column height but is now clamped to
+    // [0.28·card_h floor, READABLE_STACK_STEP·card_h cap] so a stacked
+    // group stays compact at the column top instead of spreading into a
+    // ladder. This tall column spreads to the cap.
     let min_step = fit.card_h * STACKED_FOUNDATION_STEP;
-    let cap = fit.card_h + 12.0;
+    let cap = fit.card_h * crate::games::READABLE_STACK_STEP;
     let step = ((STACKED_RECT.height - fit.card_h) / 3.0).clamp(min_step, cap);
     assert!(step > min_step, "tall column must spread past the floor");
     for i in 0..4u8 {
         let f = &slots[(FOUND_FIRST + i) as usize];
         assert!(eq(f.origin_x, fit.left + 8.0 * fit.col_pitch));
         assert!(eq(f.origin_y, fit.top_row_origin_y - i as f64 * step));
+        // Only the first (lowest-id) foundation paints an empty
+        // placeholder; the rest hide it so the group is one socket.
+        assert_eq!(f.show_empty_slot, i == 0, "foundation {i} show_empty_slot");
     }
     // Tableau columns 1..=7, full height.
     for i in 0..7u8 {

@@ -187,6 +187,64 @@ fn fan_scale_propagates_from_slot_and_apply_slot() {
 }
 
 #[test]
+fn show_empty_slot_defaults_true_and_propagates() {
+    // Default slot paints its empty placeholder.
+    let default = PileSlot::new(
+        0,
+        PileKind::Foundation,
+        PileLayout::Stacked,
+        0.0,
+        0.0,
+        CARD_W,
+        CARD_H,
+    );
+    assert!(default.show_empty_slot, "slot flag defaults true");
+    let p = Pile::from_slot(&default);
+    assert!(p.show_empty_slot, "from_slot copies the flag (true)");
+
+    // Hidden-empty-slot builder clears it, and from_slot / apply_slot
+    // carry it through in both directions.
+    let hidden = PileSlot::new(
+        0,
+        PileKind::Foundation,
+        PileLayout::Stacked,
+        0.0,
+        0.0,
+        CARD_W,
+        CARD_H,
+    )
+    .with_hidden_empty_slot();
+    assert!(!hidden.show_empty_slot, "builder clears the flag");
+    let mut p = Pile::from_slot(&hidden);
+    assert!(!p.show_empty_slot, "from_slot copies the flag (false)");
+    // Re-applying a default slot restores painting.
+    p.apply_slot(&default);
+    assert!(p.show_empty_slot, "apply_slot restores the flag to true");
+}
+
+#[test]
+fn hidden_empty_slot_is_still_hittable() {
+    // A hidden empty slot is paint-only: hit_test must still return it as
+    // a drop target where no higher pile overlaps.
+    let slot = PileSlot::new(
+        3,
+        PileKind::Foundation,
+        PileLayout::Stacked,
+        100.0,
+        100.0,
+        CARD_W,
+        CARD_H,
+    )
+    .with_hidden_empty_slot();
+    let p = Pile::from_slot(&slot);
+    assert_eq!(
+        p.hit_test(100.0 + CARD_W / 2.0, 100.0 + CARD_H / 2.0),
+        Some(HitResult::EmptySlot { pile: 3 }),
+        "hidden empty slot must remain droppable"
+    );
+}
+
+#[test]
 fn max_fan_extent_compresses_deep_pile_to_exact_extent() {
     // A tall fanned-down pile whose natural extent overruns a 300px cap.
     let mut p = Pile::from_slot(

@@ -342,3 +342,128 @@ fn apply_spider_stock_deal(model: &mut AppModel) {
     assert!(session.try_apply_batch(moves));
     assert!(session.has_moves());
 }
+
+/// Ranks of a cascade, bottom-to-top — used to assert that a suit
+/// swap leaves pile shapes untouched.
+fn cascade_ranks(model: &AppModel, cid: u8) -> Vec<crate::cards::Rank> {
+    model
+        .session
+        .as_ref()
+        .unwrap()
+        .piles()
+        .get(cid)
+        .cards
+        .iter()
+        .map(|c| c.rank)
+        .collect()
+}
+
+#[test]
+fn spider_one_suit_swap_remaps_in_place_and_preserves_undo() {
+    use crate::cards::{Card, Rank, Suit};
+    use crate::session::Move;
+    let _guard = install_test_storage();
+    let mut model = AppModel::new();
+    // Defaults: 1-suit Spider, Spades.
+    assert_eq!(model.spider_suit_count, 1);
+    assert_eq!(model.spider_one_suit, Suit::Spades);
+    model.start_game_with_seed(GameKind::Spider, 42);
+
+    // Build a tiny controlled board: cascade 9 holds a lone Nine,
+    // cascade 10 a lone Ten (both Spades). Moving the Nine onto the
+    // Ten is a legal single-card cascade move and records an undo
+    // entry.
+    {
+        let piles = model.session.as_mut().unwrap().piles_mut();
+        for p in piles.iter_mut() {
+            p.cards.clear();
+        }
+        piles
+            .get_mut(9)
+            .cards
+            .push(Card::new(Suit::Spades, Rank::Nine).face_up());
+        piles
+            .get_mut(10)
+            .cards
+            .push(Card::new(Suit::Spades, Rank::Ten).face_up());
+    }
+    assert!(model
+        .session
+        .as_mut()
+        .unwrap()
+        .try_apply(Move::simple(9, 1, 10)));
+    assert_eq!(cascade_ranks(&model, 9), vec![]);
+    assert_eq!(cascade_ranks(&model, 10), vec![Rank::Ten, Rank::Nine]);
+
+    // Swap the active suit. In 1-suit mode this is cosmetic: no
+    // confirm dialog, no re-deal.
+    model.set_spider_one_suit(Suit::Hearts);
+    assert!(
+        model.confirm.is_none(),
+        "1-suit swap must not queue a confirm dialog"
+    );
+    assert_eq!(model.spider_one_suit, Suit::Hearts);
+
+    // Every card everywhere now carries the new suit.
+    for pile in model.session.as_ref().unwrap().piles().iter() {
+        for card in &pile.cards {
+            assert_eq!(card.suit, Suit::Hearts, "every card should be remapped");
+        }
+    }
+    // Pile shapes/ranks are untouched by the swap.
+    assert_eq!(cascade_ranks(&model, 9), vec![]);
+    assert_eq!(cascade_ranks(&model, 10), vec![Rank::Ten, Rank::Nine]);
+
+    // The new suit persisted to settings (round-trip).
+    assert_eq!(UserSettings::load().spider_one_suit, Suit::Hearts);
+
+    // Undo still reverts the last move, and the undone cards carry the
+    // NEW suit (remapped history stays consistent with remapped piles).
+    assert!(model.session.as_mut().unwrap().try_undo());
+    assert_eq!(cascade_ranks(&model, 9), vec![Rank::Nine]);
+    assert_eq!(cascade_ranks(&model, 10), vec![Rank::Ten]);
+    let nine = *model
+        .session
+        .as_ref()
+        .unwrap()
+        .piles()
+        .get(9)
+        .top()
+        .unwrap();
+    assert_eq!(nine.suit, Suit::Hearts, "undone card carries the new suit");
+}
+
+#[test]
+fn spider_suit_swap_while_four_suit_only_persists() {
+    use crate::cards::Suit;
+    let _guard = install_test_storage();
+    let mut model = AppModel::new();
+    // 4-suit Spider is active — the swap must not touch the session.
+    model.spider_suit_count = 4;
+    model.start_game_with_seed(GameKind::Spider, 7);
+
+    let before: Vec<Vec<crate::cards::Card>> = model
+        .session
+        .as_ref()
+        .unwrap()
+        .piles()
+        .iter()
+        .map(|p| p.cards.clone())
+        .collect();
+
+    model.set_spider_one_suit(Suit::Hearts);
+
+    let after: Vec<Vec<crate::cards::Card>> = model
+        .session
+        .as_ref()
+        .unwrap()
+        .piles()
+        .iter()
+        .map(|p| p.cards.clone())
+        .collect();
+    assert_eq!(before, after, "4-suit session must not be remapped");
+    assert!(model.confirm.is_none());
+    // The preference still persisted for the next 1-suit game.
+    assert_eq!(model.spider_one_suit, Suit::Hearts);
+    assert_eq!(UserSettings::load().spider_one_suit, Suit::Hearts);
+}

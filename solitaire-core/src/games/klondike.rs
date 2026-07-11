@@ -289,16 +289,23 @@ impl GameRules for Klondike {
                     card_h,
                     4,
                     card_h * STACKED_FOUNDATION_STEP,
-                    12.0,
                 );
                 for i in 0..4u8 {
-                    out.push(mk(
+                    // Completed foundations stack adjacently from the top;
+                    // only the first (lowest-id) slot shows an empty
+                    // placeholder so an empty column is a single socket,
+                    // not a ladder of stacked empty slots.
+                    let mut slot = mk(
                         FOUND_FIRST + i,
                         PileKind::Foundation,
                         PileLayout::Stacked,
                         8.0,
                         top_row_origin_y - i as f64 * found_step,
-                    ));
+                    );
+                    if i > 0 {
+                        slot = slot.with_hidden_empty_slot();
+                    }
+                    out.push(slot);
                 }
                 // Tableau: columns 1..=7, full playfield height.
                 for i in 0..COLS as u8 {

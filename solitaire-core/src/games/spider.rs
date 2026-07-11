@@ -262,21 +262,25 @@ impl GameRules for Spider {
                 // The step spreads the 8 slots across the full column
                 // height so they don't cram at the top of an otherwise
                 // empty column.
-                let found_step = super::stacked_side_step(
-                    rect.height,
-                    card_h,
-                    8,
-                    card_h * SIDE_FOUNDATION_STEP,
-                    10.0,
-                );
+                let found_step =
+                    super::stacked_side_step(rect.height, card_h, 8, card_h * SIDE_FOUNDATION_STEP);
                 for i in 0..8u8 {
-                    out.push(mk(
+                    // Completed suits stack adjacently from the top. Only
+                    // the first (lowest-id) slot shows an empty placeholder
+                    // while the whole group is empty; the rest paint
+                    // nothing until filled, so an empty column reads as a
+                    // single socket rather than a ladder of stacked slots.
+                    let mut slot = mk(
                         FOUND_FIRST + i,
                         PileKind::Foundation,
                         PileLayout::Stacked,
                         0.0,
                         top_row_origin_y - i as f64 * found_step,
-                    ));
+                    );
+                    if i > 0 {
+                        slot = slot.with_hidden_empty_slot();
+                    }
+                    out.push(slot);
                 }
                 // Right column: stock, top-aligned.
                 out.push(mk(
