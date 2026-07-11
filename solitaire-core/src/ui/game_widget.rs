@@ -8,6 +8,7 @@
 
 mod animations;
 mod banners;
+mod celebrate;
 mod drag;
 mod hints;
 mod pile_click;
@@ -26,8 +27,16 @@ use super::animation::{animated_deck_faces, CardAnim, DeckFace, DeckFlipAnim};
 use super::app_model::{Screen, SharedModel};
 use super::layout;
 
+use agg_gui::confetti::ConfettiSystem;
+use web_time::Instant;
+
+use celebrate::{CelebrationAction, WinLatch};
 use drag::DragState;
 use hints::{HintAnim, HintFadeOut, HintPulse};
+
+// Win-celebration burst parameters live next to the other render color
+// consts in `render`.
+use crate::render::{CONFETTI_COUNT, CONFETTI_PALETTE};
 
 /// Chrome-aware playfield rect for the current viewport.
 fn playfield_rect(bounds: Rect) -> Rect {
@@ -78,6 +87,17 @@ pub struct GameWidget {
     /// non-`None` through the fade-out tail so the rect doesn't
     /// disappear in a single frame when the model clears the hint.
     displayed_hint: Option<crate::games::spider::SpiderHint>,
+    /// Edge detector for the win celebration — fires the confetti
+    /// burst once on the not-won -> won transition (see `celebrate`).
+    win_latch: WinLatch,
+    /// Live win-celebration confetti, if a burst is currently playing.
+    /// Painted last (on top of everything) and dropped once every flake
+    /// has expired. Paint-only: input keeps working while it plays.
+    confetti: Option<ConfettiSystem>,
+    /// Wall-clock of the previous confetti tick, for computing the
+    /// per-frame `dt` the simulation advances by. `None` on the first
+    /// frame of a burst (dt = 0).
+    confetti_last_tick: Option<Instant>,
 }
 
 impl GameWidget {
@@ -97,6 +117,9 @@ impl GameWidget {
             hint_pulse: None,
             hint_fade_out: None,
             displayed_hint: None,
+            win_latch: WinLatch::default(),
+            confetti: None,
+            confetti_last_tick: None,
         }
     }
 
@@ -302,6 +325,52 @@ impl Widget for GameWidget {
             let toast_y = pf.y + pf.height - 80.0;
             super::toast::paint_toast(ctx, &self.font, pf.x, toast_y, pf.width, &msg, started);
         }
+
+        // Win celebration — fire a one-shot confetti burst on the
+        // not-won -> won edge, then advance + paint it LAST so the
+        // flakes sit on top of the piles, banner, and toast. Confetti
+        // is paint-only, so input keeps working while it plays. Any
+        // non-won frame (normal play, a new deal / restart / switch, or
+        // returning from Home) drops the burst so a stale one can't
+        // linger unpainted.
+        let won = self.model.borrow().screen == Screen::Won;
+        match self.win_latch.observe(won) {
+            CelebrationAction::Fire => {
+                // Deterministic, wasm32-clean seed derived from the deal
+                // seed (no OS randomness). Salted so it doesn't mirror
+                // the deal's own RNG stream.
+                let seed = self
+                    .model
+                    .borrow()
+                    .session
+                    .as_ref()
+                    .map(|s| s.seed())
+                    .unwrap_or(0)
+                    ^ 0x57E2_D0FF_C0FF_EE01;
+                self.confetti =
+                    Some(ConfettiSystem::burst(pf, CONFETTI_COUNT, CONFETTI_PALETTE, seed));
+                self.confetti_last_tick = None;
+            }
+            CelebrationAction::Drop => {
+                self.confetti = None;
+                self.confetti_last_tick = None;
+            }
+            CelebrationAction::Keep => {}
+        }
+        if let Some(confetti) = self.confetti.as_mut() {
+            let now = Instant::now();
+            let dt = self
+                .confetti_last_tick
+                .map(|prev| now.duration_since(prev).as_secs_f64())
+                .unwrap_or(0.0);
+            self.confetti_last_tick = Some(now);
+            if confetti.tick(dt) {
+                confetti.paint(ctx);
+            } else {
+                self.confetti = None;
+                self.confetti_last_tick = None;
+            }
+        }
     }
 
     fn on_event(&mut self, event: &Event) -> EventResult {
@@ -377,6 +446,16 @@ impl Widget for GameWidget {
     }
 
     fn needs_draw(&self) -> bool {
+        // Visibility guard mirroring the framework default (agg-gui
+        // `Widget::needs_draw`): an invisible subtree must NOT keep the
+        // app in a continuous draw loop. Without this, a confetti burst
+        // (or toast / animation) still live when the player leaves the
+        // playfield — e.g. tapping Home mid-celebration flips the screen
+        // to Title, where `is_visible` is false and `paint` never runs to
+        // tick/drop the burst — would pin `wants_draw` true forever.
+        if !self.is_visible() {
+            return false;
+        }
         self.drag.is_some()
             || !self.animations.is_empty()
             || !self.deck_animations.is_empty()
@@ -387,5 +466,6 @@ impl Widget for GameWidget {
                 .as_ref()
                 .is_some_and(|f| f.start_at.elapsed() < f.duration)
             || self.model.borrow().toast.is_some()
+            || self.confetti.is_some()
     }
 }

@@ -32,3 +32,18 @@ pub const CARD_BACK_PATTERN: Color = Color::from_rgb8(0x29, 0x68, 0xc8);
 
 pub const SLOT_BORDER: Color = Color::from_rgba8(0xff, 0xff, 0xff, 0x40);
 pub const HIGHLIGHT: Color = Color::from_rgba8(0xff, 0xd7, 0x00, 0x80);
+
+/// Palette for the win-celebration confetti burst. Festive but
+/// card-table-appropriate: suit red, gold, a warm white, plus a bright
+/// green and blue so the burst reads against the felt without clashing
+/// with the deck art.
+pub const CONFETTI_PALETTE: &[Color] = &[
+    CARD_RED,
+    Color::from_rgb8(0xff, 0xd7, 0x00),
+    Color::from_rgb8(0xf5, 0xf3, 0xea),
+    Color::from_rgb8(0x2e, 0xc4, 0x6b),
+    Color::from_rgb8(0x3a, 0x8d, 0xff),
+];
+
+/// Number of flakes spawned when a game is won.
+pub const CONFETTI_COUNT: usize = 300;
