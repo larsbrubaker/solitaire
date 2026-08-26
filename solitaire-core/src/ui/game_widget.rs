@@ -347,8 +347,12 @@ impl Widget for GameWidget {
                     .map(|s| s.seed())
                     .unwrap_or(0)
                     ^ 0x57E2_D0FF_C0FF_EE01;
-                self.confetti =
-                    Some(ConfettiSystem::burst(pf, CONFETTI_COUNT, CONFETTI_PALETTE, seed));
+                self.confetti = Some(ConfettiSystem::burst(
+                    pf,
+                    CONFETTI_COUNT,
+                    CONFETTI_PALETTE,
+                    seed,
+                ));
                 self.confetti_last_tick = None;
             }
             CelebrationAction::Drop => {
