@@ -207,7 +207,7 @@ fn phase1_dump_foundations<R: Rng>(state: &mut PileSet, rng: &mut R) {
     }
     for fid in order {
         let pile = state.get_mut(fid);
-        let cards: Vec<Card> = pile.cards.drain(..).collect();
+        let cards: Vec<Card> = std::mem::take(&mut pile.cards);
         let dst = CASCADE_FIRST + rng.gen_range(0..N_CASCADES as u8);
         for c in cards {
             state.get_mut(dst).cards.push(c);
