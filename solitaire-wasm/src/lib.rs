@@ -7,13 +7,13 @@
 //! `localStorage` persistence, and wasm-bindgen exports. It contains **no game
 //! or UI content**: every game rule, widget tree, menu, layout, and interface
 //! the user sees is shared via `solitaire-core` (game logic + widget tree) and
-//! `demo-wgpu` (the wgpu rendering library shared with agg-gui).
+//! `agg-gui-wgpu` (the wgpu rendering library shared with agg-gui).
 
 use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 
 use agg_gui::{App, Modifiers, MouseButton, SharedFrameHistory};
-use demo_wgpu::{begin_frame, WgpuGfxCtx};
+use agg_gui_wgpu::WgpuGfxCtx;
 use solitaire_core::ui::app_model::SharedModel;
 use solitaire_core::ui::build_solitaire_app;
 use wasm_bindgen::prelude::*;
@@ -271,7 +271,7 @@ pub fn render(width: u32, height: u32, frame_ms: f64) {
         ctx.set_surface_texture(frame.texture.clone());
         ctx.reset(width as f32, height as f32);
         ctx.set_lcd_mode(agg_gui::font_settings::lcd_enabled());
-        begin_frame(ctx, view);
+        ctx.begin_frame(view);
         APP.with(|app_cell| {
             let mut app = app_cell.borrow_mut();
             if let Some(app) = app.as_mut() {

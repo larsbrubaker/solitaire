@@ -14,7 +14,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 solitaire-core = { path = "../solitaire-core" }
 agg-gui = { workspace = true }
-demo-wgpu = { workspace = true }
+agg-gui-wgpu = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
