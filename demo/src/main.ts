@@ -65,7 +65,7 @@ async function main() {
     wasm.set_device_pixel_ratio(dpr);
   };
 
-  const canvasPoint = (event: PointerEvent) => {
+  const canvasPoint = (event: MouseEvent) => {
     const rect = canvas.getBoundingClientRect();
     return {
       x: ((event.clientX - rect.left) / rect.width) * canvas.width,
@@ -116,6 +116,29 @@ async function main() {
     const point = canvasPoint(event);
     wasm.on_mouse_up(point.x, point.y, event.button);
   });
+  // Mouse wheel + trackpad scroll. `passive: false` so preventDefault
+  // actually stops the page from scrolling / pinch-zooming under the
+  // canvas. Raw deltas + deltaMode go across as-is; the Rust side owns
+  // the sign flip and pixel/line/page → notch conversion.
+  canvas.addEventListener(
+    "wheel",
+    (event) => {
+      event.preventDefault();
+      const point = canvasPoint(event);
+      wasm.on_mouse_wheel(
+        point.x,
+        point.y,
+        event.deltaX,
+        event.deltaY,
+        event.deltaMode,
+        event.shiftKey,
+        event.ctrlKey,
+        event.altKey,
+        event.metaKey,
+      );
+    },
+    { passive: false },
+  );
   canvas.addEventListener("pointercancel", () => {
     wasm.on_mouse_leave();
   });

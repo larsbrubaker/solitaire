@@ -12,6 +12,7 @@
 use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 
+use agg_gui::wheel::{WheelDeltaMode, WheelNormalizer};
 use agg_gui::{App, Modifiers, MouseButton, SharedFrameHistory};
 use agg_gui_wgpu::WgpuGfxCtx;
 use solitaire_core::ui::app_model::SharedModel;
@@ -26,6 +27,9 @@ thread_local! {
     static WGPU_INIT: RefCell<Option<WgpuInit>> = const { RefCell::new(None) };
     static WGPU_CTX: RefCell<Option<WgpuGfxCtx>> = const { RefCell::new(None) };
     static NEEDS_DRAW: Cell<bool> = const { Cell::new(true) };
+    // Sub-notch travel from a precision device (trackpad, smooth wheel)
+    // is banked here between `wheel` events — see `agg_gui::wheel`.
+    static WHEEL: RefCell<WheelNormalizer> = RefCell::new(WheelNormalizer::new());
 }
 
 struct WgpuInit {
@@ -47,6 +51,21 @@ pub fn start() {
     register_local_storage_io();
     register_open_url();
     ensure_app();
+    // Physical keyboard + clipboard bridge (Escape closes dialogs, F2
+    // deals, Cmd/Ctrl+C copies from MarkdownView). agg-gui owns the
+    // DOM plumbing; the shell only routes keys into the App.
+    agg_gui::web_adapter::install_keyboard_listeners(|key, mods, pressed| {
+        APP.with(|cell| {
+            if let Some(app) = cell.borrow_mut().as_mut() {
+                if pressed {
+                    app.on_key_down(key, mods);
+                } else {
+                    app.on_key_up(key, mods);
+                }
+            }
+        });
+        mark_dirty();
+    });
     wasm_bindgen_futures::spawn_local(async {
         match init_wgpu_async().await {
             Ok(init) => WGPU_INIT.with(|c| *c.borrow_mut() = Some(init)),
@@ -95,6 +114,11 @@ impl wgpu::rwh::HasDisplayHandle for WebDisplay {
     }
 }
 
+// `WgpuGfxCtx::new` takes `Arc<Device>` / `Arc<Queue>` (shared with the
+// native shell, where they are Send + Sync). On wasm wgpu's handles are
+// single-threaded, so clippy flags the Arc as pointless — it's the
+// renderer's API contract, not a threading claim.
+#[allow(clippy::arc_with_non_send_sync)]
 async fn init_wgpu_async() -> Result<WgpuInit, String> {
     let document = web_sys::window()
         .ok_or("no global window")?
@@ -342,6 +366,48 @@ pub fn on_mouse_up(x: f64, y: f64, button: u8) {
     APP.with(|cell| {
         if let Some(app) = cell.borrow_mut().as_mut() {
             app.on_mouse_up(x, y, btn, Modifiers::default());
+        }
+    });
+    mark_dirty();
+}
+
+/// Browser `wheel` event. `x` / `y` are canvas physical pixels like the
+/// other pointer exports; `delta_x` / `delta_y` / `delta_mode` are the raw
+/// `WheelEvent` fields. The sign flip and unit conversion live here, not in
+/// JS: the DOM reports positive-scroll-DOWN in pixels / lines / pages, while
+/// `App::on_mouse_wheel_xy_mods` expects positive = wheel rotated forward in
+/// whole notches (the same convention the native winit shell forwards).
+#[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
+pub fn on_mouse_wheel(
+    x: f64,
+    y: f64,
+    delta_x: f64,
+    delta_y: f64,
+    delta_mode: u32,
+    shift: bool,
+    ctrl: bool,
+    alt: bool,
+    meta: bool,
+) {
+    ensure_app();
+    let (dx, dy) = WHEEL.with(|w| {
+        w.borrow_mut()
+            .normalize(-delta_x, -delta_y, WheelDeltaMode::from_dom(delta_mode))
+    });
+    if dx == 0.0 && dy == 0.0 {
+        // Not yet a whole notch: nothing to deliver, no redraw needed.
+        return;
+    }
+    let mods = Modifiers {
+        shift,
+        ctrl,
+        alt,
+        meta,
+    };
+    APP.with(|cell| {
+        if let Some(app) = cell.borrow_mut().as_mut() {
+            app.on_mouse_wheel_xy_mods(x, y, dx, dy, mods);
         }
     });
     mark_dirty();

@@ -94,6 +94,10 @@ impl VecDequeWrapper {
         }
         #[cfg(target_arch = "wasm32")]
         {
+            // Same cap as native so the buffer stays bounded there too.
+            if self.0.len() >= LOG_CAPACITY {
+                self.0.remove(0);
+            }
             self.0.push(line);
         }
     }

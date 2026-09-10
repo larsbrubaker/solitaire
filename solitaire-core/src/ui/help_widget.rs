@@ -169,6 +169,10 @@ impl Widget for HelpDialog {
         &mut self.children
     }
     fn layout(&mut self, available: Size) -> Size {
+        // Build the body as soon as we're laid out while visible, not
+        // only at first paint — hit-testing between the two must find
+        // the ScrollView already in place.
+        self.rebuild_markdown_if_needed();
         self.update_child_bounds();
         available
     }
@@ -306,4 +310,62 @@ impl Widget for HelpDialog {
     // handlers when hover, selection, scroll position, or focus
     // change).  Forcing a redraw every frame just because the dialog
     // is open prevented the reactive event loop from going idle.
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::games::GameKind;
+    use crate::ui::app_model::HelpKind;
+    use crate::ui::build_solitaire_app;
+    use agg_gui::geometry::{Point, Size};
+    use agg_gui::widget::{hit_test_subtree, Widget};
+
+    fn type_chain(root: &dyn Widget, path: &[usize]) -> Vec<&'static str> {
+        let mut chain = vec![root.type_name()];
+        let mut cur = root;
+        for &i in path {
+            cur = cur.children()[i].as_ref();
+            chain.push(cur.type_name());
+        }
+        chain
+    }
+
+    fn scroll_view_offset(app: &agg_gui::App) -> Option<f64> {
+        app.collect_inspector_nodes()
+            .iter()
+            .find(|n| n.type_name == "ScrollView")
+            .and_then(|n| {
+                n.properties
+                    .iter()
+                    .find(|(k, _)| *k == "v_offset")
+                    .and_then(|(_, v)| v.parse::<f64>().ok())
+            })
+    }
+
+    /// Regression: a wheel / trackpad scroll anywhere over the help
+    /// body must scroll it — not only when the pointer is over the
+    /// scrollbar.
+    #[test]
+    fn wheel_over_help_body_scrolls_the_body() {
+        let (mut app, model) = build_solitaire_app();
+        model.borrow_mut().help = Some(HelpKind::About(GameKind::MomsSolitaire));
+        let viewport = Size::new(1024.0, 768.0);
+        app.layout(viewport);
+
+        let center_world = Point::new(512.0, 384.0);
+        let path = hit_test_subtree(app.root(), center_world).expect("hit");
+        let chain = type_chain(app.root(), &path);
+        eprintln!("chain = {chain:?}");
+        assert!(chain.contains(&"ScrollView"), "{chain:?}");
+        assert_eq!(scroll_view_offset(&app), Some(0.0));
+
+        // Scroll "down" (see content below): negative delta_y.
+        app.on_mouse_wheel(512.0, 384.0, -3.0);
+        let after = scroll_view_offset(&app);
+        eprintln!("offset after wheel = {after:?}");
+        assert!(
+            after.unwrap_or(0.0) > 0.0,
+            "wheel over the help body must scroll it; got {after:?}"
+        );
+    }
 }
