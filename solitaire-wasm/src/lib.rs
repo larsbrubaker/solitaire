@@ -27,9 +27,9 @@ thread_local! {
     static WGPU_INIT: RefCell<Option<WgpuInit>> = const { RefCell::new(None) };
     static WGPU_CTX: RefCell<Option<WgpuGfxCtx>> = const { RefCell::new(None) };
     static NEEDS_DRAW: Cell<bool> = const { Cell::new(true) };
-    // Sub-notch travel from a precision device (trackpad, smooth wheel)
-    // is banked here between `wheel` events — see `agg_gui::wheel`.
-    static WHEEL: RefCell<WheelNormalizer> = RefCell::new(WheelNormalizer::new());
+    // DOM deltas → agg-gui notches (fractional for trackpads, whole for a
+    // wheel) — see `agg_gui::wheel`.
+    static WHEEL: RefCell<WheelNormalizer> = const { RefCell::new(WheelNormalizer) };
 }
 
 struct WgpuInit {
@@ -396,7 +396,7 @@ pub fn on_mouse_wheel(
             .normalize(-delta_x, -delta_y, WheelDeltaMode::from_dom(delta_mode))
     });
     if dx == 0.0 && dy == 0.0 {
-        // Not yet a whole notch: nothing to deliver, no redraw needed.
+        // Nothing to deliver (e.g. a non-finite delta), no redraw needed.
         return;
     }
     let mods = Modifiers {
