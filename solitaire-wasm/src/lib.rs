@@ -305,7 +305,14 @@ pub fn render(width: u32, height: u32, frame_ms: f64) {
         });
         ctx.end_frame();
     });
-    frame.present();
+    // Present through the ctx so the stashed surface texture (and any
+    // un-consumed frame view) is released first — a back-buffer handle
+    // outliving present() breaks DX12 swap-chain resizes. See
+    // `WgpuGfxCtx::present`.
+    WGPU_CTX.with(|ctx_cell| match ctx_cell.borrow_mut().as_mut() {
+        Some(ctx) => ctx.present(frame),
+        None => frame.present(),
+    });
     NEEDS_DRAW.with(|cell| cell.set(false));
 }
 
